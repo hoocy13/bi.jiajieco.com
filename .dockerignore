@@ -1,0 +1,12 @@
+.git
+.gitignore
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/node_modules/
+**/dist/
+**/*.log
+**/.env
+**/.env.*
+!**/.env.example
+backend/*.db

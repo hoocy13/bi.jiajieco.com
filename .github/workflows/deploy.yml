@@ -1,0 +1,96 @@
+name: Deploy BI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Tencent Cloud
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build archive
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=.github \
+            --exclude=frontend/node_modules \
+            --exclude=frontend/dist \
+            --exclude=backend/.venv \
+            --exclude=backend/__pycache__ \
+            --exclude=backend/*.db \
+            --exclude=backend/.env \
+            --exclude=bi-deploy.tar.gz \
+            -czf bi-deploy.tar.gz .
+
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload archive
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          scp -i ~/.ssh/deploy_key bi-deploy.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-deploy.tar.gz"
+
+      - name: Deploy on server
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          set -e
+
+          APP_DIR="/www/wwwroot/bi.jiajieco.com"
+          ARCHIVE="/root/bi-deploy.tar.gz"
+          TS=$(date +%Y%m%d%H%M%S)
+          RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
+          BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
+
+          mkdir -p "$RELEASE"
+          tar -xzf "$ARCHIVE" -C "$RELEASE"
+
+          if [ -f "$APP_DIR/backend/.env" ]; then
+            mkdir -p "$RELEASE/backend"
+            cp "$APP_DIR/backend/.env" "$RELEASE/backend/.env"
+          fi
+
+          if [ -d "$APP_DIR" ]; then
+            mv "$APP_DIR" "$BACKUP"
+          fi
+
+          mv "$RELEASE" "$APP_DIR"
+          cd "$APP_DIR"
+
+          docker compose up -d --build
+          docker compose ps
+
+          for i in $(seq 1 15); do
+            if curl -fsSI http://127.0.0.1:18080 >/dev/null; then
+              echo "Frontend health check passed."
+              break
+            fi
+
+            if [ "$i" -eq 15 ]; then
+              echo "Frontend health check failed after retries."
+              docker compose logs --tail=80 frontend
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          echo "Deploy finished."
+          echo "Backup: $BACKUP"
+          REMOTE

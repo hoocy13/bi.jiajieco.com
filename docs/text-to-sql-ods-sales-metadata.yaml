@@ -1,0 +1,545 @@
+domain: ods_sales_inventory
+domain_description: >
+  ODS 层销售与库存数据域。当前适合优先支持销售趋势、渠道销售、商品销售、
+  库存数量、可用库存、品牌库存、批次效期等经营分析问题。
+
+source:
+  schema: ods
+  inspected_at: 2026-07-11
+  notes:
+    - 仅基于 information_schema 与聚合画像整理，未抽取业务明细样本。
+    - 销售单查询更像订单头快照，销售单明细账更适合商品、品牌、渠道、城市等明细分析。
+    - 销售额默认使用 销售单明细账.分摊后金额。
+    - 有效订单默认只排除已取消、已取消-被合并、已取消-被拆分，其他订单状态均计入。
+    - 售后退货、售后发货进入销售指标，不单独排除。
+
+tables:
+  - name: 销售单查询
+    description: 销售订单头表，每行代表一笔销售单，用于订单数、实付金额、应收金额、订单状态、渠道等分析。
+    row_count_observed: 463235
+    grain: 一行一笔销售单
+    primary_key_candidate: 订单编号
+    time_range_observed:
+      下单时间: "2026-06-06 17:59:34 ~ 2026-07-10 10:30:04"
+      付款时间: "2026-06-06 17:59:34 ~ 2026-07-10 10:30:05"
+      updatetime: "2026-07-06 17:59:30 ~ 2026-07-10 10:31:09"
+    columns:
+      - name: 订单编号
+        type: text
+        description: 销售单唯一编号，可与销售单明细账.订单编号关联。
+        aliases: [订单号, 销售单号, 单号]
+      - name: 订单状态
+        type: text
+        description: 销售单当前状态，例如发货在途、已完成、已取消等。
+        aliases: [状态, 销售单状态]
+      - name: 结算状态
+        type: text
+        description: 销售单结算状态。
+        aliases: [是否结算]
+      - name: 销售渠道
+        type: text
+        description: 订单所属具体销售渠道。
+        aliases: [渠道, 店铺, 销售店铺]
+      - name: 渠道分类
+        type: text
+        description: 销售渠道所属分类，例如运营部线上渠道、梧颜、销售部渠道。
+        aliases: [渠道类型, 渠道分组]
+      - name: 发货仓库
+        type: text
+        description: 订单发货仓库。
+        aliases: [仓库]
+      - name: 订单类型
+        type: text
+        description: 订单业务类型，例如零售业务、售后退货、批发业务等。
+        aliases: [业务类型]
+      - name: 应收合计
+        type: decimal(18,2)
+        description: 订单应收金额合计。
+        aliases: [应收金额]
+      - name: 实付金额
+        type: decimal(18,2)
+        description: 买家实际支付金额，适合订单头销售额分析。
+        aliases: [销售额, 成交金额, 实收金额]
+      - name: 货品数量
+        type: decimal(18,0)
+        description: 订单包含的商品数量。
+        aliases: [件数, 商品数量]
+      - name: 下单时间
+        type: datetime
+        description: 订单创建时间，订单头分析默认时间字段。
+        aliases: [订单时间, 创建时间]
+      - name: 付款时间
+        type: datetime
+        description: 订单付款时间。
+        aliases: [支付时间]
+      - name: 市
+        type: text
+        description: 订单城市。
+        aliases: [城市]
+      - name: updatetime
+        type: datetime
+        description: ODS 数据更新时间。
+
+  - name: 销售单明细账
+    description: 销售订单商品明细表，每行代表一个销售单中的一个货品明细，适合商品、品牌、品类、毛利、销量分析。
+    row_count_observed: 2045054
+    grain: 一行一个订单货品明细
+    primary_key_candidate: null
+    time_range_observed:
+      下单时间: "2026-01-01 00:00:00 ~ 2026-07-10 10:20:40"
+      统计时间: "2026-01-01 00:00:00 ~ 2026-06-10 10:22:37"
+      updatetime: "2026-07-08 13:59:41 ~ 2026-07-10 10:22:37"
+    distinct_profile_observed:
+      订单编号: 1896119
+      货品编号: 2060
+      品牌: 26
+      货品分类: 6
+      销售渠道: 82
+      渠道分类: 3
+      发货仓库: 12
+      市: 371
+    columns:
+      - name: 订单编号
+        type: text
+        description: 销售单编号，可与销售单查询.订单编号关联。
+        aliases: [订单号, 销售单号]
+      - name: 网店订单号
+        type: text
+        description: 外部电商平台订单号。
+      - name: 销售渠道
+        type: text
+        description: 明细所属具体销售渠道。
+        aliases: [渠道, 店铺]
+      - name: 渠道分类
+        type: text
+        description: 渠道所属分类。
+        aliases: [渠道类型, 渠道分组]
+      - name: 货品编号
+        type: text
+        description: 货品唯一编号，可与库存表的货品编号关联。
+        aliases: [商品编号, SKU编号]
+      - name: 货品名称
+        type: text
+        description: 货品名称。
+        aliases: [商品名称, SKU名称]
+      - name: 货品条码
+        type: text
+        description: 商品条码。
+        aliases: [条码]
+      - name: 发货仓库
+        type: text
+        description: 明细发货仓库。
+        aliases: [仓库]
+      - name: 品牌
+        type: text
+        description: 货品品牌。
+      - name: 规格
+        type: text
+        description: 货品规格。
+      - name: 数量
+        type: decimal(18,0)
+        description: 明细销售数量。
+        aliases: [销量, 件数, 销售件数]
+      - name: 单价
+        type: decimal(18,2)
+        description: 明细单价。
+      - name: 金额
+        type: decimal(18,2)
+        description: 明细销售金额。
+        aliases: [明细金额, 商品销售额]
+      - name: 分摊后金额
+        type: decimal(18,2)
+        description: 分摊优惠、费用后的明细金额，可作为商品维度销售额候选口径。
+        aliases: [分摊销售额]
+      - name: 毛利
+        type: decimal(18,2)
+        description: 明细毛利金额。
+      - name: 毛利率
+        type: decimal(18,2)
+        description: 明细毛利率。
+      - name: 下单时间
+        type: datetime
+        description: 明细对应订单下单时间，明细分析默认时间字段。
+        aliases: [订单时间]
+      - name: 付款时间
+        type: datetime
+        description: 明细对应订单付款时间。
+      - name: 统计时间
+        type: datetime
+        description: 统计口径时间字段，需业务确认与下单时间的区别。
+      - name: 货品分类
+        type: text
+        description: 货品所属分类。
+        aliases: [品类, 商品分类]
+      - name: 市
+        type: text
+        description: 城市。
+        aliases: [城市]
+
+  - name: 总库存查询
+    description: 当前总库存表，按仓库与货品维度记录库存、可用库存、销售近况和商品属性。
+    row_count_observed: 1522
+    grain: 一行一个仓库货品库存
+    primary_key_candidate: 库存ID
+    distinct_profile_observed:
+      货品编号: 1553
+      品牌: 63
+      货品分类: 6
+      仓库: 1
+    columns:
+      - name: 仓库
+        type: varchar(255)
+        description: 库存所在仓库。
+      - name: 货品编号
+        type: varchar(255)
+        description: 货品编号，可与销售单明细账.货品编号关联。
+      - name: 货品名称
+        type: text
+        description: 货品名称。
+      - name: 条码
+        type: varchar(255)
+        description: 货品条码。
+      - name: 品牌
+        type: varchar(255)
+        description: 货品品牌。
+      - name: 库存数量
+        type: decimal(18,0)
+        description: 当前库存数量。
+        aliases: [库存, 总库存]
+      - name: 可用库存
+        type: decimal(18,0)
+        description: 当前可用库存数量。
+      - name: 锁定待发
+        type: decimal(18,0)
+        description: 已锁定等待发货的库存数量。
+      - name: 昨天销量
+        type: decimal(18,0)
+        description: 昨天销量。
+      - name: 近7天销量
+        type: decimal(18,0)
+        description: 最近 7 天销量。
+      - name: 近30天销量
+        type: decimal(18,0)
+        description: 最近 30 天销量。
+      - name: 货品分类
+        type: varchar(255)
+        description: 货品所属分类。
+      - name: 是否停用
+        type: varchar(255)
+        description: 货品是否停用。
+      - name: 是否停售
+        type: varchar(255)
+        description: 货品是否停售。
+      - name: updatetime
+        type: datetime
+        description: ODS 数据更新时间。
+
+  - name: 分仓库查询
+    description: 分仓库存表，按仓库、货品记录库存、可用库存、近 7/30/90 天销量和库存金额。
+    row_count_observed: 5747
+    grain: 一行一个仓库货品库存
+    primary_key_candidate: null
+    columns:
+      - name: 仓库
+        type: varchar(255)
+        description: 库存所在仓库。
+      - name: 货品编号
+        type: varchar(255)
+        description: 货品编号。
+      - name: 货品名称
+        type: text
+        description: 货品名称。
+      - name: 品牌
+        type: varchar(255)
+        description: 货品品牌。
+      - name: 库存数量
+        type: decimal(18,0)
+        description: 当前库存数量。
+      - name: 可用库存
+        type: decimal(18,0)
+        description: 当前可用库存数量。
+      - name: 近7天销量
+        type: decimal(18,0)
+        description: 最近 7 天销量。
+      - name: 近30天销量
+        type: decimal(18,0)
+        description: 最近 30 天销量。
+      - name: 近90天销量(库存公式)
+        type: decimal(18,0)
+        description: 库存公式使用的近 90 天销量。
+      - name: 库存金额
+        type: decimal(18,2)
+        description: 当前库存金额。
+      - name: updatetime
+        type: datetime
+        description: ODS 数据更新时间。
+
+  - name: 批次货品库存查询
+    description: 批次维度货品库存表，适合查询批次库存、生产日期、到期日期、剩余有效天数。
+    row_count_observed: 9152
+    grain: 一行一个仓库货品批次库存
+    primary_key_candidate: null
+    columns:
+      - name: 仓库
+        type: varchar(255)
+        description: 库存所在仓库。
+      - name: 批次
+        type: varchar(255)
+        description: 货品批次。
+      - name: 货品编号
+        type: varchar(255)
+        description: 货品编号。
+      - name: 货品名称
+        type: text
+        description: 货品名称。
+      - name: 品牌
+        type: varchar(255)
+        description: 货品品牌。
+      - name: 库存数量
+        type: decimal(18,0)
+        description: 当前批次库存数量。
+      - name: 可用库存
+        type: decimal(18,0)
+        description: 当前批次可用库存。
+      - name: 生产日期
+        type: date
+        description: 批次生产日期。
+      - name: 到期日期
+        type: date
+        description: 批次到期日期。
+      - name: 剩余有效天数
+        type: decimal(18,0)
+        description: 距离到期剩余天数。
+      - name: 剩余有效天数占比(%)
+        type: decimal(18,2)
+        description: 剩余有效期占总保质期比例。
+      - name: 货品分类
+        type: varchar(255)
+        description: 货品所属分类。
+
+  - name: 渠道列表
+    description: 渠道维表，记录渠道编号、渠道名称、渠道类型、部门、负责人、地址等信息。
+    row_count_observed: 86
+    grain: 一行一个渠道
+    primary_key_candidate: 渠道编号
+    columns:
+      - name: 渠道编号
+        type: varchar(128)
+        description: 渠道业务编号。
+      - name: 渠道名称
+        type: varchar(255)
+        description: 渠道名称，可与销售表的销售渠道做名称级关联候选。
+      - name: 分类
+        type: varchar(255)
+        description: 渠道分类。
+      - name: 渠道类型
+        type: varchar(128)
+        description: 渠道类型。
+      - name: 部门
+        type: varchar(255)
+        description: 渠道归属部门。
+      - name: 负责人
+        type: varchar(128)
+        description: 渠道负责人。
+      - name: 默认仓库
+        type: varchar(255)
+        description: 渠道默认仓库。
+      - name: updatetime
+        type: datetime
+        description: ODS 数据更新时间。
+
+relationships:
+  - from: 销售单明细账.订单编号
+    to: 销售单查询.订单编号
+    type: many_to_one
+    confidence: medium
+    description: 明细账按订单编号关联订单头；因字段类型为 text，需注意重复与清洗问题。
+  - from: 销售单明细账.货品编号
+    to: 总库存查询.货品编号
+    type: many_to_one
+    confidence: medium
+    description: 销售明细与库存表按货品编号关联，用于商品销售与库存联动分析。
+  - from: 销售单明细账.货品编号
+    to: 分仓库查询.货品编号
+    type: many_to_many
+    confidence: medium
+    description: 按货品编号关联分仓库存；如同时分析仓库，应结合发货仓库/仓库字段。
+  - from: 销售单明细账.货品编号
+    to: 批次货品库存查询.货品编号
+    type: many_to_many
+    confidence: medium
+    description: 按货品编号关联批次库存，用于销售与效期联动分析。
+  - from: 销售单明细账.销售渠道
+    to: 渠道列表.渠道名称
+    type: many_to_one
+    confidence: low
+    description: 可尝试按渠道名称关联，但名称是否完全一致需要进一步校验。
+
+metrics:
+  - name: 订单数
+    aliases: [销售单数, 成交订单数]
+    description: 有效销售单数量。
+    formula: count(distinct 销售单查询.订单编号)
+    filters:
+      - 销售单查询.订单状态 not in ('已取消', '已取消-被合并', '已取消-被拆分')
+    default_time_field: 销售单查询.下单时间
+
+  - name: 订单头实付金额
+    aliases: [实付销售额, 实付金额, 成交金额]
+    description: 订单头表中有效订单的实付金额合计。仅在明确询问订单头、实付金额时使用；默认销售额使用销售单明细账.分摊后金额。
+    formula: sum(销售单查询.实付金额)
+    filters:
+      - 销售单查询.订单状态 not in ('已取消', '已取消-被合并', '已取消-被拆分')
+    default_time_field: 销售单查询.下单时间
+
+  - name: 应收金额
+    aliases: [应收合计]
+    description: 订单头表中有效订单的应收合计。
+    formula: sum(销售单查询.应收合计)
+    filters:
+      - 销售单查询.订单状态 not in ('已取消', '已取消-被合并', '已取消-被拆分')
+    default_time_field: 销售单查询.下单时间
+
+  - name: 销售额
+    aliases: [商品销售额, 明细销售额, 分摊后销售额, 成交金额]
+    description: 默认销售额口径，使用销售单明细账中的分摊后金额合计；售后退货、售后发货进入销售指标。
+    formula: sum(销售单明细账.分摊后金额)
+    filters: []
+    default_time_field: 销售单明细账.下单时间
+
+  - name: 商品销量
+    aliases: [销量, 销售件数, 件数]
+    description: 销售明细表中的商品数量合计。
+    formula: sum(销售单明细账.数量)
+    filters: []
+    default_time_field: 销售单明细账.下单时间
+
+  - name: 毛利
+    aliases: [毛利额]
+    description: 销售明细表中的毛利合计。
+    formula: sum(销售单明细账.毛利)
+    filters: []
+    default_time_field: 销售单明细账.下单时间
+
+  - name: 毛利率
+    aliases: [整体毛利率]
+    description: 毛利合计除以分摊后金额合计。
+    formula: sum(销售单明细账.毛利) / nullif(sum(销售单明细账.分摊后金额), 0)
+    filters: []
+    default_time_field: 销售单明细账.下单时间
+
+  - name: 当前库存
+    aliases: [库存, 总库存, 库存数量]
+    description: 当前库存数量合计。
+    formula: sum(总库存查询.库存数量)
+    filters: []
+    default_time_field: 总库存查询.updatetime
+
+  - name: 可用库存
+    aliases: [可售库存]
+    description: 当前可用库存数量合计。
+    formula: sum(总库存查询.可用库存)
+    filters: []
+    default_time_field: 总库存查询.updatetime
+
+  - name: 近30天库存销量
+    aliases: [近30天销量, 30天销量]
+    description: 库存表记录的近 30 天销量合计。
+    formula: sum(总库存查询.近30天销量)
+    filters: []
+    default_time_field: 总库存查询.updatetime
+
+business_terms:
+  - term: 有效订单
+    type: filter
+    description: 默认只排除已取消、已取消-被合并、已取消-被拆分，其他订单状态均计入。
+  - term: 销售额
+    type: metric_alias
+    maps_to: 销售额
+    description: 默认使用 销售单明细账.分摊后金额；只有用户明确询问订单头实付金额时才使用 销售单查询.实付金额。
+  - term: 售后
+    type: filter_rule
+    description: 售后退货、售后发货进入销售指标，不从默认销售额、销量、毛利等指标中排除。
+  - term: 商品
+    type: dimension
+    maps_to: 销售单明细账.货品名称 或 总库存查询.货品名称
+  - term: SKU
+    type: dimension
+    maps_to: 销售单明细账.货品编号 或 总库存查询.货品编号
+  - term: 渠道
+    type: dimension
+    maps_to: 销售单明细账.销售渠道 或 销售单查询.销售渠道
+  - term: 品类
+    type: dimension
+    maps_to: 销售单明细账.货品分类 或 总库存查询.货品分类
+  - term: 仓库
+    type: dimension
+    maps_to: 销售单明细账.发货仓库 或 总库存查询.仓库
+
+query_examples:
+  - question: 今年每个月商品销售额和销量是多少？
+    sql: |
+      select
+        date_format(`下单时间`, '%Y-%m') as month,
+        sum(`分摊后金额`) as sales_amount,
+        sum(`数量`) as quantity
+      from ods.`销售单明细账`
+      where `下单时间` >= '2026-01-01'
+        and `下单时间` < '2027-01-01'
+      group by date_format(`下单时间`, '%Y-%m')
+      order by month;
+
+  - question: 近30天各品牌销售额排名前10是什么？
+    sql: |
+      select
+        `品牌`,
+        sum(`分摊后金额`) as sales_amount,
+        sum(`数量`) as quantity
+      from ods.`销售单明细账`
+      where `下单时间` >= current_date - interval 30 day
+      group by `品牌`
+      order by sales_amount desc
+      limit 10;
+
+  - question: 昨天各渠道分类的订单实付金额是多少？
+    sql: |
+      select
+        `渠道分类`,
+        sum(`实付金额`) as paid_amount,
+        count(distinct `订单编号`) as order_count
+      from ods.`销售单查询`
+      where `订单状态` not in ('已取消', '已取消-被合并', '已取消-被拆分')
+        and `下单时间` >= current_date - interval 1 day
+        and `下单时间` < current_date
+      group by `渠道分类`
+      order by paid_amount desc;
+
+  - question: 当前各品牌库存和可用库存是多少？
+    sql: |
+      select
+        `品牌`,
+        sum(`库存数量`) as stock_quantity,
+        sum(`可用库存`) as available_stock
+      from ods.`总库存查询`
+      group by `品牌`
+      order by stock_quantity desc;
+
+  - question: 哪些商品剩余有效天数小于30天？
+    sql: |
+      select
+        `仓库`,
+        `货品编号`,
+        `货品名称`,
+        `品牌`,
+        `批次`,
+        `库存数量`,
+        `生产日期`,
+        `到期日期`,
+        `剩余有效天数`
+      from ods.`批次货品库存查询`
+      where `剩余有效天数` < 30
+      order by `剩余有效天数` asc, `库存数量` desc;
+
+open_questions:
+  - 销售单明细账.统计时间 与 下单时间 的业务差异是什么？
+  - 渠道列表.渠道名称 与 销售表.销售渠道 是否可以稳定关联？

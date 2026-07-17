@@ -1,0 +1,12 @@
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+.venv/
+*.db
+.env
+.env.*
+!.env.example
+bi-deploy.tar.gz
+*.log
+docs/awesome-design-md/
