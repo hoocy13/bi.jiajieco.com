@@ -24,8 +24,7 @@ jobs:
             --exclude=backend/__pycache__ \
             --exclude=backend/*.db \
             --exclude=backend/.env \
-            --exclude=bi-deploy.tar.gz \
-            -czf bi-deploy.tar.gz .
+            -czf "$RUNNER_TEMP/bi-deploy.tar.gz" .
 
       - name: Configure SSH
         env:
@@ -42,7 +41,7 @@ jobs:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
         run: |
-          scp -i ~/.ssh/deploy_key bi-deploy.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-deploy.tar.gz"
+          scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/bi-deploy.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-deploy.tar.gz"
 
       - name: Deploy on server
         env:
