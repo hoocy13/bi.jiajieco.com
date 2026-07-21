@@ -63,6 +63,13 @@ const analysis = ref({
   platforms: [],
   channels: [],
   products: [],
+  salesperson_product_types: [],
+  sales_contribution: {
+    online: { paid_amount: 0, quantity: 0 },
+    offline: { paid_amount: 0, quantity: 0 },
+    paid_amount_difference: 0,
+    quantity_difference: 0,
+  },
   unmatched_channels: [],
   filter_options: {
     channel_types: [],
@@ -131,6 +138,7 @@ const activeChannels = computed(() => analysis.value.channels.filter(
   (item) => Number(item.orders || 0) !== 0 || Number(item.paid_amount || 0) !== 0,
 ))
 function isOnlineChannel(item) {
+  if (typeof item.is_online === 'boolean') return item.is_online
   return Boolean(item.platform && item.platform !== '未设置')
 }
 
@@ -168,13 +176,15 @@ const offlineShare = computed(() => offlineChannels.value.reduce((sum, item) => 
 
 const salesContribution = computed(() => {
   const channels = activeChannels.value.filter((item) => Number(item.paid_amount || 0) !== 0)
+  const contribution = analysis.value.sales_contribution
   const summarize = (field, label, unit, digits) => {
-    const online = channels
-      .filter(isOnlineChannel)
-      .reduce((sum, item) => sum + Number(item[field] || 0), 0)
-    const offline = channels
-      .filter((item) => !isOnlineChannel(item))
-      .reduce((sum, item) => sum + Number(item[field] || 0), 0)
+    const hasBackendContribution = contribution?.online && contribution?.offline
+    const online = hasBackendContribution
+      ? Number(contribution.online[field] || 0)
+      : channels.filter(isOnlineChannel).reduce((sum, item) => sum + Number(item[field] || 0), 0)
+    const offline = hasBackendContribution
+      ? Number(contribution.offline[field] || 0)
+      : channels.filter((item) => !isOnlineChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
     const comparableTotal = Math.max(online, 0) + Math.max(offline, 0)
     return {
       field,
@@ -347,7 +357,7 @@ onMounted(fetchAnalysis)
           class="filter-select multi-filter-select"
           clearable multiple collapse-tags collapse-tags-tooltip
           :max-collapse-tags="1"
-          placeholder="渠道类型"
+          placeholder="渠道分类"
         >
           <el-option v-for="item in analysis.filter_options.channel_types" :key="item" :label="item" :value="item">
             <span class="filter-option-content">
@@ -541,9 +551,9 @@ onMounted(fetchAnalysis)
 
       <div class="content-grid detail-summary-grid">
       <section class="panel">
-        <header><h2>渠道类型表现<span class="panel-source">（渠道列表 + 销售单明细账）</span></h2></header>
+        <header><h2>渠道分类表现<span class="panel-source">（渠道列表 + 销售单明细账）</span></h2></header>
         <el-table :data="analysis.channel_types" height="300">
-          <el-table-column prop="channel_type" label="渠道类型" min-width="150" sortable />
+          <el-table-column prop="channel_type" label="渠道分类" min-width="150" sortable />
           <el-table-column prop="active_channels" label="有销售渠道" width="132" sortable />
           <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
           <el-table-column prop="paid_amount" label="净销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
@@ -569,7 +579,7 @@ onMounted(fetchAnalysis)
         <el-table-column prop="channel_name" label="渠道名称" min-width="220" show-overflow-tooltip sortable>
           <template #default="{ row }"><div class="channel-cell"><strong>{{ row.channel_name }}</strong><span><i :style="{ width: progressWidth(row.share) }"></i></span></div></template>
         </el-table-column>
-        <el-table-column prop="channel_type" label="渠道类型" width="130" sortable />
+        <el-table-column prop="channel_type" label="渠道分类" width="150" sortable />
         <el-table-column prop="platform" label="线上平台" width="140" sortable />
         <el-table-column prop="owner" label="负责人" width="110" sortable />
         <el-table-column prop="detail_rows" label="明细行数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.detail_rows) }}</template></el-table-column>
@@ -578,6 +588,19 @@ onMounted(fetchAnalysis)
         <el-table-column prop="paid_amount" label="净销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
         <el-table-column prop="share" label="占比" width="100" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
         <el-table-column prop="avg_order_amount" label="客单价" width="130" sortable><template #default="{ row }">{{ formatNumber(row.avg_order_amount, 2) }}</template></el-table-column>
+      </el-table>
+      </section>
+
+      <section class="panel">
+      <header><h2>销售人员正装与小样销售情况<span class="panel-source">（销售单明细账 + 渠道负责人）</span></h2></header>
+      <el-table :data="analysis.salesperson_product_types" height="420">
+        <el-table-column prop="salesperson" label="销售人员" min-width="140" sortable />
+        <el-table-column prop="regular_quantity" label="正装数量" width="125" sortable><template #default="{ row }">{{ formatNumber(row.regular_quantity) }}</template></el-table-column>
+        <el-table-column prop="regular_paid_amount" label="正装金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.regular_paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="sample_quantity" label="小样数量" width="125" sortable><template #default="{ row }">{{ formatNumber(row.sample_quantity) }}</template></el-table-column>
+        <el-table-column prop="sample_paid_amount" label="小样金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.sample_paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="total_quantity" label="合计数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.total_quantity) }}</template></el-table-column>
+        <el-table-column prop="total_paid_amount" label="合计金额" width="170" sortable><template #default="{ row }">{{ formatNumber(row.total_paid_amount, 2) }}</template></el-table-column>
       </el-table>
       </section>
 

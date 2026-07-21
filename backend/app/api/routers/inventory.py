@@ -1,6 +1,6 @@
 from copy import deepcopy
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from threading import Lock
 from time import monotonic
@@ -1463,6 +1463,343 @@ def slow_moving_inventory(
                 "stock_amount": _number(row["stock_amount"]),
             }
             for index, row in enumerate(rows)
+        ],
+    }
+    return _cached_ok(cache_key, data)
+
+
+@router.get("/brand-monthly-arrivals")
+def brand_monthly_arrivals(
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    brand: list[str] | None = Query(None),
+    product_type: list[str] | None = Query(None),
+    detail_product_type: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=10, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    """Brand receipt dashboard with exact day-level filters and traceable receipt details."""
+    del current_user
+    brands = tuple(sorted({value.strip() for value in brand or [] if value.strip()}))
+    product_types = tuple(sorted({value.strip() for value in product_type or [] if value.strip()}))
+    detail_product_type = (detail_product_type or "").strip()
+    page, page_size, offset = _pagination(page, page_size)
+
+    today = date.today()
+    selected_start = start_date or date(today.year, 1, 1)
+    selected_end = end_date or date(today.year, 12, 31)
+    if selected_end < selected_start:
+        selected_start, selected_end = selected_end, selected_start
+    end_exclusive = selected_end + timedelta(days=1)
+    cache_key = _cache_key(
+        "brand-monthly-arrivals-v2",
+        start_date=selected_start.isoformat(),
+        end_date=selected_end.isoformat(),
+        brands=brands,
+        product_types=product_types,
+        detail_product_type=detail_product_type,
+        page=page,
+        page_size=page_size,
+    )
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        return ok(cached)
+
+    params: dict[str, object] = {
+        "start_date": selected_start,
+        "end_date": end_exclusive,
+    }
+    brand_sql = ""
+    if brands:
+        placeholders = []
+        for index, value in enumerate(brands):
+            key = f"brand_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        joined_placeholders = ", ".join(placeholders)
+        brand_sql = f"AND d.`品牌` IN ({joined_placeholders})"
+
+    product_type_sql = ""
+    if product_types:
+        placeholders = []
+        for index, value in enumerate(product_types):
+            key = f"product_type_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        product_type_sql = f"AND COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') IN ({', '.join(placeholders)})"
+
+    common_filter = f"""
+      h.`入库时间` >= :start_date
+      AND h.`入库时间` < :end_date
+      {brand_sql}
+      {product_type_sql}
+    """
+
+    option_rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT
+              YEAR(h.`入库时间`) AS receipt_year,
+              d.`品牌` AS brand,
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE h.`入库时间` IS NOT NULL
+            ORDER BY receipt_year DESC, brand ASC, product_type ASC
+            """
+        )
+    ).mappings().all()
+
+    summary = db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(SUM(d.`数量`), 0) AS net_quantity,
+              COALESCE(SUM(d.`入库成本金额`), 0) AS net_cost_amount,
+              COUNT(DISTINCT NULLIF(d.`品牌`, '')) AS brand_count,
+              COUNT(DISTINCT h.`docId`) AS document_count,
+              COUNT(DISTINCT NULLIF(d.`货品编号`, '')) AS sku_count,
+              COUNT(DISTINCT NULLIF(h.`往来单位`, '')) AS supplier_count,
+              MAX(GREATEST(COALESCE(h.`updatetime`, h.`入库时间`), COALESCE(d.`updatetime`, h.`入库时间`))) AS updated_at
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+            """
+        ),
+        params,
+    ).mappings().one()
+
+    trend_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              DATE(h.`入库时间`) AS receipt_date,
+              COALESCE(SUM(d.`数量`), 0) AS net_quantity,
+              COALESCE(SUM(d.`入库成本金额`), 0) AS net_cost_amount,
+              COALESCE(SUM(CASE WHEN TRIM(d.`货品分类`) = '正装' THEN d.`数量` ELSE 0 END), 0) AS full_size_quantity,
+              COALESCE(SUM(CASE WHEN TRIM(d.`货品分类`) = '小样' THEN d.`数量` ELSE 0 END), 0) AS sample_quantity
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+            GROUP BY DATE(h.`入库时间`)
+            ORDER BY receipt_date
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    product_type_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+              COALESCE(SUM(d.`数量`), 0) AS net_quantity,
+              COALESCE(SUM(d.`入库成本金额`), 0) AS net_cost_amount,
+              COUNT(DISTINCT h.`docId`) AS document_count,
+              COUNT(DISTINCT NULLIF(d.`货品编号`, '')) AS sku_count
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+            GROUP BY COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')
+            ORDER BY net_quantity DESC
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    product_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              d.`货品编号` AS product_code,
+              d.`货品名称` AS product,
+              d.`品牌` AS brand,
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+              COALESCE(SUM(d.`数量`), 0) AS net_quantity,
+              COALESCE(SUM(d.`入库成本金额`), 0) AS net_cost_amount,
+              COUNT(DISTINCT h.`docId`) AS document_count,
+              MIN(DATE(h.`入库时间`)) AS first_receipt_date,
+              MAX(DATE(h.`入库时间`)) AS last_receipt_date
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+            GROUP BY d.`货品编号`, d.`货品名称`, d.`品牌`, COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')
+            HAVING net_quantity <> 0 OR net_cost_amount <> 0
+            ORDER BY net_quantity DESC, net_cost_amount DESC
+            LIMIT 15
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    brand_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(NULLIF(d.`品牌`, ''), '未归类') AS brand,
+              COALESCE(SUM(CASE WHEN d.`数量` > 0 THEN d.`数量` ELSE 0 END), 0) AS gross_quantity,
+              COALESCE(ABS(SUM(CASE WHEN d.`数量` < 0 THEN d.`数量` ELSE 0 END)), 0) AS reversal_quantity,
+              COALESCE(SUM(d.`数量`), 0) AS net_quantity,
+              COALESCE(SUM(d.`入库成本金额`), 0) AS net_cost_amount,
+              COUNT(DISTINCT h.`docId`) AS document_count,
+              COUNT(DISTINCT NULLIF(d.`货品编号`, '')) AS sku_count,
+              COUNT(DISTINCT NULLIF(h.`往来单位`, '')) AS supplier_count
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+            GROUP BY COALESCE(NULLIF(d.`品牌`, ''), '未归类')
+            ORDER BY net_cost_amount DESC, net_quantity DESC
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    detail_type_sql = ""
+    if detail_product_type in {"正装", "小样"}:
+        params["detail_product_type"] = detail_product_type
+        detail_type_sql = "AND TRIM(d.`货品分类`) = :detail_product_type"
+    detail_total = db.execute(
+        text(
+            f"""
+            SELECT COUNT(*)
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+              {detail_type_sql}
+            """
+        ),
+        params,
+    ).scalar_one()
+    detail_params = {**params, "limit": page_size, "offset": offset}
+    detail_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              h.`入库时间` AS receipt_time,
+              h.`入库单号` AS receipt_number,
+              h.`入库类型` AS receipt_type,
+              h.`入库仓库` AS warehouse,
+              h.`往来单位` AS supplier,
+              h.`红冲状态` AS reversal_status,
+              d.`货品编号` AS product_code,
+              d.`货品名称` AS product,
+              d.`品牌` AS brand,
+              d.`货品分类` AS product_type,
+              d.`数量` AS quantity,
+              d.`入库成本单价` AS unit_cost,
+              d.`入库成本金额` AS cost_amount,
+              d.`批次` AS batch,
+              d.`生产日期` AS production_date,
+              d.`到期日期` AS expiry_date
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE {common_filter}
+              {detail_type_sql}
+            ORDER BY h.`入库时间` DESC, h.`入库单号` DESC, d.`recId` DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        detail_params,
+    ).mappings().all()
+
+    total_cost = _number(summary["net_cost_amount"])
+    is_full_year = selected_start == date(selected_start.year, 1, 1) and selected_end == date(selected_start.year, 12, 31)
+    is_current_year_to_date = selected_start == date(today.year, 1, 1) and selected_end == today
+    data = {
+        "year": selected_start.year,
+        "period": "本年" if is_current_year_to_date else (f"{selected_start.year}年" if is_full_year else "自定义"),
+        "start_date": selected_start.isoformat(),
+        "end_date": selected_end.isoformat(),
+        "brands_selected": list(brands),
+        "product_types_selected": list(product_types),
+        "detail_product_type": detail_product_type,
+        "updated_at": summary["updated_at"].isoformat() if summary["updated_at"] else None,
+        "filter_options": {
+            "years": sorted({_int(row["receipt_year"]) for row in option_rows}, reverse=True),
+            "brands": sorted({_text(row["brand"]) for row in option_rows if row["brand"]}),
+            "product_types": sorted({_text(row["product_type"]) for row in option_rows if row["product_type"]}),
+        },
+        "summary": {
+            "net_quantity": _number(summary["net_quantity"]),
+            "net_cost_amount": total_cost,
+            "brand_count": _int(summary["brand_count"]),
+            "document_count": _int(summary["document_count"]),
+            "sku_count": _int(summary["sku_count"]),
+            "supplier_count": _int(summary["supplier_count"]),
+        },
+        "trend": [
+            {
+                "receipt_date": row["receipt_date"].isoformat(),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "full_size_quantity": _number(row["full_size_quantity"]),
+                "sample_quantity": _number(row["sample_quantity"]),
+            }
+            for row in trend_rows
+        ],
+        "product_type_summary": [
+            {
+                "product_type": _text(row["product_type"], "未归类"),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "document_count": _int(row["document_count"]),
+                "sku_count": _int(row["sku_count"]),
+            }
+            for row in product_type_rows
+        ],
+        "products": [
+            {
+                "rank": index + 1,
+                "product_code": _text(row["product_code"]),
+                "product": _text(row["product"]),
+                "brand": _text(row["brand"], "未归类"),
+                "product_type": _text(row["product_type"], "未归类"),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "document_count": _int(row["document_count"]),
+                "first_receipt_date": row["first_receipt_date"].isoformat() if row["first_receipt_date"] else None,
+                "last_receipt_date": row["last_receipt_date"].isoformat() if row["last_receipt_date"] else None,
+            }
+            for index, row in enumerate(product_rows)
+        ],
+        "brands": [
+            {
+                "rank": index + 1,
+                "brand": _text(row["brand"], "未归类"),
+                "gross_quantity": _number(row["gross_quantity"]),
+                "reversal_quantity": _number(row["reversal_quantity"]),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "share": round(_number(row["net_cost_amount"]) / total_cost * 100, 2) if total_cost else 0,
+                "brand_document_count": _int(row["document_count"]),
+                "monthly_sku_count": _int(row["sku_count"]),
+                "monthly_supplier_count": _int(row["supplier_count"]),
+            }
+            for index, row in enumerate(brand_rows)
+        ],
+        "pagination": {"page": page, "page_size": page_size, "total": _int(detail_total)},
+        "details": [
+            {
+                "receipt_time": row["receipt_time"].isoformat() if row["receipt_time"] else None,
+                "receipt_number": _text(row["receipt_number"]),
+                "receipt_type": _text(row["receipt_type"]),
+                "warehouse": _text(row["warehouse"]),
+                "supplier": _text(row["supplier"]),
+                "reversal_status": _text(row["reversal_status"]),
+                "product_code": _text(row["product_code"]),
+                "product": _text(row["product"]),
+                "brand": _text(row["brand"], "未归类"),
+                "product_type": _text(row["product_type"], "未归类"),
+                "quantity": _number(row["quantity"]),
+                "unit_cost": _number(row["unit_cost"]),
+                "cost_amount": _number(row["cost_amount"]),
+                "batch": _text(row["batch"]),
+                "production_date": row["production_date"].isoformat() if row["production_date"] else None,
+                "expiry_date": row["expiry_date"].isoformat() if row["expiry_date"] else None,
+            }
+            for row in detail_rows
         ],
     }
     return _cached_ok(cache_key, data)

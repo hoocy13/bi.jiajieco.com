@@ -46,3 +46,7 @@ export function getBrandInventoryTurnover(params = {}) {
 export function getSlowMovingInventory(params = {}) {
   return http.get('/inventory/slow-moving', { params: inventoryParams(params) })
 }
+
+export function getBrandMonthlyArrivals(params = {}) {
+  return http.get('/inventory/brand-monthly-arrivals', { params: inventoryParams(params) })
+}

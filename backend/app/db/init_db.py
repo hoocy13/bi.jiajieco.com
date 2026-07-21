@@ -33,9 +33,5 @@ def init_db() -> None:
                 )
             )
             db.commit()
-        else:
-            user.hashed_password = get_password_hash(settings.DEMO_PASSWORD)
-            user.is_active = True
-            db.commit()
     finally:
         db.close()

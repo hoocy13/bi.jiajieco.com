@@ -92,6 +92,26 @@ def _int(value: object) -> int:
     return int(value)
 
 
+def _is_online_sales_channel(category: object, platform: object, channel_name: object) -> bool:
+    """Classify sales channels using the confirmed business rules."""
+    category_text = str(category or "").strip() or "未分类"
+    platform_text = str(platform or "").strip() or "未设置"
+    channel_text = str(channel_name or "").strip() or "未归类"
+    if category_text == "销售部渠道":
+        return False
+    if category_text == "运营部线上渠道":
+        return channel_text != "桢植线下快闪店"
+    if category_text == "梧颜":
+        return platform_text != "未设置"
+    if channel_text.startswith("渠道预留"):
+        return False
+    if channel_text.startswith("海旅"):
+        return True
+    return platform_text != "未设置" or any(
+        keyword in channel_text for keyword in ("快手", "微店", "微信小店", "抖店")
+    )
+
+
 def _as_date(value: object) -> date | None:
     if value is None:
         return None
@@ -698,7 +718,7 @@ def sales_channel_analysis(
     db: Session = Depends(get_ods_db),
 ) -> dict:
     cache_key = _sales_cache_key(
-        "channel-analysis-v5",
+        "channel-analysis-v6",
         range=range,
         start_date=start_date,
         end_date=end_date,
@@ -836,6 +856,10 @@ def sales_channel_analysis(
             "quantity": quantity,
             "share": paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
             "avg_order_amount": paid_amount / orders if orders else 0,
+            "is_online": _is_online_sales_channel(
+                row["category"], row["platform"], row["channel_name"]
+            ),
+            "matched": True,
         }
         for row in dimension_rows
         for fact in [facts_by_channel.get(row["channel_name"], {})]
@@ -863,6 +887,27 @@ def sales_channel_analysis(
         key=lambda row: row["paid_amount"],
         reverse=True,
     )
+    channel_rows.extend(
+        {
+            "channel_code": None,
+            "channel_name": row["channel"],
+            "category": "未匹配渠道",
+            "channel_type": "未匹配渠道",
+            "platform": "未设置",
+            "owner": "-",
+            "authorized": False,
+            "orders": _int(row["orders"]),
+            "paid_amount": row_paid_amount,
+            "quantity": _int(row["quantity"]),
+            "share": row_paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
+            "avg_order_amount": row_paid_amount / _int(row["orders"]) if _int(row["orders"]) else 0,
+            "is_online": _is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
+            "matched": False,
+        }
+        for row in unmatched_rows
+        for row_paid_amount in [_number(row["paid_amount"])]
+    )
+    channel_rows.sort(key=lambda row: row["paid_amount"], reverse=True)
 
     def summarize_channels(field: str, include_unset: bool = True) -> list[dict]:
         grouped: dict[str, dict] = {}
@@ -937,6 +982,155 @@ def sales_channel_analysis(
     return _cached_ok(cache_key, data)
 
 
+@router.get("/channel-customer-analysis")
+def sales_channel_customer_analysis(
+    channel_name: str = Query(..., min_length=1),
+    range: str = Query("this_year"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    keyword: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=10, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    """Drill an offline sales channel down to customer-level sales performance."""
+    cache_key = _sales_cache_key(
+        "channel-customer-analysis-v1",
+        channel_name=channel_name,
+        range=range,
+        start_date=start_date,
+        end_date=end_date,
+        keyword=keyword,
+        page=page,
+        page_size=page_size,
+    )
+    cached = _get_sales_cache(cache_key)
+    if cached is not None:
+        return ok(cached)
+
+    params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
+    if params is None:
+        return _cached_ok(
+            cache_key,
+            {
+                **meta,
+                "channel_name": channel_name.strip(),
+                "owner": "-",
+                "summary": {"customers": 0, "orders": 0, "quantity": 0, "paid_amount": 0},
+                "pagination": {"page": page, "page_size": page_size, "total": 0},
+                "rows": [],
+            },
+        )
+
+    params["channel_name"] = channel_name.strip()
+    customer_filter = ""
+    if keyword and keyword.strip():
+        params["customer_keyword"] = f"%{keyword.strip()}%"
+        customer_filter = """
+            WHERE customer_code LIKE :customer_keyword
+               OR customer_name LIKE :customer_keyword
+        """
+
+    customer_group_sql = f"""
+        SELECT
+          COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code, '未设置') AS customer_code,
+          COALESCE(o.customer_name, '未命名客户') AS customer_name,
+          COUNT(DISTINCT l.`订单编号`) AS orders,
+          SUM(COALESCE(l.`数量`, 0)) AS quantity,
+          SUM(COALESCE(l.`分摊后金额`, 0)) AS paid_amount
+        FROM `销售单明细账` l
+        LEFT JOIN (
+          SELECT
+            `订单编号`,
+            MAX(NULLIF(TRIM(`客户编号`), '')) AS customer_code,
+            MAX(NULLIF(TRIM(`客户名称`), '')) AS customer_name
+          FROM `销售单查询`
+          WHERE `下单时间` >= :start_date
+            AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            AND COALESCE(NULLIF(`销售渠道`, ''), '未归类') = :channel_name
+          GROUP BY `订单编号`
+        ) o ON o.`订单编号` = l.`订单编号`
+        WHERE l.`下单时间` >= :start_date
+          AND l.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+          AND COALESCE(NULLIF(l.`销售渠道`, ''), '未归类') = :channel_name
+        GROUP BY
+          COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code, '未设置'),
+          COALESCE(o.customer_name, '未命名客户')
+    """
+    summary_row = db.execute(
+        text(
+            f"""
+            SELECT
+              COUNT(*) AS customers,
+              SUM(customer_sales.orders) AS orders,
+              SUM(customer_sales.quantity) AS quantity,
+              SUM(customer_sales.paid_amount) AS paid_amount
+            FROM ({customer_group_sql}) customer_sales
+            {customer_filter}
+            """
+        ),
+        params,
+    ).mappings().one()
+    total = _int(summary_row["customers"])
+    total_paid_amount = _number(summary_row["paid_amount"])
+    row_params = {
+        **params,
+        "limit": page_size,
+        "offset": (page - 1) * page_size,
+    }
+    rows = db.execute(
+        text(
+            f"""
+            SELECT customer_sales.*
+            FROM ({customer_group_sql}) customer_sales
+            {customer_filter}
+            ORDER BY customer_sales.paid_amount DESC, customer_sales.quantity DESC, customer_sales.customer_code
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        row_params,
+    ).mappings().all()
+    owner = db.execute(
+        text(
+            """
+            SELECT COALESCE(NULLIF(TRIM(`负责人`), ''), '-')
+            FROM `渠道列表`
+            WHERE `渠道名称` = :channel_name
+            LIMIT 1
+            """
+        ),
+        params,
+    ).scalar()
+    data = {
+        **meta,
+        "channel_name": channel_name.strip(),
+        "owner": owner or "-",
+        "summary": {
+            "customers": total,
+            "orders": _int(summary_row["orders"]),
+            "quantity": _int(summary_row["quantity"]),
+            "paid_amount": total_paid_amount,
+        },
+        "pagination": {"page": page, "page_size": page_size, "total": total},
+        "rows": [
+            {
+                "customer_code": row["customer_code"],
+                "customer_name": row["customer_name"],
+                "orders": row_orders,
+                "quantity": _int(row["quantity"]),
+                "paid_amount": row_paid_amount,
+                "share": row_paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
+                "avg_order_amount": row_paid_amount / row_orders if row_orders else 0,
+            }
+            for row in rows
+            for row_orders in [_int(row["orders"])]
+            for row_paid_amount in [_number(row["paid_amount"])]
+        ],
+    }
+    return _cached_ok(cache_key, data)
+
+
 @router.get("/brand-channel-analysis")
 def sales_brand_channel_analysis(
     brand: str = Query(..., min_length=1),
@@ -949,7 +1143,7 @@ def sales_brand_channel_analysis(
     db: Session = Depends(get_ods_db),
 ) -> dict:
     cache_key = _sales_cache_key(
-        "brand-channel-analysis",
+        "brand-channel-analysis-v3",
         brand=brand,
         range=range,
         start_date=start_date,
@@ -980,6 +1174,13 @@ def sales_brand_channel_analysis(
                 "platforms": [],
                 "channels": [],
                 "products": [],
+                "salesperson_product_types": [],
+                "sales_contribution": {
+                    "online": {"paid_amount": 0, "quantity": 0},
+                    "offline": {"paid_amount": 0, "quantity": 0},
+                    "paid_amount_difference": 0,
+                    "quantity_difference": 0,
+                },
                 "unmatched_channels": [],
                 "filter_options": {
                     "channel_types": [],
@@ -1031,7 +1232,7 @@ def sales_brand_channel_analysis(
         AND COALESCE(NULLIF(`销售渠道`, ''), '未归类') IN (
           SELECT `渠道名称`
           FROM `渠道列表`
-          WHERE COALESCE(NULLIF(`渠道类型`, ''), '未分类') IN ({", ".join(channel_type_params)})
+          WHERE COALESCE(NULLIF(`分类`, ''), '未分类') IN ({", ".join(channel_type_params)})
         )
         """
     if selected_channel_names:
@@ -1042,7 +1243,7 @@ def sales_brand_channel_analysis(
     channel_dimension_where = []
     if selected_channel_types:
         channel_dimension_where.append(
-            f"COALESCE(NULLIF(c.`渠道类型`, ''), '未分类') IN ({', '.join(channel_type_params)})"
+            f"COALESCE(NULLIF(c.`分类`, ''), '未分类') IN ({', '.join(channel_type_params)})"
         )
     if selected_channel_names:
         channel_dimension_where.append(
@@ -1109,7 +1310,8 @@ def sales_brand_channel_analysis(
             SELECT
               c.`渠道编号` AS channel_code,
               c.`渠道名称` AS channel_name,
-              COALESCE(NULLIF(c.`渠道类型`, ''), '未分类') AS channel_type,
+              COALESCE(NULLIF(c.`分类`, ''), '未分类') AS channel_type,
+              COALESCE(NULLIF(c.`渠道类型`, ''), '未分类') AS source_channel_type,
               COALESCE(NULLIF(c.`线上平台`, ''), '未设置') AS platform,
               COALESCE(NULLIF(c.`负责人`, ''), '-') AS owner,
               COALESCE(f.detail_rows, 0) AS detail_rows,
@@ -1129,7 +1331,7 @@ def sales_brand_channel_analysis(
         text(
             f"""
             SELECT
-              COALESCE(NULLIF(c.`渠道类型`, ''), '未分类') AS channel_type,
+              COALESCE(NULLIF(c.`分类`, ''), '未分类') AS channel_type,
               COUNT(*) AS channels,
               SUM(CASE WHEN COALESCE(f.orders, 0) > 0 THEN 1 ELSE 0 END) AS active_channels,
               SUM(COALESCE(f.orders, 0)) AS orders,
@@ -1138,7 +1340,7 @@ def sales_brand_channel_analysis(
             FROM `渠道列表` c
             LEFT JOIN ({channel_fact_sql}) f ON f.channel = c.`渠道名称`
             {channel_dimension_clause}
-            GROUP BY COALESCE(NULLIF(c.`渠道类型`, ''), '未分类')
+            GROUP BY COALESCE(NULLIF(c.`分类`, ''), '未分类')
             ORDER BY paid_amount DESC
             """
         ),
@@ -1184,6 +1386,28 @@ def sales_brand_channel_analysis(
         params,
     ).mappings().all()
 
+    salesperson_product_type_rows = db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(NULLIF(TRIM(c.`负责人`), ''), '未设置') AS salesperson,
+              COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未分类') AS product_type,
+              SUM(COALESCE(s.`数量`, 0)) AS quantity,
+              SUM(COALESCE(s.`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账` s
+            LEFT JOIN `渠道列表` c
+              ON c.`渠道名称` = COALESCE(NULLIF(s.`销售渠道`, ''), '未归类')
+            WHERE {fact_where}
+              AND NULLIF(TRIM(s.`货品分类`), '') IN ('正装', '小样')
+            GROUP BY
+              COALESCE(NULLIF(TRIM(c.`负责人`), ''), '未设置'),
+              COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未分类')
+            ORDER BY salesperson, product_type
+            """
+        ),
+        params,
+    ).mappings().all()
+
     unmatched_rows = db.execute(
         text(
             f"""
@@ -1202,7 +1426,7 @@ def sales_brand_channel_analysis(
             """
             SELECT
               `渠道名称` AS channel_name,
-              COALESCE(NULLIF(`渠道类型`, ''), '未分类') AS channel_type
+              COALESCE(NULLIF(`分类`, ''), '未分类') AS channel_type
             FROM `渠道列表`
             WHERE NULLIF(`渠道名称`, '') IS NOT NULL
             ORDER BY channel_type, channel_name
@@ -1225,6 +1449,81 @@ def sales_brand_channel_analysis(
             "avg_order_amount": row_paid_amount / row_orders if row_orders else 0,
         }
 
+    channel_data = [
+        {
+            "channel_code": row["channel_code"],
+            "channel_name": row["channel_name"],
+            "channel_type": row["channel_type"],
+            "source_channel_type": row["source_channel_type"],
+            "platform": row["platform"],
+            "owner": row["owner"],
+            "detail_rows": _int(row["detail_rows"]),
+            "orders": row_orders,
+            "quantity": row_quantity,
+            "paid_amount": row_paid_amount,
+            "share": row_paid_amount / paid_amount * 100 if paid_amount else 0,
+            "avg_order_amount": row_paid_amount / row_orders if row_orders else 0,
+            "avg_unit_price": row_paid_amount / row_quantity if row_quantity else 0,
+            "is_online": _is_online_sales_channel(row["channel_type"], row["platform"], row["channel_name"]),
+            "matched": True,
+        }
+        for row in channel_rows
+        for row_orders in [_int(row["orders"])]
+        for row_quantity in [_int(row["quantity"])]
+        for row_paid_amount in [_number(row["paid_amount"])]
+    ]
+    channel_data.extend(
+        {
+            "channel_code": None,
+            "channel_name": row["channel"],
+            "channel_type": "未匹配渠道",
+            "source_channel_type": "未匹配渠道",
+            "platform": "未设置",
+            "owner": "-",
+            "detail_rows": 0,
+            "orders": _int(row["orders"]),
+            "quantity": _int(row["quantity"]),
+            "paid_amount": row_paid_amount,
+            "share": row_paid_amount / paid_amount * 100 if paid_amount else 0,
+            "avg_order_amount": row_paid_amount / _int(row["orders"]) if _int(row["orders"]) else 0,
+            "avg_unit_price": row_paid_amount / _int(row["quantity"]) if _int(row["quantity"]) else 0,
+            "is_online": _is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
+            "matched": False,
+        }
+        for row in unmatched_rows
+        for row_paid_amount in [_number(row["paid_amount"])]
+    )
+    channel_data.sort(key=lambda row: row["paid_amount"], reverse=True)
+    online_channel_data = [row for row in channel_data if row["is_online"]]
+    offline_channel_data = [row for row in channel_data if not row["is_online"]]
+    online_paid_amount = sum(row["paid_amount"] for row in online_channel_data)
+    offline_paid_amount = sum(row["paid_amount"] for row in offline_channel_data)
+    online_quantity = sum(row["quantity"] for row in online_channel_data)
+    offline_quantity = sum(row["quantity"] for row in offline_channel_data)
+
+    salesperson_data: dict[str, dict] = {}
+    for row in salesperson_product_type_rows:
+        salesperson = row["salesperson"]
+        item = salesperson_data.setdefault(
+            salesperson,
+            {
+                "salesperson": salesperson,
+                "regular_quantity": 0,
+                "regular_paid_amount": 0.0,
+                "sample_quantity": 0,
+                "sample_paid_amount": 0.0,
+            },
+        )
+        prefix = "regular" if row["product_type"] == "正装" else "sample"
+        item[f"{prefix}_quantity"] += _int(row["quantity"])
+        item[f"{prefix}_paid_amount"] += _number(row["paid_amount"])
+    salesperson_product_types = []
+    for item in salesperson_data.values():
+        item["total_quantity"] = item["regular_quantity"] + item["sample_quantity"]
+        item["total_paid_amount"] = item["regular_paid_amount"] + item["sample_paid_amount"]
+        salesperson_product_types.append(item)
+    salesperson_product_types.sort(key=lambda row: row["total_paid_amount"], reverse=True)
+
     data = {
         **meta,
         "brand": brand.strip(),
@@ -1246,26 +1545,14 @@ def sales_brand_channel_analysis(
         ],
         "channel_types": [dimension_row(row, "channel_type") for row in type_rows],
         "platforms": [dimension_row(row, "platform") for row in platform_rows],
-        "channels": [
-            {
-                "channel_code": row["channel_code"],
-                "channel_name": row["channel_name"],
-                "channel_type": row["channel_type"],
-                "platform": row["platform"],
-                "owner": row["owner"],
-                "detail_rows": _int(row["detail_rows"]),
-                "orders": row_orders,
-                "quantity": row_quantity,
-                "paid_amount": row_paid_amount,
-                "share": row_paid_amount / paid_amount * 100 if paid_amount else 0,
-                "avg_order_amount": row_paid_amount / row_orders if row_orders else 0,
-                "avg_unit_price": row_paid_amount / row_quantity if row_quantity else 0,
-            }
-            for row in channel_rows
-            for row_orders in [_int(row["orders"])]
-            for row_quantity in [_int(row["quantity"])]
-            for row_paid_amount in [_number(row["paid_amount"])]
-        ],
+        "channels": channel_data,
+        "sales_contribution": {
+            "online": {"paid_amount": online_paid_amount, "quantity": online_quantity},
+            "offline": {"paid_amount": offline_paid_amount, "quantity": offline_quantity},
+            "paid_amount_difference": paid_amount - online_paid_amount - offline_paid_amount,
+            "quantity_difference": quantity - online_quantity - offline_quantity,
+        },
+        "salesperson_product_types": salesperson_product_types,
         "products": [
             {
                 "rank": index + 1,

@@ -20,6 +20,10 @@ export function getSalesChannelAnalysis(params = {}) {
   return http.get('/sales/channel-analysis', { params })
 }
 
+export function getSalesChannelCustomerAnalysis(params = {}) {
+  return http.get('/sales/channel-customer-analysis', { params })
+}
+
 export function getSalesBrandChannelAnalysis(params = {}) {
   return http.get('/sales/brand-channel-analysis', {
     params,

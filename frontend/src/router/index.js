@@ -14,6 +14,7 @@ import InventoryTurnover from '../views/data/InventoryTurnover.vue'
 import SlowMoving from '../views/data/SlowMoving.vue'
 import BatchExpiryAnalysis from '../views/data/BatchExpiryAnalysis.vue'
 import InventoryHealth from '../views/data/InventoryHealth.vue'
+import BrandMonthlyArrivals from '../views/data/BrandMonthlyArrivals.vue'
 import AiDecisionCenter from '../views/data/AiDecisionCenter.vue'
 import TextToSqlAgent from '../views/data/TextToSqlAgent.vue'
 import ModelSettings from '../views/data/ModelSettings.vue'
@@ -38,6 +39,7 @@ const routes = [
       { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析' } },
       { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览' } },
+      { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '库存周转' } },
       { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销商品' } },
       { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析' } },

@@ -6,7 +6,7 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { getSalesChannelAnalysis } from '../../api/sales'
+import { getSalesChannelAnalysis, getSalesChannelCustomerAnalysis } from '../../api/sales'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
 
@@ -60,6 +60,21 @@ const analysis = ref({
   unmatched_channels: [],
   filter_options: { channel_types: [], platforms: [] },
 })
+const customerDrawerVisible = ref(false)
+const customerLoading = ref(false)
+const selectedOfflineChannel = ref(null)
+const customerKeyword = ref('')
+const customerPage = ref(1)
+const customerPageSize = ref(20)
+const customerAnalysis = ref({
+  channel_name: '',
+  owner: '-',
+  start_date: '',
+  end_date: '',
+  summary: { customers: 0, orders: 0, quantity: 0, paid_amount: 0 },
+  pagination: { page: 1, page_size: 20, total: 0 },
+  rows: [],
+})
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -81,6 +96,7 @@ function progressWidth(value) {
 }
 
 function isOnlineChannel(item) {
+  if (typeof item.is_online === 'boolean') return item.is_online
   return Boolean(item.platform && item.platform !== '未设置')
 }
 
@@ -101,6 +117,13 @@ const dateRangeLabel = computed(() => {
   return start === '-' || end === '-' ? '-' : `${start} 至 ${end}`
 })
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
+const salesChannelCounts = computed(() => analysis.value.rows.reduce((result, item) => {
+  if (Number(item.orders || 0) === 0 && Number(item.paid_amount || 0) === 0) return result
+  const key = isOnlineChannel(item) ? 'online' : 'offline'
+  result[key] += 1
+  result[`${key}Amount`] += Number(item.paid_amount || 0)
+  return result
+}, { online: 0, offline: 0, onlineAmount: 0, offlineAmount: 0 }))
 const metrics = computed(() => [
   {
     label: '周期销售额', alias: '(GMV)', value: formatNumber(analysis.value.summary.paid_amount, 2),
@@ -113,8 +136,12 @@ const metrics = computed(() => [
     label: '销售数量', value: formatNumber(analysis.value.summary.quantity), unit: '件', note: analysis.value.period,
   },
   {
-    label: '有销售渠道', value: formatNumber(analysis.value.channel_summary.active_channels), unit: '个',
-    note: `共 ${formatNumber(analysis.value.channel_summary.total_channels)} 个渠道`,
+    label: '线上销售渠道', value: formatNumber(salesChannelCounts.value.online), unit: '个',
+    note: `销售额占比 ${formatPercent(analysis.value.summary.paid_amount ? salesChannelCounts.value.onlineAmount / analysis.value.summary.paid_amount * 100 : 0)}`,
+  },
+  {
+    label: '线下销售渠道', value: formatNumber(salesChannelCounts.value.offline), unit: '个',
+    note: `销售额占比 ${formatPercent(analysis.value.summary.paid_amount ? salesChannelCounts.value.offlineAmount / analysis.value.summary.paid_amount * 100 : 0)}`,
   },
 ])
 
@@ -132,6 +159,16 @@ const offlineChannels = computed(() => allOfflineChannels.value.slice(0, 6))
 const onlineShare = computed(() => allOnlineChannels.value.reduce((sum, item) => sum + Number(item.share || 0), 0))
 const offlineShare = computed(() => allOfflineChannels.value.reduce((sum, item) => sum + Number(item.share || 0), 0))
 const onlinePlatforms = computed(() => analysis.value.platform_summary.filter((item) => item.platform !== '未设置'))
+const channelDirectionSummary = computed(() => [
+  { label: '线上渠道', rows: allOnlineChannels.value },
+  { label: '线下渠道', rows: allOfflineChannels.value },
+].map((group) => ({
+  channel_kind: group.label,
+  channels: group.rows.length,
+  orders: group.rows.reduce((sum, item) => sum + Number(item.orders || 0), 0),
+  paid_amount: group.rows.reduce((sum, item) => sum + Number(item.paid_amount || 0), 0),
+  share: group.rows.reduce((sum, item) => sum + Number(item.share || 0), 0),
+})))
 
 const salesContribution = computed(() => {
   const channels = activeChannels.value.filter((item) => Number(item.paid_amount || 0) !== 0)
@@ -246,6 +283,49 @@ async function fetchAnalysis() {
   } finally {
     loading.value = false
   }
+}
+
+async function fetchCustomerAnalysis() {
+  if (!selectedOfflineChannel.value) return
+  customerLoading.value = true
+  try {
+    const result = await getSalesChannelCustomerAnalysis({
+      channel_name: selectedOfflineChannel.value.channel_name,
+      start_date: analysis.value.start_date,
+      end_date: analysis.value.end_date,
+      keyword: customerKeyword.value.trim() || undefined,
+      page: customerPage.value,
+      page_size: customerPageSize.value,
+    })
+    customerAnalysis.value = result.data
+  } finally {
+    customerLoading.value = false
+  }
+}
+
+function openCustomerDrilldown(row) {
+  selectedOfflineChannel.value = row
+  customerKeyword.value = ''
+  customerPage.value = 1
+  customerPageSize.value = 20
+  customerDrawerVisible.value = true
+  fetchCustomerAnalysis()
+}
+
+function searchCustomers() {
+  customerPage.value = 1
+  fetchCustomerAnalysis()
+}
+
+function changeCustomerPage(page) {
+  customerPage.value = page
+  fetchCustomerAnalysis()
+}
+
+function changeCustomerPageSize(size) {
+  customerPageSize.value = size
+  customerPage.value = 1
+  fetchCustomerAnalysis()
 }
 
 onMounted(fetchAnalysis)
@@ -374,13 +454,13 @@ onMounted(fetchAnalysis)
       <div class="channel-efficiency-grid">
         <article class="panel efficiency-card">
           <header>
-            <div><h2>线上 TOP 渠道</h2><p>仅统计已配置线上平台的渠道</p></div>
+            <div><h2>线上 TOP 渠道</h2><p>按业务渠道分类口径统计</p></div>
             <strong class="share-total">{{ formatPercent(onlineShare) }}</strong>
           </header>
           <div v-if="onlineChannels.length" class="ranked-channel-list">
             <div v-for="(item, index) in onlineChannels" :key="item.channel_name" class="ranked-channel-item">
               <span class="channel-rank">{{ index + 1 }}</span>
-              <div class="channel-main"><strong>{{ displayPlatform(item.platform) }}</strong><span>{{ item.channel_name }}</span></div>
+              <div class="channel-main"><strong>{{ displayPlatform(item.platform === '未设置' ? '线上渠道' : item.platform) }}</strong><span>{{ item.channel_name }}</span></div>
               <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
             </div>
           </div>
@@ -389,14 +469,14 @@ onMounted(fetchAnalysis)
 
         <article class="panel efficiency-card">
           <header>
-            <div><h2>线下核心渠道</h2><p>线上平台未设置的渠道归入线下</p></div>
+            <div><h2>线下核心渠道</h2><p>按业务渠道分类口径统计</p></div>
             <strong class="share-total">{{ formatPercent(offlineShare) }}</strong>
           </header>
           <div v-if="offlineChannels.length" class="offline-channel-list">
             <div v-for="item in offlineChannels" :key="item.channel_name" class="offline-channel-item">
               <div class="contribution-meta"><strong>{{ item.channel_name }}</strong><span>{{ formatPercent(item.share) }}</span></div>
               <div class="progress-track"><i :style="{ width: progressWidth(item.share) }"></i></div>
-              <div class="contribution-detail"><span>{{ item.channel_type || '未分类' }}</span><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+              <div class="contribution-detail"><span>{{ item.category || '未分类' }}</span><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
             </div>
           </div>
           <el-empty v-else description="暂无线下渠道数据" :image-size="76" />
@@ -412,10 +492,10 @@ onMounted(fetchAnalysis)
 
       <div class="content-grid detail-summary-grid">
         <section class="panel">
-          <header><h2>渠道类型表现<span class="panel-source">（渠道列表 + 销售单查询）</span></h2></header>
-          <el-table :data="analysis.type_summary" height="300">
-            <el-table-column prop="channel_type" label="渠道类型" min-width="150" sortable />
-            <el-table-column prop="active_channels" label="有销售渠道" width="132" sortable />
+          <header><h2>线上与线下渠道表现<span class="panel-source">（渠道列表 + 销售单明细账）</span></h2></header>
+          <el-table :data="channelDirectionSummary" height="300">
+            <el-table-column prop="channel_kind" label="渠道归属" min-width="150" sortable />
+            <el-table-column prop="channels" label="渠道数" width="120" sortable />
             <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
             <el-table-column prop="paid_amount" label="销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
             <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
@@ -426,7 +506,7 @@ onMounted(fetchAnalysis)
           <header><h2>线上平台表现<span class="panel-source">（不含线下渠道）</span></h2></header>
           <el-table :data="onlinePlatforms" height="300">
             <el-table-column prop="platform" label="线上平台" min-width="150" sortable />
-            <el-table-column prop="active_channels" label="有销售渠道" width="132" sortable />
+            <el-table-column prop="channels" label="渠道数" width="120" sortable />
             <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
             <el-table-column prop="paid_amount" label="销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
             <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
@@ -435,15 +515,15 @@ onMounted(fetchAnalysis)
       </div>
 
       <section class="panel">
-        <header><h2>渠道清单<span class="panel-source">（渠道列表）</span></h2><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></header>
+        <header><h2>渠道清单<span class="panel-source">（销售单明细账 + 渠道列表）</span></h2><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></header>
         <el-table :data="analysis.rows" height="520">
           <el-table-column prop="channel_code" label="编号" width="90" sortable />
           <el-table-column prop="channel_name" label="渠道名称" min-width="220" show-overflow-tooltip sortable>
             <template #default="{ row }"><div class="channel-cell"><strong>{{ row.channel_name }}</strong><span><i :style="{ width: progressWidth(row.share) }"></i></span></div></template>
           </el-table-column>
-          <el-table-column prop="channel_type" label="渠道类型" width="130" sortable />
+          <el-table-column prop="category" label="渠道分类" width="150" sortable />
           <el-table-column prop="platform" label="平台归属" width="140" sortable>
-            <template #default="{ row }">{{ row.platform === '未设置' ? '线下' : row.platform }}</template>
+            <template #default="{ row }">{{ isOnlineChannel(row) ? (row.platform === '未设置' ? '线上' : row.platform) : '线下' }}</template>
           </el-table-column>
           <el-table-column prop="owner" label="负责人" width="110" sortable />
           <el-table-column prop="authorized" label="授权" width="90" sortable>
@@ -457,17 +537,74 @@ onMounted(fetchAnalysis)
         </el-table>
       </section>
 
-      <section v-if="analysis.unmatched_channels.length" class="panel">
-        <header><h2>未匹配销售渠道<span class="panel-source">（销售单查询 + 渠道列表）</span></h2></header>
-        <el-table :data="analysis.unmatched_channels" height="220">
-          <el-table-column prop="channel" label="销售渠道" min-width="220" sortable />
+      <section class="panel">
+        <header><h2>线下渠道表现<span class="panel-source">（销售单明细账 + 渠道列表，可下钻客户）</span></h2></header>
+        <el-table :data="allOfflineChannels" height="360" @row-dblclick="openCustomerDrilldown">
+          <el-table-column prop="channel_name" label="线下渠道" min-width="240" show-overflow-tooltip sortable />
+          <el-table-column prop="category" label="渠道分类" width="150" sortable />
           <el-table-column prop="orders" label="订单数" width="130" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
           <el-table-column prop="quantity" label="销售数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
           <el-table-column prop="paid_amount" label="销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
           <el-table-column prop="share" label="销售占比" width="120" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
+          <el-table-column label="客户下钻" width="110" fixed="right" align="center">
+            <template #default="{ row }"><el-button link type="primary" @click.stop="openCustomerDrilldown(row)">查看客户</el-button></template>
+          </el-table-column>
         </el-table>
       </section>
     </template>
+
+    <el-drawer v-model="customerDrawerVisible" size="78%" class="customer-sales-drawer" destroy-on-close>
+      <template #header>
+        <div class="customer-drawer-title">
+          <div>
+            <p class="section-kicker">线下渠道 · 客户销售下钻</p>
+            <h2>{{ customerAnalysis.channel_name || selectedOfflineChannel?.channel_name }}</h2>
+          </div>
+          <span>销售人员：<strong>{{ customerAnalysis.owner || selectedOfflineChannel?.owner || '-' }}</strong></span>
+        </div>
+      </template>
+
+      <div class="customer-drawer-body" v-loading="customerLoading">
+        <div class="customer-drill-meta">
+          <span>统计期间：{{ formatDate(customerAnalysis.start_date) }} 至 {{ formatDate(customerAnalysis.end_date) }}</span>
+          <div class="customer-search">
+            <el-input v-model="customerKeyword" clearable placeholder="客户编号 / 客户名称" @keyup.enter="searchCustomers" />
+            <el-button type="primary" @click="searchCustomers">查询</el-button>
+          </div>
+        </div>
+
+        <div class="customer-summary-grid">
+          <article><span>客户数</span><strong>{{ formatNumber(customerAnalysis.summary.customers) }} <small>个</small></strong></article>
+          <article><span>订单数</span><strong>{{ formatNumber(customerAnalysis.summary.orders) }} <small>单</small></strong></article>
+          <article><span>销售数量</span><strong>{{ formatNumber(customerAnalysis.summary.quantity) }} <small>件</small></strong></article>
+          <article class="is-accent"><span>销售金额</span><strong>¥ {{ formatNumber(customerAnalysis.summary.paid_amount, 2) }}</strong></article>
+        </div>
+
+        <section class="panel customer-sales-table">
+          <header><h2>客户销售情况<span class="panel-source">（金额/数量：销售单明细账；客户名称：销售单查询）</span></h2></header>
+          <el-table :data="customerAnalysis.rows" height="500">
+            <el-table-column prop="customer_code" label="客户编号" min-width="150" show-overflow-tooltip sortable />
+            <el-table-column prop="customer_name" label="客户名称" min-width="220" show-overflow-tooltip sortable />
+            <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
+            <el-table-column prop="quantity" label="销售数量" width="120" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
+            <el-table-column prop="paid_amount" label="销售金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+            <el-table-column prop="share" label="销售占比" width="110" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
+            <el-table-column prop="avg_order_amount" label="客单价" width="130" sortable><template #default="{ row }">{{ formatNumber(row.avg_order_amount, 2) }}</template></el-table-column>
+          </el-table>
+          <div class="customer-table-footer">
+            <el-pagination
+              background layout="total, sizes, prev, pager, next"
+              :total="customerAnalysis.pagination.total"
+              :current-page="customerPage"
+              :page-size="customerPageSize"
+              :page-sizes="[20, 50, 100]"
+              @current-change="changeCustomerPage"
+              @size-change="changeCustomerPageSize"
+            />
+          </div>
+        </section>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -536,7 +673,7 @@ onMounted(fetchAnalysis)
 .hero-period span { display: block; color: var(--brand-primary); font-size: 13px; font-weight: 700; }
 .hero-period strong { display: block; margin-top: 7px; color: var(--ink); font-size: 14px; }
 
-.channel-kpi-grid { display: grid; grid-template-columns: 1.28fr repeat(3, 1fr); gap: 12px; }
+.channel-kpi-grid { display: grid; grid-template-columns: 1.28fr repeat(4, 1fr); gap: 12px; }
 .channel-kpi-card { min-width: 0; padding: 20px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 3px 12px rgba(23, 32, 51, .035); }
 .kpi-label { display: block; color: var(--muted); font-size: 13px; font-weight: 650; }
 .kpi-alias { margin-left: 4px; color: #94a3b8; font-size: 11px; font-weight: 500; }
@@ -604,6 +741,24 @@ onMounted(fetchAnalysis)
 .contribution-detail { color: #94a3b8; font-size: 11px; }
 .detail-summary-grid { margin-bottom: 0; }
 .channel-dashboard-shell :deep(.channel-cell i) { background: var(--brand-primary); }
+.customer-drawer-title { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 20px; padding-right: 12px; }
+.customer-drawer-title h2 { margin: 2px 0 0; color: var(--ink); font-size: 22px; }
+.customer-drawer-title > span { color: var(--muted); font-size: 13px; }
+.customer-drawer-title > span strong { color: var(--ink); }
+.customer-drawer-body { display: grid; gap: 14px; min-height: 300px; }
+.customer-drill-meta { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
+.customer-search { display: flex; width: min(380px, 100%); gap: 8px; }
+.customer-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.customer-summary-grid article { display: grid; gap: 10px; min-height: 88px; align-content: center; padding: 16px 18px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.customer-summary-grid article > span { color: var(--muted); font-size: 12px; }
+.customer-summary-grid article > strong { color: var(--ink); font-size: 22px; }
+.customer-summary-grid article small { color: var(--muted); font-size: 11px; }
+.customer-summary-grid article.is-accent { background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-dark)); border-color: transparent; }
+.customer-summary-grid article.is-accent :is(span, strong) { color: #fff; }
+.customer-sales-table { overflow: hidden; }
+.customer-table-footer { display: flex; justify-content: flex-end; padding: 14px 16px; border-top: 1px solid var(--line); }
+:deep(.customer-sales-drawer .el-drawer__header) { margin-bottom: 0; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+:deep(.customer-sales-drawer .el-drawer__body) { background: #f6f7f9; }
 
 @media (max-width: 1180px) {
   .channel-filter-bar .filter-controls { flex-wrap: wrap; }
@@ -615,6 +770,7 @@ onMounted(fetchAnalysis)
   .hero-actions { width: 100%; align-items: flex-start; }
   .hero-period { text-align: left; }
   .channel-efficiency-grid { grid-template-columns: 1fr; }
+  .customer-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
   .channel-date-filter-wrap { width: 100%; min-width: 0; flex-basis: 100%; }
@@ -625,5 +781,8 @@ onMounted(fetchAnalysis)
   .channel-kpi-grid { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; flex-direction: column; }
   .comparison-title { align-items: flex-start; flex-direction: column; }
+  .customer-drawer-title, .customer-drill-meta { align-items: flex-start; flex-direction: column; }
+  .customer-search { width: 100%; }
+  .customer-summary-grid { grid-template-columns: 1fr; }
 }
 </style>
