@@ -1474,6 +1474,7 @@ def brand_monthly_arrivals(
     end_date: date | None = Query(None),
     brand: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
+    warehouse: list[str] | None = Query(None),
     detail_product_type: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=10, le=100),
@@ -1484,6 +1485,7 @@ def brand_monthly_arrivals(
     del current_user
     brands = tuple(sorted({value.strip() for value in brand or [] if value.strip()}))
     product_types = tuple(sorted({value.strip() for value in product_type or [] if value.strip()}))
+    warehouses = tuple(sorted({value.strip() for value in warehouse or [] if value.strip()}))
     detail_product_type = (detail_product_type or "").strip()
     page, page_size, offset = _pagination(page, page_size)
 
@@ -1494,11 +1496,12 @@ def brand_monthly_arrivals(
         selected_start, selected_end = selected_end, selected_start
     end_exclusive = selected_end + timedelta(days=1)
     cache_key = _cache_key(
-        "brand-monthly-arrivals-v2",
+        "brand-monthly-arrivals-v3",
         start_date=selected_start.isoformat(),
         end_date=selected_end.isoformat(),
         brands=brands,
         product_types=product_types,
+        warehouses=warehouses,
         detail_product_type=detail_product_type,
         page=page,
         page_size=page_size,
@@ -1530,11 +1533,21 @@ def brand_monthly_arrivals(
             params[key] = value
         product_type_sql = f"AND COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') IN ({', '.join(placeholders)})"
 
+    warehouse_sql = ""
+    if warehouses:
+        placeholders = []
+        for index, value in enumerate(warehouses):
+            key = f"warehouse_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        warehouse_sql = f"AND COALESCE(NULLIF(TRIM(h.`入库仓库`), ''), '未设置') IN ({', '.join(placeholders)})"
+
     common_filter = f"""
       h.`入库时间` >= :start_date
       AND h.`入库时间` < :end_date
       {brand_sql}
       {product_type_sql}
+      {warehouse_sql}
     """
 
     option_rows = db.execute(
@@ -1543,11 +1556,12 @@ def brand_monthly_arrivals(
             SELECT DISTINCT
               YEAR(h.`入库时间`) AS receipt_year,
               d.`品牌` AS brand,
-              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+              COALESCE(NULLIF(TRIM(h.`入库仓库`), ''), '未设置') AS warehouse
             FROM `入库查询明细` d
             INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
             WHERE h.`入库时间` IS NOT NULL
-            ORDER BY receipt_year DESC, brand ASC, product_type ASC
+            ORDER BY receipt_year DESC, brand ASC, product_type ASC, warehouse ASC
             """
         )
     ).mappings().all()
@@ -1714,12 +1728,14 @@ def brand_monthly_arrivals(
         "end_date": selected_end.isoformat(),
         "brands_selected": list(brands),
         "product_types_selected": list(product_types),
+        "warehouses_selected": list(warehouses),
         "detail_product_type": detail_product_type,
         "updated_at": summary["updated_at"].isoformat() if summary["updated_at"] else None,
         "filter_options": {
             "years": sorted({_int(row["receipt_year"]) for row in option_rows}, reverse=True),
             "brands": sorted({_text(row["brand"]) for row in option_rows if row["brand"]}),
             "product_types": sorted({_text(row["product_type"]) for row in option_rows if row["product_type"]}),
+            "warehouses": sorted({_text(row["warehouse"]) for row in option_rows if row["warehouse"]}),
         },
         "summary": {
             "net_quantity": _number(summary["net_quantity"]),

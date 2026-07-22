@@ -31,12 +31,17 @@ const selectedProductTypes = ref(
     ? route.query.product_type.map(String)
     : route.query.product_type ? [String(route.query.product_type)] : [],
 )
+const selectedWarehouses = ref(
+  Array.isArray(route.query.warehouse)
+    ? route.query.warehouse.map(String)
+    : route.query.warehouse ? [String(route.query.warehouse)] : [],
+)
 const detailType = ref(['正装', '小样'].includes(String(route.query.detail_type)) ? String(route.query.detail_type) : 'all')
 const page = ref(Number(route.query.page || 1))
 const pageSize = ref(20)
 const analysis = ref({
   year: today.getFullYear(), period: '本年', start_date: yearStartText, end_date: todayText, updated_at: '',
-  filter_options: { years: [], brands: [], product_types: [] },
+  filter_options: { years: [], brands: [], product_types: [], warehouses: [] },
   summary: { net_quantity: 0, net_cost_amount: 0, brand_count: 0, document_count: 0, sku_count: 0, supplier_count: 0 },
   trend: [], product_type_summary: [], products: [], brands: [],
   pagination: { page: 1, page_size: 20, total: 0 }, details: [],
@@ -142,6 +147,7 @@ async function fetchData(resetPage = false) {
     const response = await getBrandMonthlyArrivals({
       start_date: startDate, end_date: endDate, brand: selectedBrands.value,
       product_type: selectedProductTypes.value,
+      warehouse: selectedWarehouses.value,
       detail_product_type: detailType.value === 'all' ? undefined : detailType.value,
       page: page.value, page_size: pageSize.value,
     })
@@ -151,6 +157,7 @@ async function fetchData(resetPage = false) {
       ...(selectedRange.value === 'custom' ? { start_date: startDate, end_date: endDate } : {}),
       ...(selectedBrands.value.length ? { brand: selectedBrands.value } : {}),
       ...(selectedProductTypes.value.length ? { product_type: selectedProductTypes.value } : {}),
+      ...(selectedWarehouses.value.length ? { warehouse: selectedWarehouses.value } : {}),
       ...(detailType.value !== 'all' ? { detail_type: detailType.value } : {}),
       ...(page.value > 1 ? { page: page.value } : {}),
     } })
@@ -183,6 +190,7 @@ function resetFilters() {
   dateRange.value = [yearStartText, todayText]
   selectedBrands.value = []
   selectedProductTypes.value = []
+  selectedWarehouses.value = []
   detailType.value = 'all'
   fetchData(true)
 }
@@ -214,6 +222,9 @@ onMounted(() => fetchData())
       </el-select>
       <el-select v-model="selectedProductTypes" multiple filterable collapse-tags collapse-tags-tooltip clearable placeholder="全部货品分类" class="type-select">
         <el-option v-for="item in analysis.filter_options.product_types" :key="item" :label="item" :value="item" />
+      </el-select>
+      <el-select v-model="selectedWarehouses" multiple filterable collapse-tags collapse-tags-tooltip clearable placeholder="全部入库仓库" class="warehouse-select">
+        <el-option v-for="item in analysis.filter_options.warehouses" :key="item" :label="item" :value="item" />
       </el-select>
       <el-button type="primary" :icon="'Search'" :disabled="!canSearch" @click="fetchData(true)">查询</el-button>
       <el-tooltip content="恢复默认筛选" placement="top"><el-button :icon="'RefreshLeft'" circle @click="resetFilters" /></el-tooltip>
@@ -316,7 +327,7 @@ onMounted(() => fetchData())
   width: 100% !important;
   max-width: 100% !important;
 }
-.brand-select { width: min(300px, 24vw); }.type-select { width: min(220px, 18vw); }
+.brand-select { width: min(250px, 20vw); }.type-select { width: min(190px, 16vw); }.warehouse-select { width: min(220px, 18vw); }
 .arrival-hero { min-height: 116px; padding: 22px 28px; border-top: 3px solid #4f7f2d; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(105deg, #fff 65%, #f6f9ef); }
 .hero-title-group { display: flex; align-items: center; gap: 15px; }.hero-mark { width: 4px; height: 52px; border-radius: 2px; background: #4f7f2d; }
 .hero-title-group p, .arrival-panel header small { margin: 0 0 4px; color: #4f7f2d; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
@@ -328,6 +339,6 @@ onMounted(() => fetchData())
 .product-chart { height: 430px; }.type-trend-chart { height: 330px; }
 .type-summary-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px 16px 0; }.type-summary-row article { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 14px; padding: 13px 16px; border: 1px solid #e5e9e2; border-left: 3px solid #4f7f2d; border-radius: 7px; background: #fafcf8; }.type-summary-row article.is-sample { border-left-color: #a6c95a; }.type-summary-row span { color: #667085; font-size: 12px; font-weight: 700; }.type-summary-row strong { font-size: 20px; }.type-summary-row em { color: #667085; font-size: 11px; font-style: normal; }.type-summary-row small { grid-column: 1 / -1; color: #98a2b3; }
 .table-panel :deep(.el-table), .detail-panel :deep(.el-table) { --el-table-header-bg-color: #f8faf9; --el-table-row-hover-bg-color: #f6f9ef; }.table-panel :deep(.el-table th.el-table__cell), .detail-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 12px; font-weight: 700; }.share-value { color: #4f7f2d; }.pagination-row { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; color: #98a2b3; font-size: 12px; }
-@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select { width: 240px; } }
-@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .brand-select, .type-select { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-summary-row { grid-template-columns: 1fr; } }
+@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select, .warehouse-select { width: 220px; } }
+@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .brand-select, .type-select, .warehouse-select { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-summary-row { grid-template-columns: 1fr; } }
 </style>
