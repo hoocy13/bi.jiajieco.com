@@ -25,3 +25,27 @@ BRAND_EXPRESSION_SQL = """
 """
 
 PRODUCT_TYPE_EXPRESSION_SQL = "COALESCE(NULLIF(TRIM(`货品分类`), ''), '未分类')"
+
+
+def is_online_sales_channel(
+    category: object,
+    platform: object,
+    channel_name: object,
+) -> bool:
+    """Classify sales channels using the confirmed business rules."""
+    category_text = str(category or "").strip() or "未分类"
+    platform_text = str(platform or "").strip() or "未设置"
+    channel_text = str(channel_name or "").strip() or "未归类"
+    if category_text == "销售部渠道":
+        return False
+    if category_text == "运营部线上渠道":
+        return channel_text != "桢植线下快闪店"
+    if category_text == "梧颜":
+        return platform_text != "未设置"
+    if channel_text.startswith("渠道预留"):
+        return False
+    if channel_text.startswith("海旅"):
+        return True
+    return platform_text != "未设置" or any(
+        keyword in channel_text for keyword in ("快手", "微店", "微信小店", "抖店")
+    )

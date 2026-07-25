@@ -20,6 +20,7 @@ from app.models.ads import (
     AdsSalesDailyChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
+    AdsSalesDetailDailyChannel,
     AdsSalesDetailDailyScope,
 )
 from app.services.sales_sources import (
@@ -226,6 +227,34 @@ def load_detail_daily_rows(
     return [dict(row) for row in rows]
 
 
+def load_detail_channel_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              DATE(`下单时间`) AS sales_date,
+              COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
+              COUNT(DISTINCT `订单编号`) AS orders,
+              SUM(COALESCE(`数量`, 0)) AS quantity,
+              SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账`
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY
+              DATE(`下单时间`),
+              COALESCE(NULLIF(`销售渠道`, ''), '未归类')
+            ORDER BY sales_date, channel
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def load_product_rows(
     ods_db: Session,
     start_date: date,
@@ -409,7 +438,11 @@ def load_ads_table_summary(
     table_name: str,
     data_version: str,
 ) -> SalesSummary:
-    if table_name not in {"ads_sales_detail_daily", "ads_sales_daily_product"}:
+    if table_name not in {
+        "ads_sales_detail_daily",
+        "ads_sales_daily_product",
+        "ads_sales_detail_daily_channel",
+    }:
         raise ValueError("Unsupported ADS summary table")
     row = ads_db.execute(
         text(
@@ -569,6 +602,11 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
+                detail_channel_rows = load_detail_channel_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
                 product_rows = load_product_rows(
                     ods_db,
                     resolved_start,
@@ -593,6 +631,7 @@ def build_sales_ads(
                 if (
                     not daily_rows
                     or not detail_daily_rows
+                    or not detail_channel_rows
                     or not product_rows
                     or not detail_scope_rows
                     or not brand_scope_rows
@@ -638,6 +677,20 @@ def build_sales_ads(
                             "quantity": decimal_value(row["quantity"]),
                         }
                         for row in detail_daily_rows
+                    ],
+                )
+                ads_db.execute(
+                    insert(AdsSalesDetailDailyChannel),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "channel": str(row["channel"] or "未归类"),
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in detail_channel_rows
                     ],
                 )
                 ads_db.execute(
@@ -735,6 +788,11 @@ def build_sales_ads(
                     "ads_sales_daily_brand_product",
                     version,
                 )
+                detail_channel_summary = load_ads_table_summary(
+                    ads_db,
+                    "ads_sales_detail_daily_channel",
+                    version,
+                )
                 detail_scope_matches = summaries_match(
                     detail_source_summary,
                     detail_scope_summary,
@@ -747,16 +805,24 @@ def build_sales_ads(
                     detail_source_summary.paid_amount == brand_product_summary.paid_amount
                     and detail_source_summary.quantity == brand_product_summary.quantity
                 )
+                detail_channel_amount_quantity_matches = (
+                    detail_source_summary.paid_amount == detail_channel_summary.paid_amount
+                    and detail_source_summary.quantity == detail_channel_summary.quantity
+                )
                 reconciliation["brand_analysis"] = {
                     "detail_scope_matches": detail_scope_matches,
                     "brand_scope_amount_quantity_matches": brand_scope_amount_quantity_matches,
                     "brand_product_amount_quantity_matches": brand_product_amount_quantity_matches,
+                }
+                reconciliation["channel_analysis"] = {
+                    "detail_channel_amount_quantity_matches": detail_channel_amount_quantity_matches,
                 }
                 reconciliation["passed"] = (
                     reconciliation["passed"]
                     and detail_scope_matches
                     and brand_scope_amount_quantity_matches
                     and brand_product_amount_quantity_matches
+                    and detail_channel_amount_quantity_matches
                 )
                 if not reconciliation["passed"]:
                     raise RuntimeError("ADS reconciliation failed")
@@ -780,6 +846,7 @@ def build_sales_ads(
                     "daily_row_count": len(daily_rows),
                     "channel_row_count": len(channel_rows),
                     "detail_daily_row_count": len(detail_daily_rows),
+                    "detail_channel_row_count": len(detail_channel_rows),
                     "product_row_count": len(product_rows),
                     "detail_scope_row_count": len(detail_scope_rows),
                     "brand_scope_row_count": len(brand_scope_rows),
@@ -833,6 +900,7 @@ def main() -> None:
         f"daily_rows={result['daily_row_count']} "
         f"channel_rows={result['channel_row_count']} "
         f"detail_daily_rows={result['detail_daily_row_count']} "
+        f"detail_channel_rows={result['detail_channel_row_count']} "
         f"product_rows={result['product_row_count']} "
         f"detail_scope_rows={result['detail_scope_row_count']} "
         f"brand_scope_rows={result['brand_scope_row_count']} "

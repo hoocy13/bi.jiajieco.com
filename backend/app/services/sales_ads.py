@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.models.ads import AdsPublishBatch
+from app.services.sales_sources import is_online_sales_channel
 
 
 SALES_DATASET = "sales_daily"
@@ -430,6 +431,226 @@ def load_sales_brand_analysis_from_ads(
             for quantity in [integer(row["quantity"])]
             for paid_amount in [number(row["paid_amount"])]
         ],
+    }
+
+
+def load_sales_channel_analysis_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    dimension_rows: list[dict],
+    filter_option_rows: list[dict],
+    include_unmatched: bool,
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    fact_rows = ads_db.execute(
+        text(
+            """
+            SELECT
+              `sales_date`,
+              `channel`,
+              `orders`,
+              `paid_amount`,
+              `quantity`
+            FROM `ads_sales_detail_daily_channel`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+            ORDER BY `sales_date`, `channel`
+            """
+        ),
+        {
+            "data_version": batch.data_version,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    ).mappings().all()
+
+    selected_channel_names = {str(row["channel_name"]) for row in dimension_rows}
+    all_channel_names = {str(row["channel_name"]) for row in filter_option_rows}
+    selected_facts = [
+        row
+        for row in fact_rows
+        if (
+            str(row["channel"]) in selected_channel_names
+            if str(row["channel"]) in all_channel_names
+            else include_unmatched
+        )
+    ]
+
+    trend_by_month: dict[str, dict] = {}
+    facts_by_channel: dict[str, dict] = {}
+    for row in selected_facts:
+        sales_date = row["sales_date"]
+        month = (
+            f"{sales_date.year:04d}-{sales_date.month:02d}-01"
+            if isinstance(sales_date, date)
+            else f"{str(sales_date)[:7]}-01"
+        )
+        channel = str(row["channel"])
+        month_item = trend_by_month.setdefault(
+            month,
+            {"month": month, "orders": 0, "paid_amount": 0.0, "quantity": 0},
+        )
+        channel_item = facts_by_channel.setdefault(
+            channel,
+            {"channel": channel, "orders": 0, "paid_amount": 0.0, "quantity": 0},
+        )
+        for item in (month_item, channel_item):
+            item["orders"] += integer(row["orders"])
+            item["paid_amount"] += number(row["paid_amount"])
+            item["quantity"] += integer(row["quantity"])
+
+    trend = [trend_by_month[key] for key in sorted(trend_by_month)]
+    summary = {
+        "orders": sum(row["orders"] for row in trend),
+        "paid_amount": sum(row["paid_amount"] for row in trend),
+        "quantity": sum(row["quantity"] for row in trend),
+    }
+    total_paid_amount = summary["paid_amount"]
+    channel_rows = [
+        {
+            "channel_code": row["channel_code"],
+            "channel_name": row["channel_name"],
+            "category": row["category"],
+            "channel_type": row["channel_type"],
+            "platform": row["platform"],
+            "owner": row["owner"],
+            "authorized": str(row["authorized"]) == "1",
+            "orders": orders,
+            "paid_amount": paid_amount,
+            "quantity": quantity,
+            "share": paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
+            "avg_order_amount": paid_amount / orders if orders else 0,
+            "is_online": is_online_sales_channel(
+                row["category"],
+                row["platform"],
+                row["channel_name"],
+            ),
+            "matched": True,
+        }
+        for row in dimension_rows
+        for fact in [facts_by_channel.get(str(row["channel_name"]), {})]
+        for orders in [integer(fact.get("orders"))]
+        for paid_amount in [number(fact.get("paid_amount"))]
+        for quantity in [integer(fact.get("quantity"))]
+    ]
+
+    channel_types = sorted({str(row["channel_type"]) for row in filter_option_rows})
+    platforms = sorted(
+        {
+            str(row["platform"])
+            for row in filter_option_rows
+            if str(row["platform"]) != "未设置"
+        }
+    )
+    unmatched_rows = sorted(
+        (
+            row
+            for name, row in facts_by_channel.items()
+            if name not in all_channel_names
+        ),
+        key=lambda row: row["paid_amount"],
+        reverse=True,
+    )
+    channel_rows.extend(
+        {
+            "channel_code": None,
+            "channel_name": row["channel"],
+            "category": "未匹配渠道",
+            "channel_type": "未匹配渠道",
+            "platform": "未设置",
+            "owner": "-",
+            "authorized": False,
+            "orders": integer(row["orders"]),
+            "paid_amount": paid_amount,
+            "quantity": integer(row["quantity"]),
+            "share": paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
+            "avg_order_amount": paid_amount / integer(row["orders"]) if integer(row["orders"]) else 0,
+            "is_online": is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
+            "matched": False,
+        }
+        for row in unmatched_rows
+        for paid_amount in [number(row["paid_amount"])]
+    )
+    channel_rows.sort(key=lambda row: row["paid_amount"], reverse=True)
+
+    def summarize_channels(field: str, include_unset: bool = True) -> list[dict]:
+        grouped: dict[str, dict] = {}
+        for row in channel_rows:
+            key = str(row[field])
+            if not include_unset and key == "未设置":
+                continue
+            item = grouped.setdefault(
+                key,
+                {
+                    field: key,
+                    "channels": 0,
+                    "active_channels": 0,
+                    "orders": 0,
+                    "paid_amount": 0.0,
+                    "quantity": 0,
+                },
+            )
+            item["channels"] += 1
+            item["active_channels"] += 1 if row["orders"] > 0 else 0
+            item["orders"] += row["orders"]
+            item["paid_amount"] += row["paid_amount"]
+            item["quantity"] += row["quantity"]
+        return sorted(grouped.values(), key=lambda row: row["paid_amount"], reverse=True)
+
+    type_summary = summarize_channels("channel_type")
+    platform_summary = summarize_channels("platform", include_unset=False)[:12]
+    return {
+        **meta,
+        "summary": summary,
+        "channel_summary": {
+            "total_channels": len(channel_rows),
+            "active_channels": sum(1 for row in channel_rows if row["orders"] > 0),
+            "authorized_channels": sum(1 for row in channel_rows if row["authorized"]),
+            "unmatched_sales_channels": len(unmatched_rows),
+        },
+        "trend": trend,
+        "type_summary": [
+            {
+                "channel_type": row["channel_type"],
+                "channels": integer(row["channels"]),
+                "active_channels": integer(row["active_channels"]),
+                "orders": integer(row["orders"]),
+                "paid_amount": number(row["paid_amount"]),
+                "quantity": integer(row["quantity"]),
+                "share": number(row["paid_amount"]) / total_paid_amount * 100 if total_paid_amount else 0,
+            }
+            for row in type_summary
+        ],
+        "platform_summary": [
+            {
+                "platform": row["platform"],
+                "channels": integer(row["channels"]),
+                "active_channels": integer(row["active_channels"]),
+                "orders": integer(row["orders"]),
+                "paid_amount": number(row["paid_amount"]),
+                "quantity": integer(row["quantity"]),
+                "share": number(row["paid_amount"]) / total_paid_amount * 100 if total_paid_amount else 0,
+            }
+            for row in platform_summary
+        ],
+        "rows": channel_rows,
+        "unmatched_channels": [
+            {
+                "channel": row["channel"],
+                "orders": integer(row["orders"]),
+                "paid_amount": number(row["paid_amount"]),
+                "quantity": integer(row["quantity"]),
+                "share": number(row["paid_amount"]) / total_paid_amount * 100 if total_paid_amount else 0,
+            }
+            for row in unmatched_rows
+        ],
+        "filter_options": {
+            "channel_types": channel_types,
+            "platforms": platforms,
+        },
     }
 
 

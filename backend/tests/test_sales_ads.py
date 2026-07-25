@@ -25,12 +25,14 @@ from app.models.ads import (
     AdsSalesDailyChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
+    AdsSalesDetailDailyChannel,
     AdsSalesDetailDailyScope,
 )
 from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
+    load_sales_channel_analysis_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -66,6 +68,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_daily_channel",
                     "ads_sales_daily_product",
                     "ads_sales_detail_daily",
+                    "ads_sales_detail_daily_channel",
                     "ads_sales_detail_daily_scope",
                 },
             )
@@ -205,6 +208,22 @@ class SalesAdsReaderTests(unittest.TestCase):
                 AdsSalesDetailDaily(
                     data_version=batch.data_version,
                     sales_date=date(2026, 7, 2),
+                    orders=2,
+                    paid_amount=Decimal("60.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDetailDailyChannel(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    channel="渠道A",
+                    orders=2,
+                    paid_amount=Decimal("90.000000"),
+                    quantity=Decimal("3.0000"),
+                ),
+                AdsSalesDetailDailyChannel(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    channel="渠道A",
                     orders=2,
                     paid_amount=Decimal("60.000000"),
                     quantity=Decimal("2.0000"),
@@ -473,6 +492,51 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual(filtered["summary"]["paid_amount"], 80)
         self.assertEqual(filtered["summary"]["orders"], 3)
         self.assertEqual([row["brand"] for row in filtered["rows"]], ["品牌A"])
+
+    def test_loads_channel_analysis_with_live_dimensions(self) -> None:
+        batch = latest_ready_sales_batch(self.db)
+        data = load_sales_channel_analysis_from_ads(
+            self.db,
+            batch,
+            {
+                "as_of": "2026-07-02",
+                "period": "自定义",
+                "range": "custom",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-02",
+            },
+            dimension_rows=[
+                {
+                    "channel_code": "A",
+                    "channel_name": "渠道A",
+                    "category": "运营部线上渠道",
+                    "channel_type": "直营网店",
+                    "platform": "平台A",
+                    "owner": "负责人A",
+                    "authorized": 1,
+                },
+                {
+                    "channel_code": "B",
+                    "channel_name": "渠道B",
+                    "category": "销售部渠道",
+                    "channel_type": "线下门店",
+                    "platform": "未设置",
+                    "owner": "负责人B",
+                    "authorized": 0,
+                },
+            ],
+            filter_option_rows=[
+                {"channel_type": "直营网店", "platform": "平台A", "channel_name": "渠道A"},
+                {"channel_type": "线下门店", "platform": "未设置", "channel_name": "渠道B"},
+            ],
+            include_unmatched=True,
+        )
+        self.assertEqual(data["summary"]["paid_amount"], 150)
+        self.assertEqual(data["summary"]["orders"], 4)
+        self.assertEqual([row["channel_name"] for row in data["rows"]], ["渠道A", "渠道B"])
+        self.assertTrue(data["rows"][0]["is_online"])
+        self.assertEqual(data["channel_summary"]["active_channels"], 1)
+        self.assertEqual(data["filter_options"]["platforms"], ["平台A"])
 
     def test_ads_query_mode_does_not_require_ods_session(self) -> None:
         original_mode = settings.BI_QUERY_SOURCE

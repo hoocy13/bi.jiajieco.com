@@ -20,12 +20,14 @@ from app.services.sales_sources import (
     BRAND_EXPRESSION_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
     SALES_ORDER_TABLE_SQL,
+    is_online_sales_channel,
 )
 from app.services.sales_ads import (
     AdsDataUnavailable,
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
+    load_sales_channel_analysis_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -113,26 +115,6 @@ def _int(value: object) -> int:
     if value is None:
         return 0
     return int(value)
-
-
-def _is_online_sales_channel(category: object, platform: object, channel_name: object) -> bool:
-    """Classify sales channels using the confirmed business rules."""
-    category_text = str(category or "").strip() or "未分类"
-    platform_text = str(platform or "").strip() or "未设置"
-    channel_text = str(channel_name or "").strip() or "未归类"
-    if category_text == "销售部渠道":
-        return False
-    if category_text == "运营部线上渠道":
-        return channel_text != "桢植线下快闪店"
-    if category_text == "梧颜":
-        return platform_text != "未设置"
-    if channel_text.startswith("渠道预留"):
-        return False
-    if channel_text.startswith("海旅"):
-        return True
-    return platform_text != "未设置" or any(
-        keyword in channel_text for keyword in ("快手", "微店", "微信小店", "抖店")
-    )
 
 
 def _as_date(value: object) -> date | None:
@@ -378,6 +360,106 @@ def _load_ads_brand_analysis(
             meta,
             limit=limit,
             product_types=product_types,
+        )
+
+
+def _load_ads_channel_analysis(
+    db: Session,
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+    keyword: str | None,
+    channel_type: str | None,
+    platform: str | None,
+    authorized: str | None,
+) -> dict:
+    if AdsSessionLocal is None:
+        raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
+
+    params: dict[str, object] = {}
+    filters: list[str] = []
+    if keyword:
+        params["keyword"] = f"%{keyword.strip()}%"
+        filters.append(
+            "(`渠道名称` LIKE :keyword OR `渠道编号` LIKE :keyword "
+            "OR `负责人` LIKE :keyword OR `线上平台` LIKE :keyword)"
+        )
+    if channel_type:
+        params["channel_type"] = channel_type
+        filters.append("COALESCE(NULLIF(`渠道类型`, ''), '未分类') = :channel_type")
+    if platform:
+        params["platform"] = platform
+        filters.append("COALESCE(NULLIF(`线上平台`, ''), '未设置') = :platform")
+    if authorized in {"0", "1"}:
+        params["authorized"] = authorized
+        filters.append("CAST(COALESCE(`是否授权`, 0) AS CHAR) = :authorized")
+    channel_where = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    dimension_rows = [
+        dict(row)
+        for row in db.execute(
+            text(
+                f"""
+                SELECT
+                  `渠道编号` AS channel_code,
+                  `渠道名称` AS channel_name,
+                  COALESCE(NULLIF(`分类`, ''), '未分类') AS category,
+                  COALESCE(NULLIF(`渠道类型`, ''), '未分类') AS channel_type,
+                  COALESCE(NULLIF(`线上平台`, ''), '未设置') AS platform,
+                  COALESCE(NULLIF(`负责人`, ''), '-') AS owner,
+                  COALESCE(`是否授权`, 0) AS authorized
+                FROM `渠道列表`
+                {channel_where}
+                ORDER BY `渠道编号`
+                """
+            ),
+            params,
+        ).mappings().all()
+    ]
+    filter_option_rows = [
+        dict(row)
+        for row in db.execute(
+            text(
+                """
+                SELECT
+                  COALESCE(NULLIF(`渠道类型`, ''), '未分类') AS channel_type,
+                  COALESCE(NULLIF(`线上平台`, ''), '未设置') AS platform,
+                  `渠道名称` AS channel_name
+                FROM `渠道列表`
+                """
+            )
+        ).mappings().all()
+    ]
+    include_unmatched = (
+        not keyword
+        and (not channel_type or channel_type == "未分类")
+        and (not platform or platform == "未设置")
+        and authorized != "1"
+    )
+
+    with AdsSessionLocal() as ads_db:
+        batch = latest_ready_sales_batch(ads_db)
+        as_of = batch.source_end_date
+        resolved_start, resolved_end, period, applied_range = _range_bounds(
+            range_key,
+            as_of,
+            start_date,
+            end_date,
+        )
+        meta = {
+            "as_of": as_of.isoformat(),
+            "period": period,
+            "range": applied_range,
+            "start_date": resolved_start.isoformat(),
+            "end_date": resolved_end.isoformat(),
+        }
+        return load_sales_channel_analysis_from_ads(
+            ads_db,
+            batch,
+            meta,
+            dimension_rows=dimension_rows,
+            filter_option_rows=filter_option_rows,
+            include_unmatched=include_unmatched,
         )
 
 
@@ -962,6 +1044,7 @@ def sales_brand_analysis(
 
 @router.get("/channel-analysis")
 def sales_channel_analysis(
+    response: Response,
     range: str = Query("this_year"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
@@ -972,8 +1055,10 @@ def sales_channel_analysis(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
-        "channel-analysis-v6",
+        "channel-analysis-v7",
         range=range,
         start_date=start_date,
         end_date=end_date,
@@ -981,11 +1066,34 @@ def sales_channel_analysis(
         channel_type=channel_type,
         platform=platform,
         authorized=authorized,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        try:
+            data = _load_ads_channel_analysis(
+                db,
+                range,
+                start_date,
+                end_date,
+                keyword,
+                channel_type,
+                platform,
+                authorized,
+            )
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("sales_channel_analysis_ads status=error error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="ADS database is temporarily unavailable") from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(
@@ -1111,7 +1219,7 @@ def sales_channel_analysis(
             "quantity": quantity,
             "share": paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
             "avg_order_amount": paid_amount / orders if orders else 0,
-            "is_online": _is_online_sales_channel(
+            "is_online": is_online_sales_channel(
                 row["category"], row["platform"], row["channel_name"]
             ),
             "matched": True,
@@ -1156,7 +1264,7 @@ def sales_channel_analysis(
             "quantity": _int(row["quantity"]),
             "share": row_paid_amount / total_paid_amount * 100 if total_paid_amount else 0,
             "avg_order_amount": row_paid_amount / _int(row["orders"]) if _int(row["orders"]) else 0,
-            "is_online": _is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
+            "is_online": is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
             "matched": False,
         }
         for row in unmatched_rows
@@ -1714,7 +1822,7 @@ def sales_brand_channel_analysis(
             "share": row_paid_amount / paid_amount * 100 if paid_amount else 0,
             "avg_order_amount": row_paid_amount / row_orders if row_orders else 0,
             "avg_unit_price": row_paid_amount / row_quantity if row_quantity else 0,
-            "is_online": _is_online_sales_channel(row["channel_type"], row["platform"], row["channel_name"]),
+            "is_online": is_online_sales_channel(row["channel_type"], row["platform"], row["channel_name"]),
             "matched": True,
         }
         for row in channel_rows
@@ -1737,7 +1845,7 @@ def sales_brand_channel_analysis(
             "share": row_paid_amount / paid_amount * 100 if paid_amount else 0,
             "avg_order_amount": row_paid_amount / _int(row["orders"]) if _int(row["orders"]) else 0,
             "avg_unit_price": row_paid_amount / _int(row["quantity"]) if _int(row["quantity"]) else 0,
-            "is_online": _is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
+            "is_online": is_online_sales_channel("未匹配渠道", "未设置", row["channel"]),
             "matched": False,
         }
         for row in unmatched_rows
