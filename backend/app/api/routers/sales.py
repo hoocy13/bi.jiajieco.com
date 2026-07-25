@@ -594,16 +594,21 @@ def sales_brand_analysis(
     end_date: date | None = Query(None),
     limit: int = Query(30, ge=10, le=100),
     keyword: str | None = Query(None),
+    product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    selected_product_types = list(
+        dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
+    )
     cache_key = _sales_cache_key(
-        "brand-analysis",
+        "brand-analysis-v2",
         range=range,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
         keyword=keyword,
+        product_type=selected_product_types,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
@@ -620,6 +625,15 @@ def sales_brand_analysis(
     if keyword:
         params["keyword"] = f"%{keyword.strip()}%"
         filters.append("(`品牌` LIKE :keyword OR `货品名称` LIKE :keyword)")
+    if selected_product_types:
+        product_type_params = []
+        for index, item in enumerate(selected_product_types):
+            param_name = f"product_type_{index}"
+            params[param_name] = item
+            product_type_params.append(f":{param_name}")
+        filters.append(
+            f"COALESCE(NULLIF(TRIM(`货品分类`), ''), '未分类') IN ({', '.join(product_type_params)})"
+        )
 
     where_sql = " AND ".join(filters)
     brand_expr = """
@@ -657,7 +671,15 @@ def sales_brand_analysis(
     ).mappings().one()
 
     rank_paid_amount = _number(summary_row["paid_amount"])
-    summary = _sales_query_summary(db, params)
+    summary = (
+        {
+            "paid_amount": rank_paid_amount,
+            "orders": _int(summary_row["orders"]),
+            "quantity": _int(summary_row["quantity"]),
+        }
+        if selected_product_types
+        else _sales_query_summary(db, params)
+    )
     row_params = {**params, "limit": limit}
     rank_rows = db.execute(
         text(
@@ -1140,17 +1162,22 @@ def sales_brand_channel_analysis(
     end_date: date | None = Query(None),
     channel_type: list[str] | None = Query(None),
     channel_name: list[str] | None = Query(None),
+    product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    selected_product_types = list(
+        dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
+    )
     cache_key = _sales_cache_key(
-        "brand-channel-analysis-v3",
+        "brand-channel-analysis-v4",
         brand=brand,
         range=range,
         start_date=start_date,
         end_date=end_date,
         channel_type=channel_type,
         channel_name=channel_name,
+        product_type=selected_product_types,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
@@ -1239,6 +1266,15 @@ def sales_brand_channel_analysis(
     if selected_channel_names:
         fact_where += f"""
         AND COALESCE(NULLIF(`销售渠道`, ''), '未归类') IN ({", ".join(channel_name_params)})
+        """
+    if selected_product_types:
+        product_type_params = []
+        for index, item in enumerate(selected_product_types):
+            param_name = f"product_type_{index}"
+            params[param_name] = item
+            product_type_params.append(f":{param_name}")
+        fact_where += f"""
+        AND COALESCE(NULLIF(TRIM(`货品分类`), ''), '未分类') IN ({", ".join(product_type_params)})
         """
 
     channel_dimension_where = []

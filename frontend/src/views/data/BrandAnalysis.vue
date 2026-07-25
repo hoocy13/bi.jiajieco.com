@@ -1,21 +1,40 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import { getSalesBrandAnalysis } from '../../api/sales'
 
+const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
-const selectedRange = ref('this_year')
-const dateRange = ref([])
+const supportedRanges = ['last_30', 'this_month', 'this_year']
+const initialRange = String(route.query.range || '')
+const selectedRange = ref(
+  route.query.start_date && route.query.end_date
+    ? 'custom'
+    : supportedRanges.includes(initialRange) ? initialRange : 'this_year',
+)
+const dateRange = ref(
+  route.query.start_date && route.query.end_date
+    ? [String(route.query.start_date), String(route.query.end_date)]
+    : [],
+)
 const rangeOptions = [
   { label: '近30天', value: 'last_30' },
   { label: '本月', value: 'this_month' },
   { label: '本年', value: 'this_year' },
 ]
+
+function queryValues(value) {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean)
+  return value ? [String(value)] : []
+}
+
+const productTypeOptions = ['正装', '小样']
 const query = reactive({
-  keyword: '',
-  limit: 30,
+  keyword: String(route.query.keyword || ''),
+  limit: [10, 30, 50, 100].includes(Number(route.query.limit)) ? Number(route.query.limit) : 30,
+  productTypes: queryValues(route.query.product_type).filter((item) => productTypeOptions.includes(item)),
 })
 const analysis = ref({
   period: '本年',
@@ -65,6 +84,7 @@ function buildParams() {
     : { range: selectedRange.value }
   params.limit = query.limit
   if (query.keyword.trim()) params.keyword = query.keyword.trim()
+  if (query.productTypes.length) params.product_type = query.productTypes
   return params
 }
 
@@ -85,6 +105,13 @@ async function fetchAnalysis() {
     const result = await getSalesBrandAnalysis(buildParams())
     analysis.value = result.data
     dateRange.value = [analysis.value.start_date, analysis.value.end_date]
+    const routeQuery = selectedRange.value === 'custom'
+      ? { start_date: analysis.value.start_date, end_date: analysis.value.end_date }
+      : { range: selectedRange.value }
+    if (query.keyword.trim()) routeQuery.keyword = query.keyword.trim()
+    if (query.limit !== 30) routeQuery.limit = String(query.limit)
+    if (query.productTypes.length) routeQuery.product_type = query.productTypes
+    await router.replace({ query: routeQuery })
   } finally {
     loading.value = false
   }
@@ -97,6 +124,7 @@ function openBrand(row) {
         end_date: analysis.value.end_date,
       }
     : { range: selectedRange.value }
+  if (query.productTypes.length) rangeQuery.product_type = query.productTypes
   router.push({
     path: `/sales/brand-analysis/${encodeURIComponent(row.brand)}`,
     query: rangeQuery,
@@ -121,6 +149,23 @@ onMounted(fetchAnalysis)
           :unlink-panels="true"
           @change="handleDateRangeChange"
         />
+        <el-select
+          v-model="query.productTypes"
+          class="filter-select multi-filter-select"
+          clearable
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          :max-collapse-tags="1"
+          placeholder="正装 / 小样"
+        >
+          <el-option v-for="item in productTypeOptions" :key="item" :label="item" :value="item">
+            <span class="filter-option-content">
+              <el-checkbox :model-value="query.productTypes.includes(item)" tabindex="-1" />
+              <span>{{ item }}</span>
+            </span>
+          </el-option>
+        </el-select>
         <el-input v-model="query.keyword" class="filter-input" clearable placeholder="商品 / 品牌关键词" />
         <el-select v-model="query.limit" class="filter-select" placeholder="排行数量">
           <el-option label="Top 10" :value="10" />

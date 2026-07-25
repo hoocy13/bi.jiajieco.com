@@ -13,7 +13,10 @@ export function getSalesProductRank(params = {}) {
 }
 
 export function getSalesBrandAnalysis(params = {}) {
-  return http.get('/sales/brand-analysis', { params })
+  return http.get('/sales/brand-analysis', {
+    params,
+    paramsSerializer: { indexes: null },
+  })
 }
 
 export function getSalesChannelAnalysis(params = {}) {

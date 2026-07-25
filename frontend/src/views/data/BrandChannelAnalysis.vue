@@ -41,7 +41,9 @@ function queryValues(value) {
 const query = reactive({
   channelType: queryValues(route.query.channel_type),
   channelName: queryValues(route.query.channel_name),
+  productTypes: queryValues(route.query.product_type).filter((item) => ['正装', '小样'].includes(item)),
 })
+const productTypeOptions = ['正装', '小样']
 const rangeOptions = [
   { label: '近30天', value: 'last_30' },
   { label: '本月', value: 'this_month' },
@@ -324,6 +326,7 @@ async function fetchAnalysis() {
       : { brand: brand.value, range: selectedRange.value }
     if (query.channelType.length) params.channel_type = query.channelType
     if (query.channelName.length) params.channel_name = query.channelName
+    if (query.productTypes.length) params.product_type = query.productTypes
     const result = await getSalesBrandChannelAnalysis(params)
     analysis.value = result.data
     dateRange.value = [analysis.value.start_date, analysis.value.end_date]
@@ -333,13 +336,21 @@ async function fetchAnalysis() {
 }
 
 onMounted(fetchAnalysis)
+
+function returnToBrands() {
+  const routeQuery = selectedRange.value === 'custom'
+    ? { start_date: analysis.value.start_date, end_date: analysis.value.end_date }
+    : { range: selectedRange.value }
+  if (query.productTypes.length) routeQuery.product_type = query.productTypes
+  router.push({ path: '/sales/brand-analysis', query: routeQuery })
+}
 </script>
 
 <template>
   <div class="page-stack brand-dashboard-shell" v-loading="loading">
     <section class="toolbar-panel sales-filter brand-detail-filter">
       <div class="filter-controls">
-        <el-button :icon="'ArrowLeft'" circle title="返回品牌销售分析" @click="router.push('/sales/brand-analysis')" />
+        <el-button :icon="'ArrowLeft'" circle title="返回品牌销售分析" @click="returnToBrands" />
         <strong class="brand-detail-name">{{ brand }}</strong>
         <el-segmented v-model="selectedRange" :options="rangeOptions" @change="handleRangeChange" />
         <el-date-picker
@@ -352,6 +363,20 @@ onMounted(fetchAnalysis)
           :unlink-panels="true"
           @change="handleDateRangeChange"
         />
+        <el-select
+          v-model="query.productTypes"
+          class="filter-select multi-filter-select"
+          clearable multiple collapse-tags collapse-tags-tooltip
+          :max-collapse-tags="1"
+          placeholder="正装 / 小样"
+        >
+          <el-option v-for="item in productTypeOptions" :key="item" :label="item" :value="item">
+            <span class="filter-option-content">
+              <el-checkbox :model-value="query.productTypes.includes(item)" tabindex="-1" />
+              <span>{{ item }}</span>
+            </span>
+          </el-option>
+        </el-select>
         <el-select
           v-model="query.channelType"
           class="filter-select multi-filter-select"
