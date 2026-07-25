@@ -1,21 +1,35 @@
+import logging
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from threading import Lock
 from time import monotonic
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
-from app.services.sales_sources import SALES_ORDER_TABLE_SQL
+from app.services.sales_sources import (
+    ACTIVE_SALES_ORDER_SQL,
+    POSITIVE_SALES_ORDER_COUNT_SQL,
+    SALES_ORDER_TABLE_SQL,
+)
+from app.services.sales_ads import (
+    AdsDataUnavailable,
+    compare_sales_overviews,
+    latest_ready_sales_batch,
+    load_sales_overview_from_ads,
+)
 
 
 router = APIRouter(prefix="/sales", tags=["sales"])
+logger = logging.getLogger("uvicorn.error")
 
 RANGE_OPTIONS = {
     "last_30": "近30天",
@@ -23,12 +37,17 @@ RANGE_OPTIONS = {
     "this_year": "本年",
 }
 
-ACTIVE_SALES_ORDER_SQL = "COALESCE(`订单状态`, '') NOT LIKE '%取消%'"
-POSITIVE_SALES_ORDER_COUNT_SQL = "COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END)"
 SALES_CACHE_TTL_SECONDS = 300
 SALES_CACHE_MAX_ITEMS = 256
 _sales_cache: dict[tuple, tuple[float, dict]] = {}
 _sales_cache_lock = Lock()
+
+
+def _get_sales_overview_ods_db():
+    if settings.BI_QUERY_SOURCE == "ads":
+        yield None
+        return
+    yield from get_ods_db()
 
 
 def _cache_value(value: object) -> object:
@@ -229,19 +248,105 @@ def _sales_query_summary(db: Session, params: dict) -> dict:
     }
 
 
+def _load_ads_overview(
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+    meta: dict | None = None,
+) -> dict:
+    if AdsSessionLocal is None:
+        raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
+
+    with AdsSessionLocal() as ads_db:
+        batch = latest_ready_sales_batch(ads_db)
+        if meta is None:
+            as_of = batch.source_end_date
+            resolved_start, resolved_end, period, applied_range = _range_bounds(
+                range_key,
+                as_of,
+                start_date,
+                end_date,
+            )
+            meta = {
+                "as_of": as_of.isoformat(),
+                "period": period,
+                "range": applied_range,
+                "start_date": resolved_start.isoformat(),
+                "end_date": resolved_end.isoformat(),
+            }
+        return load_sales_overview_from_ads(ads_db, batch, meta)
+
+
+def _validate_ads_overview(ods_data: dict, range_key: str, start_date: date | None, end_date: date | None) -> str:
+    try:
+        ads_data = _load_ads_overview(
+            range_key,
+            start_date,
+            end_date,
+            meta={
+                key: ods_data[key]
+                for key in ("as_of", "period", "range", "start_date", "end_date")
+            },
+        )
+        differences = compare_sales_overviews(ods_data, ads_data)
+        if differences:
+            paths = ",".join(difference.path for difference in differences[:20])
+            logger.warning(
+                "sales_overview_dual status=mismatch difference_count=%s paths=%s",
+                len(differences),
+                paths,
+            )
+            return "mismatch"
+
+        logger.info("sales_overview_dual status=matched")
+        return "matched"
+    except AdsDataUnavailable:
+        logger.warning("sales_overview_dual status=unavailable")
+        return "unavailable"
+    except Exception as exc:
+        logger.warning("sales_overview_dual status=error error_type=%s", type(exc).__name__)
+        return "error"
+
+
 @router.get("/overview")
 def sales_overview(
+    response: Response,
     range: str = Query("last_30"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_ods_db),
+    db: Session | None = Depends(_get_sales_overview_ods_db),
 ) -> dict:
-    cache_key = _sales_cache_key("overview", range=range, start_date=start_date, end_date=end_date)
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
+    cache_key = _sales_cache_key(
+        "overview",
+        range=range,
+        start_date=start_date,
+        end_date=end_date,
+        query_mode=query_mode,
+    )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
+        if query_mode == "dual":
+            response.headers["X-BI-Dual-Status"] = "cached"
         return ok(cached)
 
+    if query_mode == "ads":
+        try:
+            data = _load_ads_overview(range, start_date, end_date)
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("sales_overview_ads status=error error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="ADS database is temporarily unavailable") from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    if db is None:
+        raise HTTPException(status_code=503, detail="ODS database is not configured")
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_sales_period(db, range, start_date, end_date)
     if params is None:
         data = {
@@ -335,6 +440,13 @@ def sales_overview(
             for quantity_count in [_int(row["quantity"])]
         ],
     }
+    if query_mode == "dual":
+        response.headers["X-BI-Dual-Status"] = _validate_ads_overview(
+            data,
+            range,
+            start_date,
+            end_date,
+        )
     return _cached_ok(cache_key, data)
 
 

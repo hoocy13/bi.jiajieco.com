@@ -4,6 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
+from app.core.performance import register_engine_performance
 
 
 engine = create_engine(
@@ -12,6 +13,7 @@ engine = create_engine(
     if settings.DATABASE_URL.startswith("sqlite")
     else {},
 )
+register_engine_performance(engine, "admin")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 

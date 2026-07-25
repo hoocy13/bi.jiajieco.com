@@ -1,2 +1,4 @@
 SALES_ORDER_TABLE_SQL = "`dwd`.`销售单查询_进口超市上海仓补全`"
 SALES_ORDER_TABLE_REFERENCE = "dwd.`销售单查询_进口超市上海仓补全`"
+ACTIVE_SALES_ORDER_SQL = "COALESCE(`订单状态`, '') NOT LIKE '%取消%'"
+POSITIVE_SALES_ORDER_COUNT_SQL = "COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END)"

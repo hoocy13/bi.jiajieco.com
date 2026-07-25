@@ -56,6 +56,26 @@ jobs:
           TS=$(date +%Y%m%d%H%M%S)
           RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
           BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
+          FAILED="/www/wwwroot/bi.jiajieco.com.failed.$TS"
+
+          rollback() {
+            exit_code=$?
+            if [ "$exit_code" -ne 0 ] && [ -d "$BACKUP" ]; then
+              echo "Deploy failed; restoring previous release."
+              if [ -d "$APP_DIR" ]; then
+                cd "$APP_DIR"
+                docker compose down || true
+                cd /www/wwwroot
+                mv "$APP_DIR" "$FAILED"
+              fi
+              mv "$BACKUP" "$APP_DIR"
+              cd "$APP_DIR"
+              docker compose up -d --build || true
+              echo "Rollback finished."
+            fi
+            exit "$exit_code"
+          }
+          trap rollback ERR
 
           mkdir -p "$RELEASE"
           tar -xzf "$ARCHIVE" -C "$RELEASE"
@@ -64,6 +84,31 @@ jobs:
             mkdir -p "$RELEASE/backend"
             cp "$APP_DIR/backend/.env" "$RELEASE/backend/.env"
           fi
+
+          ENV_FILE="$RELEASE/backend/.env"
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "Missing production backend/.env"
+            exit 1
+          fi
+
+          ods_line=$(grep '^ODS_DATABASE_URL=' "$ENV_FILE" | tail -n 1 || true)
+          if [ -z "$ods_line" ]; then
+            echo "Missing ODS_DATABASE_URL in production backend/.env"
+            exit 1
+          fi
+          ods_value=${ods_line#*=}
+          ads_value=$(printf '%s' "$ods_value" | sed 's#/ods?#/ads?#')
+          if [ "$ads_value" = "$ods_value" ]; then
+            echo "Could not derive ADS_DATABASE_URL from ODS_DATABASE_URL"
+            exit 1
+          fi
+
+          sed -i '/^ADS_DATABASE_URL=/d; /^BI_QUERY_SOURCE=/d' "$ENV_FILE"
+          {
+            printf '\nADS_DATABASE_URL=%s\n' "$ads_value"
+            printf 'BI_QUERY_SOURCE=dual\n'
+          } >> "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
 
           if [ -d "$APP_DIR" ]; then
             mv "$APP_DIR" "$BACKUP"
@@ -76,13 +121,15 @@ jobs:
           docker compose ps
 
           for i in $(seq 1 15); do
-            if curl -fsSI http://127.0.0.1:18080 >/dev/null; then
-              echo "Frontend health check passed."
+            if curl -fsSI http://127.0.0.1:18080 >/dev/null \
+              && curl -fsS http://127.0.0.1:18080/api/v1/openapi.json >/dev/null; then
+              echo "Frontend and API health checks passed."
               break
             fi
 
             if [ "$i" -eq 15 ]; then
-              echo "Frontend health check failed after retries."
+              echo "Frontend or API health check failed after retries."
+              docker compose logs --tail=80 backend
               docker compose logs --tail=80 frontend
               exit 1
             fi
@@ -90,6 +137,36 @@ jobs:
             sleep 2
           done
 
+          docker compose exec -T backend python - <<'PY'
+          import urllib.request
+
+          from app.core.security import create_access_token
+          from app.db.session import SessionLocal
+          from app.models.user import User
+
+          with SessionLocal() as db:
+              user = db.query(User).filter(User.is_active.is_(True)).first()
+          if user is None:
+              raise SystemExit("No active user available for authenticated health check")
+
+          request = urllib.request.Request(
+              "http://127.0.0.1:8000/api/v1/sales/overview?range=last_30",
+              headers={"Authorization": f"Bearer {create_access_token(subject=user.username)}"},
+          )
+          with urllib.request.urlopen(request, timeout=60) as response:
+              query_mode = response.headers.get("X-BI-Query-Mode")
+              response_source = response.headers.get("X-BI-Response-Source")
+              dual_status = response.headers.get("X-BI-Dual-Status")
+
+          if query_mode != "dual" or response_source != "ods" or dual_status != "matched":
+              raise SystemExit(
+                  "Dual-run health check failed: "
+                  f"mode={query_mode} source={response_source} status={dual_status}"
+              )
+          print("Dual-run health check passed: mode=dual source=ods status=matched")
+          PY
+
+          trap - ERR
           echo "Deploy finished."
           echo "Backup: $BACKUP"
           REMOTE

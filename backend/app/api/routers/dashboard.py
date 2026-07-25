@@ -7,8 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.api.routers.sales import (
-    ACTIVE_SALES_ORDER_SQL,
-    POSITIVE_SALES_ORDER_COUNT_SQL,
     _cached_ok,
     _get_sales_cache,
     _sales_cache_key,
@@ -16,7 +14,11 @@ from app.api.routers.sales import (
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
-from app.services.sales_sources import SALES_ORDER_TABLE_SQL
+from app.services.sales_sources import (
+    ACTIVE_SALES_ORDER_SQL,
+    POSITIVE_SALES_ORDER_COUNT_SQL,
+    SALES_ORDER_TABLE_SQL,
+)
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])

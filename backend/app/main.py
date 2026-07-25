@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routers import ai_decisions, auth, dashboard, inventory, model_settings, sales, text_to_sql, users
 from app.core.config import settings
+from app.core.performance import performance_middleware
 from app.db.init_db import init_db
 
 
@@ -28,7 +29,23 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=[
+            "Server-Timing",
+            "X-Request-ID",
+            "X-Response-Time-Ms",
+            "X-DB-Query-Count",
+            "X-DB-Time-Ms",
+            "X-DB-Slow-Query-Count",
+            "X-ODS-Query-Count",
+            "X-ODS-Time-Ms",
+            "X-ADS-Query-Count",
+            "X-ADS-Time-Ms",
+            "X-BI-Query-Mode",
+            "X-BI-Response-Source",
+            "X-BI-Dual-Status",
+        ],
     )
+    app.middleware("http")(performance_middleware)
 
     @app.get("/")
     def root() -> dict:

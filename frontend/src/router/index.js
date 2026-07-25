@@ -1,24 +1,25 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import DashboardLayout from '../layout/DashboardLayout.vue'
-import Login from '../views/data/Login.vue'
-import Dashboard from '../views/data/Dashboard.vue'
-import SalesOverview from '../views/data/SalesOverview.vue'
-import Sales from '../views/data/Sales.vue'
-import ProductRank from '../views/data/ProductRank.vue'
-import BrandAnalysis from '../views/data/BrandAnalysis.vue'
-import BrandChannelAnalysis from '../views/data/BrandChannelAnalysis.vue'
-import ChannelAnalysis from '../views/data/ChannelAnalysis.vue'
-import InventoryOverview from '../views/data/InventoryOverview.vue'
-import InventoryTurnover from '../views/data/InventoryTurnover.vue'
-import SlowMoving from '../views/data/SlowMoving.vue'
-import BatchExpiryAnalysis from '../views/data/BatchExpiryAnalysis.vue'
-import InventoryHealth from '../views/data/InventoryHealth.vue'
-import BrandMonthlyArrivals from '../views/data/BrandMonthlyArrivals.vue'
-import AiDecisionCenter from '../views/data/AiDecisionCenter.vue'
-import TextToSqlAgent from '../views/data/TextToSqlAgent.vue'
-import ModelSettings from '../views/data/ModelSettings.vue'
-import Users from '../views/data/Users.vue'
+
+const Login = () => import('../views/data/Login.vue')
+const Dashboard = () => import('../views/data/Dashboard.vue')
+const SalesOverview = () => import('../views/data/SalesOverview.vue')
+const Sales = () => import('../views/data/Sales.vue')
+const ProductRank = () => import('../views/data/ProductRank.vue')
+const BrandAnalysis = () => import('../views/data/BrandAnalysis.vue')
+const BrandChannelAnalysis = () => import('../views/data/BrandChannelAnalysis.vue')
+const ChannelAnalysis = () => import('../views/data/ChannelAnalysis.vue')
+const InventoryOverview = () => import('../views/data/InventoryOverview.vue')
+const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
+const SlowMoving = () => import('../views/data/SlowMoving.vue')
+const BatchExpiryAnalysis = () => import('../views/data/BatchExpiryAnalysis.vue')
+const InventoryHealth = () => import('../views/data/InventoryHealth.vue')
+const BrandMonthlyArrivals = () => import('../views/data/BrandMonthlyArrivals.vue')
+const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
+const TextToSqlAgent = () => import('../views/data/TextToSqlAgent.vue')
+const ModelSettings = () => import('../views/data/ModelSettings.vue')
+const Users = () => import('../views/data/Users.vue')
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
