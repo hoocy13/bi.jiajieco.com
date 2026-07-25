@@ -8,6 +8,7 @@ source:
   inspected_at: 2026-07-11
   notes:
     - 仅基于 information_schema 与聚合画像整理，未抽取业务明细样本。
+    - 订单头分析使用 dwd.销售单查询_进口超市上海仓补全；ods.销售单查询仅作为原始数据保留。
     - 销售单查询更像订单头快照，销售单明细账更适合商品、品牌、渠道、城市等明细分析。
     - 销售额默认使用 销售单明细账.分摊后金额。
     - 有效订单默认只排除已取消、已取消-被合并、已取消-被拆分，其他订单状态均计入。
@@ -15,7 +16,8 @@ source:
 
 tables:
   - name: 销售单查询
-    description: 销售订单头表，每行代表一笔销售单，用于订单数、实付金额、应收金额、订单状态、渠道等分析。
+    physical_table: dwd.`销售单查询_进口超市上海仓补全`
+    description: 补全后的销售订单头表，每行代表一笔销售单，用于订单数、实付金额、应收金额、订单状态、渠道等分析；包含进口超市上海仓金额修正及天猫国际自营补全金额。
     row_count_observed: 463235
     grain: 一行一笔销售单
     primary_key_candidate: 订单编号
@@ -507,7 +509,7 @@ query_examples:
         `渠道分类`,
         sum(`实付金额`) as paid_amount,
         count(distinct `订单编号`) as order_count
-      from ods.`销售单查询`
+      from dwd.`销售单查询_进口超市上海仓补全`
       where `订单状态` not in ('已取消', '已取消-被合并', '已取消-被拆分')
         and `下单时间` >= current_date - interval 1 day
         and `下单时间` < current_date

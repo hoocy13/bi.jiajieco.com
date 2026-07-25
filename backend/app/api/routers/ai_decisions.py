@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ok
 from app.services.model_client import chat_completion
+from app.services.sales_sources import SALES_ORDER_TABLE_SQL
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -124,7 +125,10 @@ def inventory_decisions(
         params,
     ).mappings().one()
     sales_anchor = ods_db.execute(
-        text("SELECT MAX(`下单时间`) FROM `销售单查询` WHERE COALESCE(`订单状态`, '') NOT LIKE '%取消%'")
+        text(
+            f"SELECT MAX(`下单时间`) FROM {SALES_ORDER_TABLE_SQL} "
+            "WHERE COALESCE(`订单状态`, '') NOT LIKE '%取消%'"
+        )
     ).scalar()
     sales_evidence = {
         "period": "近30天",
@@ -149,12 +153,12 @@ def inventory_decisions(
         }
         sales_summary = ods_db.execute(
             text(
-                """
+                f"""
                 SELECT
                   SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
                   COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END) AS orders,
                   SUM(COALESCE(`货品数量`, 0)) AS quantity
-                FROM `销售单查询`
+                FROM {SALES_ORDER_TABLE_SQL}
                 WHERE `下单时间` >= :sales_start
                   AND `下单时间` < DATE_ADD(:sales_end, INTERVAL 1 DAY)
                   AND COALESCE(`订单状态`, '') NOT LIKE '%取消%'
@@ -164,12 +168,12 @@ def inventory_decisions(
         ).mappings().one()
         previous_summary = ods_db.execute(
             text(
-                """
+                f"""
                 SELECT
                   SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
                   COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END) AS orders,
                   SUM(COALESCE(`货品数量`, 0)) AS quantity
-                FROM `销售单查询`
+                FROM {SALES_ORDER_TABLE_SQL}
                 WHERE `下单时间` >= :previous_start
                   AND `下单时间` < DATE_ADD(:previous_end, INTERVAL 1 DAY)
                   AND COALESCE(`订单状态`, '') NOT LIKE '%取消%'
@@ -179,13 +183,13 @@ def inventory_decisions(
         ).mappings().one()
         top_channels = ods_db.execute(
             text(
-                """
+                f"""
                 SELECT
                   COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
                   SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
                   COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END) AS orders,
                   SUM(COALESCE(`货品数量`, 0)) AS quantity
-                FROM `销售单查询`
+                FROM {SALES_ORDER_TABLE_SQL}
                 WHERE `下单时间` >= :sales_start
                   AND `下单时间` < DATE_ADD(:sales_end, INTERVAL 1 DAY)
                   AND COALESCE(`订单状态`, '') NOT LIKE '%取消%'

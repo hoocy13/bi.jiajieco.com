@@ -278,6 +278,7 @@ def link_schema(question: str, top_k_tables: int = 5, top_k_examples: int = 3) -
     guardrails = [
         "仅生成 SELECT 查询。",
         "默认销售额使用 ods.`销售单明细账`.`分摊后金额`。",
+        "订单头查询使用 dwd.`销售单查询_进口超市上海仓补全`，ods.`销售单查询`仅作为原始数据保留。",
         "售后退货、售后发货进入销售指标。",
         f"涉及订单头有效订单时使用过滤：{_CANCEL_STATUS_FILTER}。",
         "所有中文表名和字段名在 MySQL 中必须使用反引号。",

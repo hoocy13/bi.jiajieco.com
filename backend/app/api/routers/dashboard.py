@@ -16,6 +16,7 @@ from app.api.routers.sales import (
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.sales_sources import SALES_ORDER_TABLE_SQL
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -108,7 +109,7 @@ def overview(
         return ok(cached)
 
     max_date = db.execute(
-        text(f"SELECT MAX(`下单时间`) FROM `销售单查询` WHERE {ACTIVE_SALES_ORDER_SQL}")
+        text(f"SELECT MAX(`下单时间`) FROM {SALES_ORDER_TABLE_SQL} WHERE {ACTIVE_SALES_ORDER_SQL}")
     ).scalar()
     as_of = _as_date(max_date)
     if as_of is None:
@@ -136,7 +137,7 @@ def overview(
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
               SUM(COALESCE(`货品数量`, 0)) AS quantity
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -157,7 +158,7 @@ def overview(
               DATE(`下单时间`) AS day,
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :trend_start
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -174,7 +175,7 @@ def overview(
             SELECT
               COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -196,7 +197,7 @@ def overview(
               COALESCE(`货品数量`, 0) AS quantity,
               COALESCE(`实付金额`, 0) AS paid_amount,
               COALESCE(NULLIF(`订单状态`, ''), '未知') AS status
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -214,7 +215,7 @@ def overview(
               COALESCE(NULLIF(`市`, ''), '未填写') AS city,
               COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}

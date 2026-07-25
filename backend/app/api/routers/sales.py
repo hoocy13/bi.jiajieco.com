@@ -12,6 +12,7 @@ from app.api.deps import get_current_user
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.sales_sources import SALES_ORDER_TABLE_SQL
 
 
 router = APIRouter(prefix="/sales", tags=["sales"])
@@ -164,7 +165,7 @@ def _resolve_sales_period(
     end_date: date | None,
 ) -> tuple[dict, dict] | tuple[None, dict]:
     max_date = db.execute(
-        text(f"SELECT MAX(`下单时间`) FROM `销售单查询` WHERE {ACTIVE_SALES_ORDER_SQL}")
+        text(f"SELECT MAX(`下单时间`) FROM {SALES_ORDER_TABLE_SQL} WHERE {ACTIVE_SALES_ORDER_SQL}")
     ).scalar()
     as_of = _as_date(max_date)
     if as_of is None:
@@ -213,7 +214,7 @@ def _sales_query_summary(db: Session, params: dict) -> dict:
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
               SUM(COALESCE(`货品数量`, 0)) AS quantity
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -266,7 +267,7 @@ def sales_overview(
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
               SUM(COALESCE(`货品数量`, 0)) AS quantity
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -285,7 +286,7 @@ def sales_overview(
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
               SUM(COALESCE(`货品数量`, 0)) AS quantity
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND {ACTIVE_SALES_ORDER_SQL}
@@ -392,7 +393,7 @@ def sales_detail(
               {POSITIVE_SALES_ORDER_COUNT_SQL} AS orders,
               SUM(COALESCE(`实付金额`, 0)) AS paid_amount,
               SUM(COALESCE(`货品数量`, 0)) AS quantity
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE {where_sql}
             """
         ),
@@ -400,7 +401,7 @@ def sales_detail(
     ).mappings().one()
 
     total = db.execute(
-        text(f"SELECT COUNT(*) FROM `销售单查询` WHERE {where_sql}"),
+        text(f"SELECT COUNT(*) FROM {SALES_ORDER_TABLE_SQL} WHERE {where_sql}"),
         params,
     ).scalar()
 
@@ -419,7 +420,7 @@ def sales_detail(
               COALESCE(`应收合计`, 0) AS receivable_amount,
               COALESCE(`实付金额`, 0) AS paid_amount,
               COALESCE(NULLIF(`市`, ''), '-') AS city
-            FROM `销售单查询`
+            FROM {SALES_ORDER_TABLE_SQL}
             WHERE {where_sql}
             ORDER BY `下单时间` DESC, `订单编号` DESC
             LIMIT :limit OFFSET :offset
@@ -1045,7 +1046,7 @@ def sales_channel_customer_analysis(
             `订单编号`,
             MAX(NULLIF(TRIM(`客户编号`), '')) AS customer_code,
             MAX(NULLIF(TRIM(`客户名称`), '')) AS customer_name
-          FROM `销售单查询`
+          FROM {SALES_ORDER_TABLE_SQL}
           WHERE `下单时间` >= :start_date
             AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             AND COALESCE(NULLIF(`销售渠道`, ''), '未归类') = :channel_name
