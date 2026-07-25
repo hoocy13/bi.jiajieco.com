@@ -20,13 +20,17 @@ from app.models.ads import (
     AdsBase,
     AdsPublishBatch,
     AdsSalesDaily,
+    AdsSalesDailyBrandProduct,
+    AdsSalesDailyBrandScope,
     AdsSalesDailyChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
+    AdsSalesDetailDailyScope,
 )
 from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
+    load_sales_brand_analysis_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -57,9 +61,12 @@ class AdsSchemaTests(unittest.TestCase):
                 {
                     "ads_publish_batch",
                     "ads_sales_daily",
+                    "ads_sales_daily_brand_product",
+                    "ads_sales_daily_brand_scope",
                     "ads_sales_daily_channel",
                     "ads_sales_daily_product",
                     "ads_sales_detail_daily",
+                    "ads_sales_detail_daily_scope",
                 },
             )
         finally:
@@ -234,6 +241,132 @@ class SalesAdsReaderTests(unittest.TestCase):
                     paid_amount=Decimal("50.000000"),
                     quantity=Decimal("1.0000"),
                 ),
+                AdsSalesDetailDailyScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product_type_scope="all",
+                    orders=2,
+                    paid_amount=Decimal("90.000000"),
+                    quantity=Decimal("3.0000"),
+                ),
+                AdsSalesDetailDailyScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product_type_scope="all",
+                    orders=2,
+                    paid_amount=Decimal("60.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDetailDailyScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product_type_scope="full_size",
+                    orders=2,
+                    paid_amount=Decimal("70.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDetailDailyScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product_type_scope="full_size",
+                    orders=1,
+                    paid_amount=Decimal("10.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product_type_scope="all",
+                    brand="品牌A",
+                    orders=2,
+                    paid_amount=Decimal("70.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product_type_scope="all",
+                    brand="品牌B",
+                    orders=1,
+                    paid_amount=Decimal("20.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product_type_scope="all",
+                    brand="品牌A",
+                    orders=1,
+                    paid_amount=Decimal("10.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product_type_scope="all",
+                    brand="品牌B",
+                    orders=1,
+                    paid_amount=Decimal("50.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product_type_scope="full_size",
+                    brand="品牌A",
+                    orders=2,
+                    paid_amount=Decimal("70.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDailyBrandScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product_type_scope="full_size",
+                    brand="品牌A",
+                    orders=1,
+                    paid_amount=Decimal("10.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    brand="品牌A",
+                    product_type="正装",
+                    product="商品A",
+                    orders=2,
+                    paid_amount=Decimal("70.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDailyBrandProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    brand="品牌B",
+                    product_type="小样",
+                    product="商品B",
+                    orders=1,
+                    paid_amount=Decimal("20.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    brand="品牌A",
+                    product_type="正装",
+                    product="商品A",
+                    orders=1,
+                    paid_amount=Decimal("10.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyBrandProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    brand="品牌B",
+                    product_type="小样",
+                    product="商品B",
+                    orders=1,
+                    paid_amount=Decimal("50.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
             ]
         )
         self.db.commit()
@@ -309,6 +442,38 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual(filtered["rank_summary"]["paid_amount"], 80)
         self.assertEqual([row["product"] for row in filtered["rows"]], ["商品A"])
 
+    def test_loads_brand_analysis_and_product_type_from_ads(self) -> None:
+        batch = latest_ready_sales_batch(self.db)
+        meta = {
+            "as_of": "2026-07-02",
+            "period": "自定义",
+            "range": "custom",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-02",
+        }
+        data = load_sales_brand_analysis_from_ads(
+            self.db,
+            batch,
+            meta,
+            limit=10,
+            product_types=[],
+        )
+        self.assertEqual(data["summary"]["quantity"], 4)
+        self.assertEqual(data["rank_summary"]["quantity"], 5)
+        self.assertEqual([row["brand"] for row in data["rows"]], ["品牌A", "品牌B"])
+        self.assertEqual(data["rows"][0]["product_count"], 1)
+
+        filtered = load_sales_brand_analysis_from_ads(
+            self.db,
+            batch,
+            meta,
+            limit=10,
+            product_types=["正装"],
+        )
+        self.assertEqual(filtered["summary"]["paid_amount"], 80)
+        self.assertEqual(filtered["summary"]["orders"], 3)
+        self.assertEqual([row["brand"] for row in filtered["rows"]], ["品牌A"])
+
     def test_ads_query_mode_does_not_require_ods_session(self) -> None:
         original_mode = settings.BI_QUERY_SOURCE
         original_ads_session = sales_router.AdsSessionLocal
@@ -352,6 +517,32 @@ class SalesAdsReaderTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(payload["data"]["rank_summary"]["paid_amount"], 150)
+        finally:
+            settings.BI_QUERY_SOURCE = original_mode
+            sales_router.AdsSessionLocal = original_ads_session
+            sales_router._sales_cache.clear()
+
+    def test_brand_analysis_uses_ads_in_ads_mode(self) -> None:
+        original_mode = settings.BI_QUERY_SOURCE
+        original_ads_session = sales_router.AdsSessionLocal
+        try:
+            settings.BI_QUERY_SOURCE = "ads"
+            sales_router.AdsSessionLocal = sessionmaker(bind=self.engine)
+            sales_router._sales_cache.clear()
+            response = Response()
+            payload = sales_router.sales_brand_analysis(
+                response=response,
+                range="custom",
+                start_date=date(2026, 7, 1),
+                end_date=date(2026, 7, 2),
+                limit=10,
+                keyword=None,
+                product_type=["正装"],
+                current_user=None,
+                db=self.db,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(payload["data"]["summary"]["paid_amount"], 80)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             sales_router.AdsSessionLocal = original_ads_session

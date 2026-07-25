@@ -289,6 +289,150 @@ def load_sales_product_rank_from_ads(
     }
 
 
+def product_type_scope(product_types: list[str]) -> str:
+    selected = set(product_types)
+    if selected == {"正装"}:
+        return "full_size"
+    if selected == {"小样"}:
+        return "sample"
+    if selected == {"正装", "小样"}:
+        return "selected"
+    return "all"
+
+
+def load_sales_brand_analysis_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    limit: int,
+    product_types: list[str],
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    scope = product_type_scope(product_types)
+    params = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+        "product_type_scope": scope,
+    }
+
+    detail_summary_row = ads_db.execute(
+        text(
+            """
+            SELECT
+              COALESCE(SUM(`orders`), 0) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `ads_sales_detail_daily_scope`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `product_type_scope` = :product_type_scope
+            """
+        ),
+        params,
+    ).mappings().one()
+
+    if product_types:
+        summary_row = detail_summary_row
+    else:
+        summary_row = ads_db.execute(
+            text(
+                """
+                SELECT
+                  COALESCE(SUM(`orders`), 0) AS orders,
+                  COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+                  COALESCE(SUM(`quantity`), 0) AS quantity
+                FROM `ads_sales_daily`
+                WHERE `data_version` = :data_version
+                  AND `sales_date` BETWEEN :start_date AND :end_date
+                """
+            ),
+            params,
+        ).mappings().one()
+
+    brand_rows = ads_db.execute(
+        text(
+            """
+            SELECT
+              `brand`,
+              SUM(`orders`) AS orders,
+              SUM(`paid_amount`) AS paid_amount,
+              SUM(`quantity`) AS quantity
+            FROM `ads_sales_daily_brand_scope`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `product_type_scope` = :product_type_scope
+            GROUP BY `brand`
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    product_type_filter = ""
+    if scope == "full_size":
+        product_type_filter = "AND `product_type` = '正装'"
+    elif scope == "sample":
+        product_type_filter = "AND `product_type` = '小样'"
+    elif scope == "selected":
+        product_type_filter = "AND `product_type` IN ('正装', '小样')"
+    product_count_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              `brand`,
+              COUNT(DISTINCT `product`) AS product_count
+            FROM `ads_sales_daily_brand_product`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              {product_type_filter}
+            GROUP BY `brand`
+            """
+        ),
+        params,
+    ).mappings().all()
+    product_counts = {
+        str(row["brand"]): integer(row["product_count"])
+        for row in product_count_rows
+    }
+
+    rank_paid_amount = number(detail_summary_row["paid_amount"])
+    ranked_rows = sorted(
+        brand_rows,
+        key=lambda row: (-number(row["paid_amount"]), str(row["brand"])),
+    )[:limit]
+    return {
+        **meta,
+        "summary": {
+            "paid_amount": number(summary_row["paid_amount"]),
+            "orders": integer(summary_row["orders"]),
+            "quantity": integer(summary_row["quantity"]),
+        },
+        "rank_summary": {
+            "paid_amount": rank_paid_amount,
+            "orders": integer(detail_summary_row["orders"]),
+            "quantity": integer(detail_summary_row["quantity"]),
+        },
+        "rows": [
+            {
+                "rank": index + 1,
+                "brand": row["brand"],
+                "orders": orders,
+                "quantity": quantity,
+                "paid_amount": paid_amount,
+                "share": paid_amount / rank_paid_amount * 100 if rank_paid_amount else 0,
+                "product_count": product_counts.get(str(row["brand"]), 0),
+                "avg_unit_price": paid_amount / quantity if quantity else 0,
+            }
+            for index, row in enumerate(ranked_rows)
+            for orders in [integer(row["orders"])]
+            for quantity in [integer(row["quantity"])]
+            for paid_amount in [number(row["paid_amount"])]
+        ],
+    }
+
+
 def _numbers_equal(left: object, right: object, tolerance: float = 0.01) -> bool:
     return abs(number(left) - number(right)) <= tolerance
 

@@ -70,3 +70,39 @@ class AdsSalesDailyProduct(AdsBase):
     orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesDetailDailyScope(AdsBase):
+    __tablename__ = "ads_sales_detail_daily_scope"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    product_type_scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesDailyBrandScope(AdsBase):
+    __tablename__ = "ads_sales_daily_brand_scope"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    product_type_scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    brand: Mapped[str] = mapped_column(String(128), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesDailyBrandProduct(AdsBase):
+    __tablename__ = "ads_sales_daily_brand_product"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    brand: Mapped[str] = mapped_column(String(128), primary_key=True)
+    product_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    product: Mapped[str] = mapped_column(String(255), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)

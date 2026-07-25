@@ -15,18 +15,29 @@ from app.db.ods import create_ods_engine
 from app.models.ads import (
     AdsPublishBatch,
     AdsSalesDaily,
+    AdsSalesDailyBrandProduct,
+    AdsSalesDailyBrandScope,
     AdsSalesDailyChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
+    AdsSalesDetailDailyScope,
 )
 from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
+    BRAND_EXPRESSION_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
+    PRODUCT_TYPE_EXPRESSION_SQL,
     SALES_ORDER_TABLE_SQL,
 )
 
 
 DATASET = "sales_daily"
+PRODUCT_TYPE_SCOPES_SQL = """
+    SELECT 'all' AS product_type_scope
+    UNION ALL SELECT 'full_size'
+    UNION ALL SELECT 'sample'
+    UNION ALL SELECT 'selected'
+"""
 
 
 @dataclass(frozen=True)
@@ -243,6 +254,122 @@ def load_product_rows(
     return [dict(row) for row in rows]
 
 
+def load_detail_scope_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            f"""
+            SELECT
+              DATE(d.`下单时间`) AS sales_date,
+              scopes.product_type_scope,
+              COUNT(DISTINCT d.`订单编号`) AS orders,
+              SUM(COALESCE(d.`数量`, 0)) AS quantity,
+              SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账` d
+            JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
+              ON scopes.product_type_scope = 'all'
+              OR (
+                scopes.product_type_scope = 'full_size'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} = '正装'
+              )
+              OR (
+                scopes.product_type_scope = 'sample'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} = '小样'
+              )
+              OR (
+                scopes.product_type_scope = 'selected'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} IN ('正装', '小样')
+              )
+            WHERE d.`下单时间` >= :start_date
+              AND d.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY DATE(d.`下单时间`), scopes.product_type_scope
+            ORDER BY sales_date, scopes.product_type_scope
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def load_brand_scope_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            f"""
+            SELECT
+              DATE(d.`下单时间`) AS sales_date,
+              scopes.product_type_scope,
+              {BRAND_EXPRESSION_SQL} AS brand,
+              COUNT(DISTINCT d.`订单编号`) AS orders,
+              SUM(COALESCE(d.`数量`, 0)) AS quantity,
+              SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账` d
+            JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
+              ON scopes.product_type_scope = 'all'
+              OR (
+                scopes.product_type_scope = 'full_size'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} = '正装'
+              )
+              OR (
+                scopes.product_type_scope = 'sample'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} = '小样'
+              )
+              OR (
+                scopes.product_type_scope = 'selected'
+                AND {PRODUCT_TYPE_EXPRESSION_SQL} IN ('正装', '小样')
+              )
+            WHERE d.`下单时间` >= :start_date
+              AND d.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY
+              DATE(d.`下单时间`),
+              scopes.product_type_scope,
+              {BRAND_EXPRESSION_SQL}
+            ORDER BY sales_date, scopes.product_type_scope, brand
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def load_brand_product_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            f"""
+            SELECT
+              DATE(`下单时间`) AS sales_date,
+              {BRAND_EXPRESSION_SQL} AS brand,
+              {PRODUCT_TYPE_EXPRESSION_SQL} AS product_type,
+              COALESCE(NULLIF(`货品名称`, ''), '未命名商品') AS product,
+              COUNT(DISTINCT `订单编号`) AS orders,
+              SUM(COALESCE(`数量`, 0)) AS quantity,
+              SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账`
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY
+              DATE(`下单时间`),
+              {BRAND_EXPRESSION_SQL},
+              {PRODUCT_TYPE_EXPRESSION_SQL},
+              COALESCE(NULLIF(`货品名称`, ''), '未命名商品')
+            ORDER BY sales_date, brand, product_type, product
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def load_ads_summary(ads_db: Session, data_version: str) -> SalesSummary:
     row = ads_db.execute(
         text(
@@ -293,6 +420,36 @@ def load_ads_table_summary(
               COALESCE(SUM(`quantity`), 0) AS quantity
             FROM `{table_name}`
             WHERE `data_version` = :data_version
+            """
+        ),
+        {"data_version": data_version},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
+
+
+def load_ads_brand_summary(
+    ads_db: Session,
+    table_name: str,
+    data_version: str,
+) -> SalesSummary:
+    if table_name == "ads_sales_detail_daily_scope":
+        scope_filter = "AND `product_type_scope` = 'all'"
+    elif table_name == "ads_sales_daily_brand_scope":
+        scope_filter = "AND `product_type_scope` = 'all'"
+    elif table_name == "ads_sales_daily_brand_product":
+        scope_filter = ""
+    else:
+        raise ValueError("Unsupported brand ADS summary table")
+    row = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(SUM(`orders`), 0) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `{table_name}`
+            WHERE `data_version` = :data_version
+              {scope_filter}
             """
         ),
         {"data_version": data_version},
@@ -417,8 +574,30 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
+                detail_scope_rows = load_detail_scope_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
+                brand_scope_rows = load_brand_scope_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
+                brand_product_rows = load_brand_product_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
 
-                if not daily_rows or not detail_daily_rows or not product_rows:
+                if (
+                    not daily_rows
+                    or not detail_daily_rows
+                    or not product_rows
+                    or not detail_scope_rows
+                    or not brand_scope_rows
+                    or not brand_product_rows
+                ):
                     raise RuntimeError("No sales rows found for the requested range")
 
                 ads_db.execute(
@@ -475,6 +654,51 @@ def build_sales_ads(
                         for row in product_rows
                     ],
                 )
+                ads_db.execute(
+                    insert(AdsSalesDetailDailyScope),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "product_type_scope": str(row["product_type_scope"]),
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in detail_scope_rows
+                    ],
+                )
+                ads_db.execute(
+                    insert(AdsSalesDailyBrandScope),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "product_type_scope": str(row["product_type_scope"]),
+                            "brand": str(row["brand"] or "未识别品牌"),
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in brand_scope_rows
+                    ],
+                )
+                ads_db.execute(
+                    insert(AdsSalesDailyBrandProduct),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "brand": str(row["brand"] or "未识别品牌"),
+                            "product_type": str(row["product_type"] or "未分类"),
+                            "product": str(row["product"] or "未命名商品"),
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in brand_product_rows
+                    ],
+                )
 
                 daily_summary = load_ads_summary(ads_db, version)
                 channel_summary = load_ads_channel_summary(ads_db, version)
@@ -495,6 +719,44 @@ def build_sales_ads(
                     detail_source_summary,
                     detail_daily_summary,
                     product_summary,
+                )
+                detail_scope_summary = load_ads_brand_summary(
+                    ads_db,
+                    "ads_sales_detail_daily_scope",
+                    version,
+                )
+                brand_scope_summary = load_ads_brand_summary(
+                    ads_db,
+                    "ads_sales_daily_brand_scope",
+                    version,
+                )
+                brand_product_summary = load_ads_brand_summary(
+                    ads_db,
+                    "ads_sales_daily_brand_product",
+                    version,
+                )
+                detail_scope_matches = summaries_match(
+                    detail_source_summary,
+                    detail_scope_summary,
+                )
+                brand_scope_amount_quantity_matches = (
+                    detail_source_summary.paid_amount == brand_scope_summary.paid_amount
+                    and detail_source_summary.quantity == brand_scope_summary.quantity
+                )
+                brand_product_amount_quantity_matches = (
+                    detail_source_summary.paid_amount == brand_product_summary.paid_amount
+                    and detail_source_summary.quantity == brand_product_summary.quantity
+                )
+                reconciliation["brand_analysis"] = {
+                    "detail_scope_matches": detail_scope_matches,
+                    "brand_scope_amount_quantity_matches": brand_scope_amount_quantity_matches,
+                    "brand_product_amount_quantity_matches": brand_product_amount_quantity_matches,
+                }
+                reconciliation["passed"] = (
+                    reconciliation["passed"]
+                    and detail_scope_matches
+                    and brand_scope_amount_quantity_matches
+                    and brand_product_amount_quantity_matches
                 )
                 if not reconciliation["passed"]:
                     raise RuntimeError("ADS reconciliation failed")
@@ -519,6 +781,9 @@ def build_sales_ads(
                     "channel_row_count": len(channel_rows),
                     "detail_daily_row_count": len(detail_daily_rows),
                     "product_row_count": len(product_rows),
+                    "detail_scope_row_count": len(detail_scope_rows),
+                    "brand_scope_row_count": len(brand_scope_rows),
+                    "brand_product_row_count": len(brand_product_rows),
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
@@ -568,7 +833,10 @@ def main() -> None:
         f"daily_rows={result['daily_row_count']} "
         f"channel_rows={result['channel_row_count']} "
         f"detail_daily_rows={result['detail_daily_row_count']} "
-        f"product_rows={result['product_row_count']}"
+        f"product_rows={result['product_row_count']} "
+        f"detail_scope_rows={result['detail_scope_row_count']} "
+        f"brand_scope_rows={result['brand_scope_row_count']} "
+        f"brand_product_rows={result['brand_product_row_count']}"
     )
 
 

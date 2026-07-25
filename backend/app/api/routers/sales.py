@@ -17,6 +17,7 @@ from app.models.user import User
 from app.schemas.common import ok
 from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
+    BRAND_EXPRESSION_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
     SALES_ORDER_TABLE_SQL,
 )
@@ -24,6 +25,7 @@ from app.services.sales_ads import (
     AdsDataUnavailable,
     compare_sales_overviews,
     latest_ready_sales_batch,
+    load_sales_brand_analysis_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -341,6 +343,41 @@ def _load_ads_product_rank(
             meta,
             limit=limit,
             keyword=keyword,
+        )
+
+
+def _load_ads_brand_analysis(
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+    limit: int,
+    product_types: list[str],
+) -> dict:
+    if AdsSessionLocal is None:
+        raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
+
+    with AdsSessionLocal() as ads_db:
+        batch = latest_ready_sales_batch(ads_db)
+        as_of = batch.source_end_date
+        resolved_start, resolved_end, period, applied_range = _range_bounds(
+            range_key,
+            as_of,
+            start_date,
+            end_date,
+        )
+        meta = {
+            "as_of": as_of.isoformat(),
+            "period": period,
+            "range": applied_range,
+            "start_date": resolved_start.isoformat(),
+            "end_date": resolved_end.isoformat(),
+        }
+        return load_sales_brand_analysis_from_ads(
+            ads_db,
+            batch,
+            meta,
+            limit=limit,
+            product_types=product_types,
         )
 
 
@@ -778,6 +815,7 @@ def sales_product_rank(
 
 @router.get("/brand-analysis")
 def sales_brand_analysis(
+    response: Response,
     range: str = Query("last_30"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
@@ -787,22 +825,46 @@ def sales_brand_analysis(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     selected_product_types = list(
         dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
     )
     cache_key = _sales_cache_key(
-        "brand-analysis-v2",
+        "brand-analysis-v3",
         range=range,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
         keyword=keyword,
         product_type=selected_product_types,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = (
+            "ads" if query_mode == "ads" and not keyword else "ods"
+        )
         return ok(cached)
 
+    if query_mode == "ads" and not keyword:
+        try:
+            data = _load_ads_brand_analysis(
+                range,
+                start_date,
+                end_date,
+                limit,
+                selected_product_types,
+            )
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("sales_brand_analysis_ads status=error error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="ADS database is temporarily unavailable") from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(cache_key, {**meta, "summary": {"paid_amount": 0, "orders": 0, "quantity": 0}, "rows": []})
@@ -825,26 +887,7 @@ def sales_brand_analysis(
         )
 
     where_sql = " AND ".join(filters)
-    brand_expr = """
-        CASE
-          WHEN NULLIF(`品牌`, '') IS NOT NULL THEN `品牌`
-          WHEN `货品名称` LIKE '资生堂%' THEN '资生堂'
-          WHEN `货品名称` LIKE '兰蔻%' THEN '兰蔻'
-          WHEN `货品名称` LIKE 'YSL%' THEN 'YSL'
-          WHEN `货品名称` LIKE '圣罗兰%' THEN '圣罗兰'
-          WHEN `货品名称` LIKE '植村秀%' THEN '植村秀'
-          WHEN `货品名称` LIKE 'HR赫莲娜%' THEN 'HR赫莲娜'
-          WHEN `货品名称` LIKE '赫莲娜%' THEN '赫莲娜'
-          WHEN `货品名称` LIKE '科颜氏%' THEN '科颜氏'
-          WHEN `货品名称` LIKE '修丽可%' THEN '修丽可'
-          WHEN `货品名称` LIKE '阿玛尼%' THEN '阿玛尼'
-          WHEN `货品名称` LIKE '欧莱雅%' THEN '欧莱雅'
-          WHEN `货品名称` LIKE '理肤泉%' THEN '理肤泉'
-          WHEN `货品名称` LIKE '薇姿%' THEN '薇姿'
-          WHEN `货品名称` LIKE '适乐肤%' THEN '适乐肤'
-          ELSE '未识别品牌'
-        END
-    """
+    brand_expr = BRAND_EXPRESSION_SQL
     summary_row = db.execute(
         text(
             f"""
@@ -882,7 +925,7 @@ def sales_brand_analysis(
             FROM `销售单明细账`
             WHERE {where_sql}
             GROUP BY {brand_expr}
-            ORDER BY paid_amount DESC
+            ORDER BY paid_amount DESC, brand
             LIMIT :limit
             """
         ),
@@ -1419,26 +1462,7 @@ def sales_brand_channel_analysis(
         param_name = f"channel_name_{index}"
         params[param_name] = item
         channel_name_params.append(f":{param_name}")
-    brand_expr = """
-        CASE
-          WHEN NULLIF(`品牌`, '') IS NOT NULL THEN `品牌`
-          WHEN `货品名称` LIKE '资生堂%' THEN '资生堂'
-          WHEN `货品名称` LIKE '兰蔻%' THEN '兰蔻'
-          WHEN `货品名称` LIKE 'YSL%' THEN 'YSL'
-          WHEN `货品名称` LIKE '圣罗兰%' THEN '圣罗兰'
-          WHEN `货品名称` LIKE '植村秀%' THEN '植村秀'
-          WHEN `货品名称` LIKE 'HR赫莲娜%' THEN 'HR赫莲娜'
-          WHEN `货品名称` LIKE '赫莲娜%' THEN '赫莲娜'
-          WHEN `货品名称` LIKE '科颜氏%' THEN '科颜氏'
-          WHEN `货品名称` LIKE '修丽可%' THEN '修丽可'
-          WHEN `货品名称` LIKE '阿玛尼%' THEN '阿玛尼'
-          WHEN `货品名称` LIKE '欧莱雅%' THEN '欧莱雅'
-          WHEN `货品名称` LIKE '理肤泉%' THEN '理肤泉'
-          WHEN `货品名称` LIKE '薇姿%' THEN '薇姿'
-          WHEN `货品名称` LIKE '适乐肤%' THEN '适乐肤'
-          ELSE '未识别品牌'
-        END
-    """
+    brand_expr = BRAND_EXPRESSION_SQL
     fact_where = f"""
         `下单时间` >= :start_date
         AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)

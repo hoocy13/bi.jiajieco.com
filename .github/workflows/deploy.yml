@@ -192,6 +192,7 @@ jobs:
 
           check_ads_endpoint("/api/v1/sales/overview?range=last_30", "sales_overview")
           check_ads_endpoint("/api/v1/sales/product-rank?range=last_30&limit=30", "sales_product_rank")
+          check_ads_endpoint("/api/v1/sales/brand-analysis?range=this_year&limit=30", "sales_brand_analysis")
           PY
 
           install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads
