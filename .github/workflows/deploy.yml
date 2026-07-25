@@ -38,10 +38,18 @@ jobs:
 
       - name: Upload archive
         env:
+          ADS_BUILD_DATABASE_URL: ${{ secrets.ADS_BUILD_DATABASE_URL }}
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
         run: |
+          if [ -z "$ADS_BUILD_DATABASE_URL" ]; then
+            echo "Missing ADS_BUILD_DATABASE_URL repository secret"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$ADS_BUILD_DATABASE_URL" > "$RUNNER_TEMP/ads-build-url"
           scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/bi-deploy.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-deploy.tar.gz"
+          scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/ads-build-url" "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-ads-build-url"
 
       - name: Deploy on server
         env:
@@ -53,6 +61,7 @@ jobs:
 
           APP_DIR="/www/wwwroot/bi.jiajieco.com"
           ARCHIVE="/root/bi-deploy.tar.gz"
+          ADS_BUILD_SECRET_FILE="/root/bi-ads-build-url"
           TS=$(date +%Y%m%d%H%M%S)
           RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
           BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
@@ -60,6 +69,7 @@ jobs:
 
           rollback() {
             exit_code=$?
+            rm -f "$ADS_BUILD_SECRET_FILE"
             if [ "$exit_code" -ne 0 ] && [ -d "$BACKUP" ]; then
               echo "Deploy failed; restoring previous release."
               if [ -d "$APP_DIR" ]; then
@@ -90,6 +100,10 @@ jobs:
             echo "Missing production backend/.env"
             exit 1
           fi
+          if [ ! -s "$ADS_BUILD_SECRET_FILE" ]; then
+            echo "Missing uploaded ADS build credential"
+            exit 1
+          fi
 
           ods_line=$(grep '^ODS_DATABASE_URL=' "$ENV_FILE" | tail -n 1 || true)
           if [ -z "$ods_line" ]; then
@@ -102,11 +116,14 @@ jobs:
             echo "Could not derive ADS_DATABASE_URL from ODS_DATABASE_URL"
             exit 1
           fi
+          ads_build_value=$(cat "$ADS_BUILD_SECRET_FILE")
+          rm -f "$ADS_BUILD_SECRET_FILE"
 
-          sed -i '/^ADS_DATABASE_URL=/d; /^BI_QUERY_SOURCE=/d' "$ENV_FILE"
+          sed -i '/^ADS_DATABASE_URL=/d; /^ADS_BUILD_DATABASE_URL=/d; /^BI_QUERY_SOURCE=/d' "$ENV_FILE"
           {
             printf '\nADS_DATABASE_URL=%s\n' "$ads_value"
-            printf 'BI_QUERY_SOURCE=dual\n'
+            printf 'ADS_BUILD_DATABASE_URL=%s\n' "$ads_build_value"
+            printf 'BI_QUERY_SOURCE=ads\n'
           } >> "$ENV_FILE"
           chmod 600 "$ENV_FILE"
 
@@ -137,6 +154,8 @@ jobs:
             sleep 2
           done
 
+          docker compose exec -T backend python -m app.jobs.build_sales_ads
+
           docker compose exec -T backend python - <<'PY'
           import urllib.request
 
@@ -156,15 +175,20 @@ jobs:
           with urllib.request.urlopen(request, timeout=60) as response:
               query_mode = response.headers.get("X-BI-Query-Mode")
               response_source = response.headers.get("X-BI-Response-Source")
-              dual_status = response.headers.get("X-BI-Dual-Status")
+              total_time = response.headers.get("X-BI-Total-Time-Ms")
 
-          if query_mode != "dual" or response_source != "ods" or dual_status != "matched":
+          if query_mode != "ads" or response_source != "ads":
               raise SystemExit(
-                  "Dual-run health check failed: "
-                  f"mode={query_mode} source={response_source} status={dual_status}"
+                  "ADS health check failed: "
+                  f"mode={query_mode} source={response_source}"
               )
-          print("Dual-run health check passed: mode=dual source=ods status=matched")
+          print(
+              "ADS health check passed: "
+              f"mode=ads source=ads total_time_ms={total_time or 'unknown'}"
+          )
           PY
+
+          install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads
 
           trap - ERR
           echo "Deploy finished."

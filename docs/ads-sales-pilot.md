@@ -4,20 +4,20 @@
 
 销售 ADS 将页面高频聚合从 ODS 请求链路移到独立查询库。ODS 仅由构建任务读取，FastAPI 请求不通过 ADS 连接执行写操作。
 
-当前阶段只建立数据构建和发布基础设施，线上接口仍由以下配置保持在 ODS：
+当前生产销售概览使用以下配置直接读取 ADS：
 
 ```env
-BI_QUERY_SOURCE=ods
+BI_QUERY_SOURCE=ads
 ```
 
 ## 权限边界
 
 使用两个 ADS 账号：
 
-- `ADS_DATABASE_URL`：FastAPI 使用，只授予 `bi_ads` 的 `SELECT` 权限。
-- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，授予 ADS 表的写权限。
+- `ADS_DATABASE_URL`：FastAPI 使用，只授予 `ads` 的 `SELECT` 权限。
+- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，仅授予三张销售 ADS 表所需的 `SELECT`、`INSERT`、`UPDATE` 权限。
 
-两者都必须指向独立的 `bi_ads` 数据库。程序会拒绝将 ADS 配置为 ODS 数据库，防止构建任务误写源库。
+两者都必须指向独立的 `ads` 数据库。程序会拒绝将 ADS 配置为 ODS 数据库，防止构建任务误写源库。
 
 数据库和账号由运维或 DBA 创建，不在代码、文档或日志中保存真实密码。
 
@@ -63,7 +63,7 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 .venv\Scripts\python.exe -m app.jobs.build_sales_ads --initialize-only
 ```
 
-初始化完成后，可以撤销构建账号的 DDL 权限，只保留 `SELECT`、`INSERT`、`UPDATE` 和 `DELETE`。
+初始化完成后，可以撤销构建账号的 DDL 权限。当前版本化构建只需要三张 ADS 表上的 `SELECT`、`INSERT`，以及发布批次表上的 `UPDATE`。
 
 ## 构建
 
@@ -104,7 +104,7 @@ ORDER BY `published_at` DESC
 LIMIT 1;
 ```
 
-在 ODS/ADS 双跑核对完成之前，不修改 `BI_QUERY_SOURCE=ods`。
+生产发布会先生成新的完整版本并完成汇总核对，再以 `BI_QUERY_SOURCE=ads` 启动销售概览。发布后的定时任务每天北京时间 06:30 构建一次；`flock` 防止任务重叠执行。
 
 ## 查询模式
 
