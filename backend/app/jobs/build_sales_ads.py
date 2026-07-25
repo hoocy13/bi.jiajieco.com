@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.ads import initialize_ads_schema, require_ads_build_session_factory
 from app.db.ods import create_ods_engine
-from app.models.ads import AdsPublishBatch, AdsSalesDaily, AdsSalesDailyChannel
+from app.models.ads import (
+    AdsPublishBatch,
+    AdsSalesDaily,
+    AdsSalesDailyChannel,
+    AdsSalesDailyProduct,
+    AdsSalesDetailDaily,
+)
 from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
@@ -162,6 +168,81 @@ def load_channel_rows(ods_db: Session, start_date: date, end_date: date) -> list
     return [dict(row) for row in rows]
 
 
+def load_detail_source_summary(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> SalesSummary:
+    row = ods_db.execute(
+        text(
+            """
+            SELECT
+              COUNT(DISTINCT `订单编号`) AS orders,
+              SUM(COALESCE(`数量`, 0)) AS quantity,
+              SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账`
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
+
+
+def load_detail_daily_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              DATE(`下单时间`) AS sales_date,
+              COUNT(DISTINCT `订单编号`) AS orders,
+              SUM(COALESCE(`数量`, 0)) AS quantity,
+              SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账`
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY DATE(`下单时间`)
+            ORDER BY sales_date
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def load_product_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              DATE(`下单时间`) AS sales_date,
+              COALESCE(NULLIF(`货品名称`, ''), '未命名商品') AS product,
+              COUNT(DISTINCT `订单编号`) AS orders,
+              SUM(COALESCE(`数量`, 0)) AS quantity,
+              SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账`
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY
+              DATE(`下单时间`),
+              COALESCE(NULLIF(`货品名称`, ''), '未命名商品')
+            ORDER BY sales_date, product
+            """
+        ),
+        {"start_date": start_date, "end_date": end_date},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def load_ads_summary(ads_db: Session, data_version: str) -> SalesSummary:
     row = ads_db.execute(
         text(
@@ -196,17 +277,43 @@ def load_ads_channel_summary(ads_db: Session, data_version: str) -> SalesSummary
     return summary_from_mapping(dict(row))
 
 
+def load_ads_table_summary(
+    ads_db: Session,
+    table_name: str,
+    data_version: str,
+) -> SalesSummary:
+    if table_name not in {"ads_sales_detail_daily", "ads_sales_daily_product"}:
+        raise ValueError("Unsupported ADS summary table")
+    row = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(SUM(`orders`), 0) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `{table_name}`
+            WHERE `data_version` = :data_version
+            """
+        ),
+        {"data_version": data_version},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
+
+
 def reconciliation_payload(
     source: SalesSummary,
     daily: SalesSummary,
     channel: SalesSummary,
+    detail_source: SalesSummary | None = None,
+    detail_daily: SalesSummary | None = None,
+    product: SalesSummary | None = None,
 ) -> dict:
     daily_matches = summaries_match(source, daily)
     channel_matches = (
         source.paid_amount == channel.paid_amount
         and source.quantity == channel.quantity
     )
-    return {
+    payload = {
         "passed": daily_matches and channel_matches,
         "daily_matches": daily_matches,
         "channel_amount_quantity_matches": channel_matches,
@@ -225,6 +332,38 @@ def reconciliation_payload(
             "quantity": str(channel.quantity),
         },
     }
+    if detail_source is None or detail_daily is None or product is None:
+        return payload
+
+    detail_daily_matches = summaries_match(detail_source, detail_daily)
+    product_amount_quantity_matches = (
+        detail_source.paid_amount == product.paid_amount
+        and detail_source.quantity == product.quantity
+    )
+    payload["passed"] = (
+        payload["passed"]
+        and detail_daily_matches
+        and product_amount_quantity_matches
+    )
+    payload["product_rank"] = {
+        "detail_daily_matches": detail_daily_matches,
+        "product_amount_quantity_matches": product_amount_quantity_matches,
+        "source": {
+            "orders": detail_source.orders,
+            "paid_amount": str(detail_source.paid_amount),
+            "quantity": str(detail_source.quantity),
+        },
+        "detail_daily": {
+            "orders": detail_daily.orders,
+            "paid_amount": str(detail_daily.paid_amount),
+            "quantity": str(detail_daily.quantity),
+        },
+        "product": {
+            "paid_amount": str(product.paid_amount),
+            "quantity": str(product.quantity),
+        },
+    }
+    return payload
 
 
 def build_sales_ads(
@@ -263,8 +402,23 @@ def build_sales_ads(
                 source_summary = load_source_summary(ods_db, resolved_start, resolved_end)
                 daily_rows = load_daily_rows(ods_db, resolved_start, resolved_end)
                 channel_rows = load_channel_rows(ods_db, resolved_start, resolved_end)
+                detail_source_summary = load_detail_source_summary(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
+                detail_daily_rows = load_detail_daily_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
+                product_rows = load_product_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
 
-                if not daily_rows:
+                if not daily_rows or not detail_daily_rows or not product_rows:
                     raise RuntimeError("No sales rows found for the requested range")
 
                 ads_db.execute(
@@ -294,13 +448,53 @@ def build_sales_ads(
                         for row in channel_rows
                     ],
                 )
+                ads_db.execute(
+                    insert(AdsSalesDetailDaily),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in detail_daily_rows
+                    ],
+                )
+                ads_db.execute(
+                    insert(AdsSalesDailyProduct),
+                    [
+                        {
+                            "data_version": version,
+                            "sales_date": row["sales_date"],
+                            "product": str(row["product"] or "未命名商品"),
+                            "orders": int(row["orders"] or 0),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                            "quantity": decimal_value(row["quantity"]),
+                        }
+                        for row in product_rows
+                    ],
+                )
 
                 daily_summary = load_ads_summary(ads_db, version)
                 channel_summary = load_ads_channel_summary(ads_db, version)
+                detail_daily_summary = load_ads_table_summary(
+                    ads_db,
+                    "ads_sales_detail_daily",
+                    version,
+                )
+                product_summary = load_ads_table_summary(
+                    ads_db,
+                    "ads_sales_daily_product",
+                    version,
+                )
                 reconciliation = reconciliation_payload(
                     source_summary,
                     daily_summary,
                     channel_summary,
+                    detail_source_summary,
+                    detail_daily_summary,
+                    product_summary,
                 )
                 if not reconciliation["passed"]:
                     raise RuntimeError("ADS reconciliation failed")
@@ -323,6 +517,8 @@ def build_sales_ads(
                     "source_end_date": resolved_end.isoformat(),
                     "daily_row_count": len(daily_rows),
                     "channel_row_count": len(channel_rows),
+                    "detail_daily_row_count": len(detail_daily_rows),
+                    "product_row_count": len(product_rows),
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
@@ -370,7 +566,9 @@ def main() -> None:
         f"version={result['data_version']} "
         f"range={result['source_start_date']}..{result['source_end_date']} "
         f"daily_rows={result['daily_row_count']} "
-        f"channel_rows={result['channel_row_count']}"
+        f"channel_rows={result['channel_row_count']} "
+        f"detail_daily_rows={result['detail_daily_row_count']} "
+        f"product_rows={result['product_row_count']}"
     )
 
 

@@ -154,6 +154,141 @@ def load_sales_overview_from_ads(
     }
 
 
+def load_sales_product_rank_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    limit: int,
+    keyword: str | None = None,
+    exact_filtered_orders: int | None = None,
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    params = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+
+    sales_summary_row = ads_db.execute(
+        text(
+            """
+            SELECT
+              COALESCE(SUM(`orders`), 0) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `ads_sales_daily`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+            """
+        ),
+        params,
+    ).mappings().one()
+
+    product_filter = ""
+    if keyword:
+        params["keyword"] = f"%{keyword.strip()}%"
+        product_filter = "AND `product` LIKE :keyword"
+
+    product_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              `product`,
+              SUM(`orders`) AS orders,
+              SUM(`paid_amount`) AS paid_amount,
+              SUM(`quantity`) AS quantity
+            FROM `ads_sales_daily_product`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              {product_filter}
+            GROUP BY `product`
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    if keyword:
+        detail_orders = (
+            exact_filtered_orders
+            if exact_filtered_orders is not None
+            else sum((integer(row["orders"]) for row in product_rows), 0)
+        )
+    else:
+        detail_orders = integer(
+            ads_db.execute(
+                text(
+                    """
+                    SELECT COALESCE(SUM(`orders`), 0)
+                    FROM `ads_sales_detail_daily`
+                    WHERE `data_version` = :data_version
+                      AND `sales_date` BETWEEN :start_date AND :end_date
+                    """
+                ),
+                params,
+            ).scalar()
+        )
+
+    rank_paid_amount = sum((number(row["paid_amount"]) for row in product_rows), 0.0)
+    rank_quantity = sum((integer(row["quantity"]) for row in product_rows), 0)
+    amount_rows = sorted(
+        product_rows,
+        key=lambda row: (-number(row["paid_amount"]), str(row["product"])),
+    )[:limit]
+    quantity_rows = sorted(
+        product_rows,
+        key=lambda row: (
+            -integer(row["quantity"]),
+            -number(row["paid_amount"]),
+            str(row["product"]),
+        ),
+    )[:limit]
+
+    summary_paid_amount = number(sales_summary_row["paid_amount"])
+    summary_orders = integer(sales_summary_row["orders"])
+    summary_quantity = integer(sales_summary_row["quantity"])
+
+    def rank_payload(rows: list, share_total: float | int) -> list[dict]:
+        return [
+            {
+                "rank": index + 1,
+                "product": row["product"],
+                "orders": orders,
+                "quantity": quantity,
+                "paid_amount": paid_amount,
+                "share": paid_amount / share_total * 100 if share_total else 0,
+                "avg_unit_price": paid_amount / quantity if quantity else 0,
+            }
+            for index, row in enumerate(rows)
+            for orders in [integer(row["orders"])]
+            for quantity in [integer(row["quantity"])]
+            for paid_amount in [number(row["paid_amount"])]
+        ]
+
+    amount_payload = rank_payload(amount_rows, rank_paid_amount)
+    quantity_payload = rank_payload(quantity_rows, rank_quantity)
+    for row, source in zip(quantity_payload, quantity_rows, strict=True):
+        quantity = integer(source["quantity"])
+        row["share"] = quantity / rank_quantity * 100 if rank_quantity else 0
+
+    return {
+        **meta,
+        "summary": {
+            "paid_amount": summary_paid_amount,
+            "orders": summary_orders,
+            "quantity": summary_quantity,
+        },
+        "rank_summary": {
+            "paid_amount": rank_paid_amount,
+            "orders": detail_orders,
+            "quantity": rank_quantity,
+        },
+        "rows": amount_payload,
+        "quantity_rows": quantity_payload,
+    }
+
+
 def _numbers_equal(left: object, right: object, tolerance: float = 0.01) -> bool:
     return abs(number(left) - number(right)) <= tolerance
 

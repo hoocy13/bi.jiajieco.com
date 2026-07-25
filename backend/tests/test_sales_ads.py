@@ -16,11 +16,19 @@ from app.jobs.build_sales_ads import (
     reconciliation_payload,
     summaries_match,
 )
-from app.models.ads import AdsBase, AdsPublishBatch, AdsSalesDaily, AdsSalesDailyChannel
+from app.models.ads import (
+    AdsBase,
+    AdsPublishBatch,
+    AdsSalesDaily,
+    AdsSalesDailyChannel,
+    AdsSalesDailyProduct,
+    AdsSalesDetailDaily,
+)
 from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_overview_from_ads,
+    load_sales_product_rank_from_ads,
 )
 
 
@@ -50,6 +58,8 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_publish_batch",
                     "ads_sales_daily",
                     "ads_sales_daily_channel",
+                    "ads_sales_daily_product",
+                    "ads_sales_detail_daily",
                 },
             )
         finally:
@@ -99,6 +109,27 @@ class SalesReconciliationTests(unittest.TestCase):
         version = new_data_version(date(2026, 7, 25))
         self.assertTrue(version.startswith("sales-2026-07-25-"))
         self.assertLessEqual(len(version), 64)
+
+    def test_product_rank_reconciliation_checks_both_aggregates(self) -> None:
+        payload = reconciliation_payload(
+            self.summary,
+            self.summary,
+            SalesSummary(
+                orders=0,
+                paid_amount=self.summary.paid_amount,
+                quantity=self.summary.quantity,
+            ),
+            self.summary,
+            self.summary,
+            SalesSummary(
+                orders=99,
+                paid_amount=self.summary.paid_amount,
+                quantity=self.summary.quantity,
+            ),
+        )
+        self.assertTrue(payload["passed"])
+        self.assertTrue(payload["product_rank"]["detail_daily_matches"])
+        self.assertTrue(payload["product_rank"]["product_amount_quantity_matches"])
 
 
 class SalesAdsReaderTests(unittest.TestCase):
@@ -157,6 +188,52 @@ class SalesAdsReaderTests(unittest.TestCase):
                     paid_amount=Decimal("50.000000"),
                     quantity=Decimal("-1.0000"),
                 ),
+                AdsSalesDetailDaily(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    orders=2,
+                    paid_amount=Decimal("90.000000"),
+                    quantity=Decimal("3.0000"),
+                ),
+                AdsSalesDetailDaily(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    orders=2,
+                    paid_amount=Decimal("60.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDailyProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product="商品A",
+                    orders=2,
+                    paid_amount=Decimal("70.000000"),
+                    quantity=Decimal("2.0000"),
+                ),
+                AdsSalesDailyProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    product="商品B",
+                    orders=1,
+                    paid_amount=Decimal("20.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product="商品A",
+                    orders=1,
+                    paid_amount=Decimal("10.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    product="商品B",
+                    orders=1,
+                    paid_amount=Decimal("50.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
             ]
         )
         self.db.commit()
@@ -203,6 +280,35 @@ class SalesAdsReaderTests(unittest.TestCase):
         differences = compare_sales_overviews(data, changed)
         self.assertIn("metrics.orders", [difference.path for difference in differences])
 
+    def test_loads_product_rank_and_keyword_from_ads(self) -> None:
+        batch = latest_ready_sales_batch(self.db)
+        meta = {
+            "as_of": "2026-07-02",
+            "period": "自定义",
+            "range": "custom",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-02",
+        }
+        data = load_sales_product_rank_from_ads(self.db, batch, meta, limit=10)
+        self.assertEqual(data["summary"]["paid_amount"], 150)
+        self.assertEqual(data["summary"]["quantity"], 4)
+        self.assertEqual(data["rank_summary"]["orders"], 4)
+        self.assertEqual(data["rank_summary"]["quantity"], 5)
+        self.assertEqual([row["product"] for row in data["rows"]], ["商品A", "商品B"])
+        self.assertEqual([row["product"] for row in data["quantity_rows"]], ["商品A", "商品B"])
+
+        filtered = load_sales_product_rank_from_ads(
+            self.db,
+            batch,
+            meta,
+            limit=10,
+            keyword="商品A",
+            exact_filtered_orders=2,
+        )
+        self.assertEqual(filtered["rank_summary"]["orders"], 2)
+        self.assertEqual(filtered["rank_summary"]["paid_amount"], 80)
+        self.assertEqual([row["product"] for row in filtered["rows"]], ["商品A"])
+
     def test_ads_query_mode_does_not_require_ods_session(self) -> None:
         original_mode = settings.BI_QUERY_SOURCE
         original_ads_session = sales_router.AdsSessionLocal
@@ -221,6 +327,31 @@ class SalesAdsReaderTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(payload["data"]["metrics"]["paid_amount"], 150)
+        finally:
+            settings.BI_QUERY_SOURCE = original_mode
+            sales_router.AdsSessionLocal = original_ads_session
+            sales_router._sales_cache.clear()
+
+    def test_product_rank_uses_ads_in_ads_mode(self) -> None:
+        original_mode = settings.BI_QUERY_SOURCE
+        original_ads_session = sales_router.AdsSessionLocal
+        try:
+            settings.BI_QUERY_SOURCE = "ads"
+            sales_router.AdsSessionLocal = sessionmaker(bind=self.engine)
+            sales_router._sales_cache.clear()
+            response = Response()
+            payload = sales_router.sales_product_rank(
+                response=response,
+                range="custom",
+                start_date=date(2026, 7, 1),
+                end_date=date(2026, 7, 2),
+                limit=10,
+                keyword=None,
+                current_user=None,
+                db=self.db,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(payload["data"]["rank_summary"]["paid_amount"], 150)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             sales_router.AdsSessionLocal = original_ads_session

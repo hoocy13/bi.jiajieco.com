@@ -168,24 +168,30 @@ jobs:
           if user is None:
               raise SystemExit("No active user available for authenticated health check")
 
-          request = urllib.request.Request(
-              "http://127.0.0.1:8000/api/v1/sales/overview?range=last_30",
-              headers={"Authorization": f"Bearer {create_access_token(subject=user.username)}"},
-          )
-          with urllib.request.urlopen(request, timeout=60) as response:
-              query_mode = response.headers.get("X-BI-Query-Mode")
-              response_source = response.headers.get("X-BI-Response-Source")
-              total_time = response.headers.get("X-BI-Total-Time-Ms")
+          token = create_access_token(subject=user.username)
 
-          if query_mode != "ads" or response_source != "ads":
-              raise SystemExit(
-                  "ADS health check failed: "
-                  f"mode={query_mode} source={response_source}"
+          def check_ads_endpoint(path: str, label: str) -> None:
+              request = urllib.request.Request(
+                  f"http://127.0.0.1:8000{path}",
+                  headers={"Authorization": f"Bearer {token}"},
               )
-          print(
-              "ADS health check passed: "
-              f"mode=ads source=ads total_time_ms={total_time or 'unknown'}"
-          )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  query_mode = response.headers.get("X-BI-Query-Mode")
+                  response_source = response.headers.get("X-BI-Response-Source")
+                  server_timing = response.headers.get("Server-Timing")
+
+              if query_mode != "ads" or response_source != "ads":
+                  raise SystemExit(
+                      f"{label} ADS health check failed: "
+                      f"mode={query_mode} source={response_source}"
+                  )
+              print(
+                  f"{label} ADS health check passed: "
+                  f"mode=ads source=ads server_timing={server_timing or 'unknown'}"
+              )
+
+          check_ads_endpoint("/api/v1/sales/overview?range=last_30", "sales_overview")
+          check_ads_endpoint("/api/v1/sales/product-rank?range=last_30&limit=30", "sales_product_rank")
           PY
 
           install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads

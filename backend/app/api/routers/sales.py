@@ -25,6 +25,7 @@ from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_overview_from_ads,
+    load_sales_product_rank_from_ads,
 )
 
 
@@ -308,6 +309,41 @@ def _validate_ads_overview(ods_data: dict, range_key: str, start_date: date | No
         return "error"
 
 
+def _load_ads_product_rank(
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+    limit: int,
+    keyword: str | None,
+) -> dict:
+    if AdsSessionLocal is None:
+        raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
+
+    with AdsSessionLocal() as ads_db:
+        batch = latest_ready_sales_batch(ads_db)
+        as_of = batch.source_end_date
+        resolved_start, resolved_end, period, applied_range = _range_bounds(
+            range_key,
+            as_of,
+            start_date,
+            end_date,
+        )
+        meta = {
+            "as_of": as_of.isoformat(),
+            "period": period,
+            "range": applied_range,
+            "start_date": resolved_start.isoformat(),
+            "end_date": resolved_end.isoformat(),
+        }
+        return load_sales_product_rank_from_ads(
+            ads_db,
+            batch,
+            meta,
+            limit=limit,
+            keyword=keyword,
+        )
+
+
 @router.get("/overview")
 def sales_overview(
     response: Response,
@@ -572,6 +608,7 @@ def sales_detail(
 
 @router.get("/product-rank")
 def sales_product_rank(
+    response: Response,
     range: str = Query("last_30"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
@@ -580,18 +617,58 @@ def sales_product_rank(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
-        "product-rank-v2",
+        "product-rank-v3",
         range=range,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
         keyword=keyword,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        try:
+            data = _load_ads_product_rank(
+                range,
+                start_date,
+                end_date,
+                limit,
+                keyword,
+            )
+            if keyword:
+                exact_orders = db.execute(
+                    text(
+                        """
+                        SELECT COUNT(DISTINCT `订单编号`)
+                        FROM `销售单明细账`
+                        WHERE `下单时间` >= :start_date
+                          AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+                          AND `货品名称` LIKE :keyword
+                        """
+                    ),
+                    {
+                        "start_date": date.fromisoformat(data["start_date"]),
+                        "end_date": date.fromisoformat(data["end_date"]),
+                        "keyword": f"%{keyword.strip()}%",
+                    },
+                ).scalar()
+                data["rank_summary"]["orders"] = _int(exact_orders)
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.warning("sales_product_rank_ads status=error error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="ADS database is temporarily unavailable") from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(cache_key, {**meta, "summary": {"paid_amount": 0, "orders": 0, "quantity": 0}, "rows": []})
