@@ -51,6 +51,18 @@ class AdsSalesDailyChannel(AdsBase):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
 
 
+class AdsSalesDailyCityChannel(AdsBase):
+    __tablename__ = "ads_sales_daily_city_channel"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    city: Mapped[str] = mapped_column(String(128), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
 class AdsSalesDetailDaily(AdsBase):
     __tablename__ = "ads_sales_detail_daily"
 

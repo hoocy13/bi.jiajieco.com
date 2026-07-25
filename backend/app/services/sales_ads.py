@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select, text
@@ -42,6 +42,12 @@ def date_text(value: object) -> str:
     if isinstance(value, date):
         return value.isoformat()
     return str(value)
+
+
+def date_value(value: object) -> date:
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
 
 
 def latest_ready_sales_batch(ads_db: Session) -> AdsPublishBatch:
@@ -152,6 +158,135 @@ def load_sales_overview_from_ads(
             for channel_paid_amount in [number(row["paid_amount"])]
             for channel_quantity in [integer(row["quantity"])]
         ],
+    }
+
+
+def load_dashboard_overview_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    city_coords: dict[str, list[float]],
+) -> dict:
+    as_of = batch.source_end_date
+    start_date = as_of - timedelta(days=29)
+    trend_start = as_of - timedelta(days=6)
+    ensure_batch_covers(batch, start_date, as_of)
+    params = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "trend_start": trend_start,
+        "end_date": as_of,
+    }
+    daily_rows = ads_db.execute(
+        text(
+            """
+            SELECT `sales_date`, `orders`, `paid_amount`, `quantity`
+            FROM `ads_sales_daily`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+            ORDER BY `sales_date`
+            """
+        ),
+        params,
+    ).mappings().all()
+    channel_rows = ads_db.execute(
+        text(
+            """
+            SELECT `channel`, SUM(`paid_amount`) AS paid_amount
+            FROM `ads_sales_daily_channel`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+            GROUP BY `channel`
+            ORDER BY paid_amount DESC
+            LIMIT 6
+            """
+        ),
+        params,
+    ).mappings().all()
+    city_channel_rows = ads_db.execute(
+        text(
+            """
+            SELECT `city`, `channel`, SUM(`paid_amount`) AS paid_amount
+            FROM `ads_sales_daily_city_channel`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+            GROUP BY `city`, `channel`
+            ORDER BY paid_amount DESC
+            LIMIT 120
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    trend_by_day = {
+        date_value(row["sales_date"]): {
+            "sales": number(row["paid_amount"]),
+            "orders": integer(row["orders"]),
+        }
+        for row in daily_rows
+        if date_value(row["sales_date"]) >= trend_start
+    }
+    paid_amount = sum(number(row["paid_amount"]) for row in daily_rows)
+    quantity = sum(number(row["quantity"]) for row in daily_rows)
+    city_groups: dict[str, list[dict]] = {}
+    for row in city_channel_rows:
+        city = str(row["city"]).strip()
+        if city not in city_coords:
+            continue
+        city_groups.setdefault(city, []).append(
+            {"name": row["channel"], "value": round(number(row["paid_amount"]), 2)}
+        )
+
+    map_pies = []
+    for city, segments in city_groups.items():
+        positive_segments = [segment for segment in segments if segment["value"] > 0]
+        total = sum(segment["value"] for segment in positive_segments)
+        if total <= 0:
+            continue
+        top_segments = sorted(
+            positive_segments,
+            key=lambda segment: segment["value"],
+            reverse=True,
+        )[:3]
+        other_value = total - sum(segment["value"] for segment in top_segments)
+        if other_value > 0:
+            top_segments.append({"name": "其他", "value": round(other_value, 2)})
+        map_pies.append(
+            {
+                "name": city,
+                "coord": city_coords[city],
+                "total": round(total, 2),
+                "segments": top_segments,
+            }
+        )
+    map_pies.sort(key=lambda item: item["total"], reverse=True)
+    days = [trend_start + timedelta(days=offset) for offset in range(7)]
+    return {
+        "as_of": as_of.isoformat(),
+        "period": "近30天",
+        "cards": [
+            {
+                "label": "近30天销售额",
+                "value": f"{paid_amount / 1_000_000:,.2f}",
+                "unit": "百万",
+                "trend": f"截至 {as_of.isoformat()}",
+            },
+            {
+                "label": "近30天销售",
+                "value": f"{quantity / 1_000_000:,.2f}",
+                "unit": "百万",
+                "trend": "净销售数量",
+            },
+        ],
+        "trend": {
+            "days": [day.strftime("%m-%d") for day in days],
+            "sales": [trend_by_day.get(day, {"sales": 0})["sales"] for day in days],
+            "orders": [trend_by_day.get(day, {"orders": 0})["orders"] for day in days],
+        },
+        "channels": [
+            {"name": row["channel"], "value": round(number(row["paid_amount"]), 2)}
+            for row in channel_rows
+        ],
+        "map_pies": map_pies[:8],
     }
 
 

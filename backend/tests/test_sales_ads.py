@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.api.routers.sales as sales_router
+import app.api.routers.dashboard as dashboard_router
 from app.core.config import settings
 from app.db.ads import ensure_separate_ads_database
 from app.jobs.build_sales_ads import (
@@ -23,6 +24,7 @@ from app.models.ads import (
     AdsSalesDailyBrandProduct,
     AdsSalesDailyBrandScope,
     AdsSalesDailyChannel,
+    AdsSalesDailyCityChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
     AdsSalesDetailDailyChannel,
@@ -33,6 +35,7 @@ from app.services.sales_ads import (
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
     load_sales_channel_analysis_from_ads,
+    load_dashboard_overview_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -66,6 +69,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_daily_brand_product",
                     "ads_sales_daily_brand_scope",
                     "ads_sales_daily_channel",
+                    "ads_sales_daily_city_channel",
                     "ads_sales_daily_product",
                     "ads_sales_detail_daily",
                     "ads_sales_detail_daily_channel",
@@ -151,7 +155,7 @@ class SalesAdsReaderTests(unittest.TestCase):
             data_version="sales-test-ready",
             dataset="sales_daily",
             status="ready",
-            source_start_date=date(2026, 7, 1),
+            source_start_date=date(2026, 6, 1),
             source_end_date=date(2026, 7, 2),
             created_at=datetime(2026, 7, 2, 1, 0),
             finished_at=datetime(2026, 7, 2, 1, 1),
@@ -181,6 +185,33 @@ class SalesAdsReaderTests(unittest.TestCase):
                     orders=1,
                     paid_amount=Decimal("80.000000"),
                     quantity=Decimal("4.0000"),
+                ),
+                AdsSalesDailyCityChannel(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    city="上海市",
+                    channel="渠道A",
+                    orders=2,
+                    paid_amount=Decimal("80.000000"),
+                    quantity=Decimal("4.0000"),
+                ),
+                AdsSalesDailyCityChannel(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    city="上海市",
+                    channel="渠道B",
+                    orders=1,
+                    paid_amount=Decimal("20.000000"),
+                    quantity=Decimal("1.0000"),
+                ),
+                AdsSalesDailyCityChannel(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 2),
+                    city="北京市",
+                    channel="渠道A",
+                    orders=3,
+                    paid_amount=Decimal("50.000000"),
+                    quantity=Decimal("-1.0000"),
                 ),
                 AdsSalesDailyChannel(
                     data_version=batch.data_version,
@@ -413,6 +444,23 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual([row["channel"] for row in data["channels"]], ["渠道A", "渠道B"])
         self.assertEqual(data["channels"][0]["paid_amount"], 130)
 
+    def test_loads_dashboard_overview_from_ads(self) -> None:
+        batch = latest_ready_sales_batch(self.db)
+        data = load_dashboard_overview_from_ads(
+            self.db,
+            batch,
+            {
+                "上海市": [121.4737, 31.2304],
+                "北京市": [116.4074, 39.9042],
+            },
+        )
+        self.assertEqual(data["as_of"], "2026-07-02")
+        self.assertEqual(data["cards"][0]["value"], "0.00")
+        self.assertEqual(data["trend"]["sales"][-2:], [100, 50])
+        self.assertEqual(data["channels"][0], {"name": "渠道A", "value": 130})
+        self.assertEqual(data["map_pies"][0]["name"], "上海市")
+        self.assertEqual(data["map_pies"][0]["total"], 100)
+
     def test_comparison_reports_metric_difference(self) -> None:
         batch = latest_ready_sales_batch(self.db)
         data = load_sales_overview_from_ads(
@@ -559,6 +607,27 @@ class SalesAdsReaderTests(unittest.TestCase):
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             sales_router.AdsSessionLocal = original_ads_session
+            sales_router._sales_cache.clear()
+
+    def test_dashboard_uses_ads_without_ods_session(self) -> None:
+        original_mode = settings.BI_QUERY_SOURCE
+        original_ads_session = dashboard_router.AdsSessionLocal
+        try:
+            settings.BI_QUERY_SOURCE = "ads"
+            dashboard_router.AdsSessionLocal = sessionmaker(bind=self.engine)
+            sales_router._sales_cache.clear()
+            response = Response()
+            payload = dashboard_router.overview(
+                response=response,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(payload["data"]["as_of"], "2026-07-02")
+            self.assertEqual(payload["data"]["map_pies"][0]["name"], "上海市")
+        finally:
+            settings.BI_QUERY_SOURCE = original_mode
+            dashboard_router.AdsSessionLocal = original_ads_session
             sales_router._sales_cache.clear()
 
     def test_product_rank_uses_ads_in_ads_mode(self) -> None:

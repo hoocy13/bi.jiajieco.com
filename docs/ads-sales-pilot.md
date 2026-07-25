@@ -15,7 +15,7 @@ BI_QUERY_SOURCE=ads
 使用两个 ADS 账号：
 
 - `ADS_DATABASE_URL`：FastAPI 使用，只授予 `ads` 的 `SELECT` 权限。
-- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，仅授予九张销售 ADS 表所需的 `SELECT`、`INSERT`、`UPDATE` 权限。
+- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，仅授予十张销售 ADS 表所需的 `SELECT`、`INSERT`、`UPDATE` 权限。
 
 两者都必须指向独立的 `ads` 数据库。程序会拒绝将 ADS 配置为 ODS 数据库，防止构建任务误写源库。
 
@@ -55,6 +55,10 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 
 渠道为空时归为“未归类”。该表用于渠道排行和占比，但渠道订单数不能跨渠道直接累加为全局订单数。
 
+### `ads_sales_daily_city_channel`
+
+粒度为“数据版本 × 销售日期 × 城市 × 原始销售渠道”，保存净实付金额和净销售数量，用于首页销售看板的城市渠道构成地图。
+
 ### `ads_sales_detail_daily`
 
 粒度为“数据版本 × 销售日期”，保存销售单明细账的订单去重数、分摊后金额和数量，用于商品排行的整体汇总。
@@ -87,7 +91,7 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 .venv\Scripts\python.exe -m app.jobs.build_sales_ads --initialize-only
 ```
 
-初始化完成后，可以撤销构建账号的 DDL 权限。当前版本化构建只需要九张 ADS 表上的 `SELECT`、`INSERT`，以及发布批次表上的 `UPDATE`。
+初始化完成后，可以撤销构建账号的 DDL 权限。当前版本化构建只需要十张 ADS 表上的 `SELECT`、`INSERT`，以及发布批次表上的 `UPDATE`。
 
 ## 构建
 
@@ -113,8 +117,9 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 6. 核对明细日汇总与商品汇总的金额、数量和订单口径；
 7. 核对品牌分类范围与品牌商品汇总的金额、数量和订单口径；
 8. 核对渠道日汇总的金额和数量口径；
-9. 对账成功后原子标记为 `ready`；
-10. 失败时回滚数据并将批次标记为 `failed`。
+9. 核对城市渠道日汇总的金额和数量口径；
+10. 对账成功后原子标记为 `ready`；
+11. 失败时回滚数据并将批次标记为 `failed`。
 
 构建日志只输出版本、日期范围和行数，不输出连接地址、账号、密码、Token 或业务明细。
 

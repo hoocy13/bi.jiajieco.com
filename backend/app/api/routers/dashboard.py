@@ -1,7 +1,7 @@
 ﻿from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,8 @@ from app.api.routers.sales import (
     _get_sales_cache,
     _sales_cache_key,
 )
+from app.core.config import settings
+from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
@@ -18,6 +20,11 @@ from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
     SALES_ORDER_TABLE_SQL,
+)
+from app.services.sales_ads import (
+    AdsDataUnavailable,
+    latest_ready_sales_batch,
+    load_dashboard_overview_from_ads,
 )
 
 
@@ -100,16 +107,47 @@ def _format_million(value: float, digits: int = 2) -> str:
     return f"{value / 1_000_000:,.{digits}f}"
 
 
+def _get_dashboard_ods_db():
+    if settings.BI_QUERY_SOURCE == "ads":
+        yield None
+        return
+    yield from get_ods_db()
+
+
 @router.get("/overview")
 def overview(
+    response: Response,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_ods_db),
+    db: Session | None = Depends(_get_dashboard_ods_db),
 ) -> dict:
-    cache_key = _sales_cache_key("dashboard-overview-v4")
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
+    cache_key = _sales_cache_key("dashboard-overview-v5", query_mode=query_mode)
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="ADS database is not configured")
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_sales_batch(ads_db)
+                data = load_dashboard_overview_from_ads(ads_db, batch, CITY_COORDS)
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="ADS database is temporarily unavailable",
+            ) from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    if db is None:
+        raise HTTPException(status_code=503, detail="ODS database is not configured")
+    response.headers["X-BI-Response-Source"] = "ods"
     max_date = db.execute(
         text(f"SELECT MAX(`下单时间`) FROM {SALES_ORDER_TABLE_SQL} WHERE {ACTIVE_SALES_ORDER_SQL}")
     ).scalar()
@@ -184,27 +222,6 @@ def overview(
             GROUP BY COALESCE(NULLIF(`销售渠道`, ''), '未归类')
             ORDER BY paid_amount DESC
             LIMIT 6
-            """
-        ),
-        params,
-    ).mappings().all()
-
-    recent_rows = db.execute(
-        text(
-            f"""
-            SELECT
-              DATE(`下单时间`) AS order_date,
-              COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
-              COALESCE(NULLIF(`货品摘要`, ''), '未命名商品') AS product,
-              COALESCE(`货品数量`, 0) AS quantity,
-              COALESCE(`实付金额`, 0) AS paid_amount,
-              COALESCE(NULLIF(`订单状态`, ''), '未知') AS status
-            FROM {SALES_ORDER_TABLE_SQL}
-            WHERE `下单时间` >= :start_date
-              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
-              AND {ACTIVE_SALES_ORDER_SQL}
-            ORDER BY `下单时间` DESC, `订单编号` DESC
-            LIMIT 12
             """
         ),
         params,
