@@ -154,7 +154,7 @@ jobs:
             sleep 2
           done
 
-          docker compose exec -T backend python -m app.jobs.build_sales_ads
+          docker compose exec -T backend python -m app.jobs.build_sales_ads < /dev/null
 
           docker compose exec -T backend python - <<'PY'
           import urllib.request
