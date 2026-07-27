@@ -512,6 +512,119 @@ def load_inventory_turnover_from_ads(
     }
 
 
+def load_slow_moving_inventory_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    *,
+    keyword: str,
+    barcode: str,
+    warehouses: tuple[str, ...],
+    product_types: tuple[str, ...],
+    page: int,
+    page_size: int,
+) -> dict:
+    item_filter, params = _filters(warehouses, product_types, alias="t")
+    conditions = [
+        f"t.`data_version` = :data_version{item_filter}",
+    ]
+    params["data_version"] = batch.data_version
+    if keyword:
+        params["keyword"] = f"%{keyword}%"
+        conditions.append(
+            """
+            (
+              t.`product_code` LIKE :keyword
+              OR t.`product` LIKE :keyword
+              OR t.`brand` LIKE :keyword
+              OR t.`barcode` LIKE :keyword
+            )
+            """
+        )
+    if barcode:
+        params["barcode"] = f"%{barcode}%"
+        conditions.append("t.`barcode` LIKE :barcode")
+    common_where = " AND ".join(conditions)
+    offset = (page - 1) * page_size
+    grouped_sql = f"""
+        SELECT
+          t.`product_code`,
+          MAX(t.`barcode`) AS barcode,
+          t.`product`,
+          t.`brand`,
+          t.`product_type`,
+          COUNT(DISTINCT t.`warehouse`) AS warehouse_count,
+          SUM(t.`stock`) AS stock,
+          SUM(t.`available_stock`) AS available_stock,
+          SUM(t.`sales30`) AS sales30,
+          SUM(t.`sales90`) AS sales90,
+          SUM(t.`stock_amount`) AS stock_amount
+        FROM `ads_inventory_turnover_item` t
+        WHERE {common_where}
+        GROUP BY
+          t.`product_code`,
+          t.`product`,
+          t.`brand`,
+          t.`product_type`
+    """
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT grouped_products.*, COUNT(*) OVER () AS total_count
+            FROM ({grouped_sql}) grouped_products
+            ORDER BY
+              grouped_products.`sales90` ASC,
+              grouped_products.`sales30` ASC,
+              grouped_products.`stock_amount` DESC,
+              grouped_products.`product_code`,
+              grouped_products.`product`,
+              grouped_products.`brand`,
+              grouped_products.`product_type`
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": offset},
+    ).mappings().all()
+    if rows:
+        total = _integer(rows[0]["total_count"])
+    elif page > 1:
+        total = _integer(
+            ads_db.execute(
+                text(f"SELECT COUNT(*) FROM ({grouped_sql}) grouped_products"),
+                params,
+            ).scalar_one()
+        )
+    else:
+        total = 0
+    return {
+        "keyword": keyword,
+        "barcode": barcode,
+        "warehouses_selected": list(warehouses),
+        "product_types_selected": list(product_types),
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        },
+        "rows": [
+            {
+                "rank": offset + index + 1,
+                "product_code": str(row["product_code"] or "-"),
+                "barcode": str(row["barcode"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "brand": str(row["brand"] or "未归类"),
+                "product_type": str(row["product_type"] or "未归类"),
+                "warehouse_count": _integer(row["warehouse_count"]),
+                "stock": _number(row["stock"]),
+                "available_stock": _number(row["available_stock"]),
+                "sales30": _number(row["sales30"]),
+                "sales90": _number(row["sales90"]),
+                "stock_amount": _number(row["stock_amount"]),
+            }
+            for index, row in enumerate(rows)
+        ],
+    }
+
+
 def load_inventory_brand_turnover_from_ads(
     ads_db: Session,
     inventory_batch: AdsPublishBatch,

@@ -260,6 +260,7 @@ class AdsInventoryTurnoverItem(AdsBase):
     available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
     stock_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     sales30: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    sales90: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 

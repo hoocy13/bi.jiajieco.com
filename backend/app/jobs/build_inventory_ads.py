@@ -249,6 +249,7 @@ def load_turnover_rows(ods_db: Session) -> list[dict]:
               SUM(COALESCE(`可用库存`, 0)) AS available_stock,
               SUM(COALESCE(`库存金额`, 0)) AS stock_amount,
               SUM(COALESCE(`近30天销量`, 0)) AS sales30,
+              SUM(COALESCE(`近90天销量(库存公式)`, 0)) AS sales90,
               MAX(`updatetime`) AS updated_at
             FROM `分仓库查询` s
             WHERE COALESCE(`库存数量`, 0) > 0
@@ -405,6 +406,7 @@ def turnover_summary(rows: list[dict]) -> dict:
             decimal_value(row["stock_amount"]) for row in rows
         ),
         "sales30": sum(decimal_value(row["sales30"]) for row in rows),
+        "sales90": sum(decimal_value(row["sales90"]) for row in rows),
     }
 
 
@@ -417,7 +419,8 @@ def ads_turnover_summary(ads_db: Session, data_version: str) -> dict:
               COALESCE(SUM(`stock`), 0) AS stock,
               COALESCE(SUM(`available_stock`), 0) AS available_stock,
               COALESCE(SUM(`stock_amount`), 0) AS stock_amount,
-              COALESCE(SUM(`sales30`), 0) AS sales30
+              COALESCE(SUM(`sales30`), 0) AS sales30,
+              COALESCE(SUM(`sales90`), 0) AS sales90
             FROM `ads_inventory_turnover_item`
             WHERE `data_version` = :data_version
             """
@@ -430,6 +433,7 @@ def ads_turnover_summary(ads_db: Session, data_version: str) -> dict:
         "available_stock": decimal_value(row["available_stock"]),
         "stock_amount": decimal_value(row["stock_amount"]),
         "sales30": decimal_value(row["sales30"]),
+        "sales90": decimal_value(row["sales90"]),
     }
 
 
@@ -601,6 +605,7 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                             "available_stock": decimal_value(row["available_stock"]),
                             "stock_amount": decimal_value(row["stock_amount"]),
                             "sales30": decimal_value(row["sales30"]),
+                            "sales90": decimal_value(row["sales90"]),
                             "updated_at": row["updated_at"],
                         }
                         for index, row in enumerate(turnover_rows, start=1)

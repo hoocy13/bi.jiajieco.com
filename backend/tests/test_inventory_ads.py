@@ -28,6 +28,7 @@ from app.services.inventory_ads import (
     load_inventory_brand_turnover_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
+    load_slow_moving_inventory_from_ads,
     load_inventory_turnover_from_ads,
 )
 
@@ -41,6 +42,12 @@ class InventoryAdsTests(unittest.TestCase):
             data_version="inventory-test-ready",
             dataset="inventory_overview",
             status="ready",
+            reconciliation={
+                "product_turnover": {
+                    "matches": True,
+                    "field_matches": {"sales90": True},
+                }
+            },
             source_start_date=date(2026, 7, 27),
             source_end_date=date(2026, 7, 27),
             created_at=datetime(2026, 7, 27, 1, 0),
@@ -260,6 +267,7 @@ class InventoryAdsTests(unittest.TestCase):
                     available_stock=Decimal("180"),
                     stock_amount=Decimal("2000"),
                     sales30=Decimal("100"),
+                    sales90=Decimal("200"),
                     updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
                 AdsInventoryTurnoverItem(
@@ -275,6 +283,7 @@ class InventoryAdsTests(unittest.TestCase):
                     available_stock=Decimal("140"),
                     stock_amount=Decimal("1500"),
                     sales30=Decimal("0"),
+                    sales90=Decimal("0"),
                     updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
                 AdsInventoryTurnoverItem(
@@ -290,6 +299,7 @@ class InventoryAdsTests(unittest.TestCase):
                     available_stock=Decimal("70"),
                     stock_amount=Decimal("800"),
                     sales30=Decimal("20"),
+                    sales90=Decimal("50"),
                     updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
                 AdsSalesBrandTurnoverItem(
@@ -485,6 +495,22 @@ class InventoryAdsTests(unittest.TestCase):
             self.assertEqual(turnover["data"]["pagination"]["total"], 2)
 
             response = Response()
+            slow_moving = inventory_router.slow_moving_inventory(
+                response=response,
+                keyword=None,
+                barcode=None,
+                warehouse=["仓库A"],
+                product_type=["正装", "小样"],
+                page=1,
+                page_size=50,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(slow_moving["data"]["pagination"]["total"], 2)
+            self.assertEqual(slow_moving["data"]["rows"][0]["product_code"], "B")
+
+            response = Response()
             brand_turnover = inventory_router.inventory_brand_turnover(
                 response=response,
                 year=2026,
@@ -614,6 +640,37 @@ class InventoryAdsTests(unittest.TestCase):
             data["product_turnover_panels"][0]["total_available_stock"],
             180,
         )
+
+    def test_loads_slow_moving_filters_and_product_aggregation(self) -> None:
+        batch = latest_ready_inventory_batch(self.db)
+        data = load_slow_moving_inventory_from_ads(
+            self.db,
+            batch,
+            keyword="商品",
+            barcode="",
+            warehouses=(),
+            product_types=("正装", "小样"),
+            page=1,
+            page_size=10,
+        )
+        self.assertEqual(data["pagination"]["total"], 3)
+        self.assertEqual(data["rows"][0]["product_code"], "B")
+        self.assertEqual(data["rows"][0]["sales90"], 0)
+        self.assertEqual(data["rows"][1]["product_code"], "C")
+        self.assertEqual(data["rows"][2]["product_code"], "A")
+
+        filtered = load_slow_moving_inventory_from_ads(
+            self.db,
+            batch,
+            keyword="品牌A",
+            barcode="BAR",
+            warehouses=("仓库A",),
+            product_types=("正装",),
+            page=1,
+            page_size=10,
+        )
+        self.assertEqual(filtered["pagination"]["total"], 1)
+        self.assertEqual(filtered["rows"][0]["warehouse_count"], 1)
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {
