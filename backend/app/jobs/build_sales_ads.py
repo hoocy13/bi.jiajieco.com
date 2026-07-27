@@ -7,6 +7,7 @@ from decimal import Decimal
 from uuid import uuid4
 
 from sqlalchemy import insert, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -600,7 +601,7 @@ def load_brand_channel_product_rows(
     return [dict(row) for row in rows]
 
 
-def insert_order_detail_rows(
+def insert_order_detail_rows_streaming(
     ods_db: Session,
     ads_db: Session,
     data_version: str,
@@ -663,6 +664,107 @@ def insert_order_detail_rows(
             ads_db.commit()
     ads_db.commit()
     return item_id
+
+
+def ads_can_read_sales_source_directly() -> bool:
+    if not settings.ADS_BUILD_DATABASE_URL:
+        return False
+    ods_url = make_url(settings.ODS_DATABASE_URL)
+    ads_url = make_url(settings.ADS_BUILD_DATABASE_URL)
+    return (
+        ods_url.get_backend_name() == "mysql"
+        and ads_url.get_backend_name() == "mysql"
+        and ods_url.host == ads_url.host
+        and (ods_url.port or 3306) == (ads_url.port or 3306)
+    )
+
+
+def insert_order_detail_rows_server_side(
+    ads_db: Session,
+    data_version: str,
+    start_date: date,
+    end_date: date,
+) -> int:
+    item_offset = 0
+    for slice_start, slice_end in month_ranges(start_date, end_date):
+        result = ads_db.execute(
+            text(
+                f"""
+                INSERT INTO `ads_sales_order_detail` (
+                  `data_version`, `item_id`, `sales_date`, `sales_time`,
+                  `order_number`, `channel`, `status`, `settlement_status`,
+                  `product`, `quantity`, `receivable_amount`, `paid_amount`, `city`
+                )
+                SELECT
+                  :data_version,
+                  :item_offset + ROW_NUMBER() OVER (
+                    ORDER BY `下单时间`, `订单编号`
+                  ) AS item_id,
+                  DATE(`下单时间`) AS sales_date,
+                  `下单时间` AS sales_time,
+                  COALESCE(`订单编号`, '') AS order_number,
+                  COALESCE(NULLIF(`销售渠道`, ''), '未归类') AS channel,
+                  COALESCE(NULLIF(`订单状态`, ''), '未知') AS status,
+                  COALESCE(NULLIF(`结算状态`, ''), '未知') AS settlement_status,
+                  COALESCE(NULLIF(`货品摘要`, ''), '未命名商品') AS product,
+                  COALESCE(`货品数量`, 0) AS quantity,
+                  COALESCE(`应收合计`, 0) AS receivable_amount,
+                  COALESCE(`实付金额`, 0) AS paid_amount,
+                  COALESCE(NULLIF(`市`, ''), '-') AS city
+                FROM {SALES_ORDER_TABLE_SQL}
+                WHERE `下单时间` >= :start_date
+                  AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+                  AND {ACTIVE_SALES_ORDER_SQL}
+                """
+            ),
+            {
+                "data_version": data_version,
+                "item_offset": item_offset,
+                "start_date": slice_start,
+                "end_date": slice_end,
+            },
+        )
+        inserted = int(result.rowcount or 0)
+        if inserted < 0:
+            inserted = int(
+                ads_db.execute(
+                    text(
+                        """
+                        SELECT COUNT(*)
+                        FROM `ads_sales_order_detail`
+                        WHERE `data_version` = :data_version
+                        """
+                    ),
+                    {"data_version": data_version},
+                ).scalar()
+                or 0
+            ) - item_offset
+        item_offset += inserted
+        ads_db.commit()
+    return item_offset
+
+
+def insert_order_detail_rows(
+    ods_db: Session,
+    ads_db: Session,
+    data_version: str,
+    start_date: date,
+    end_date: date,
+) -> int:
+    if ads_can_read_sales_source_directly():
+        return insert_order_detail_rows_server_side(
+            ads_db,
+            data_version,
+            start_date,
+            end_date,
+        )
+    return insert_order_detail_rows_streaming(
+        ods_db,
+        ads_db,
+        data_version,
+        start_date,
+        end_date,
+    )
 
 
 def load_brand_turnover_product_rows(
@@ -1461,7 +1563,7 @@ def build_sales_ads(
                     text(
                         """
                         SELECT
-                          COUNT(DISTINCT CASE WHEN `paid_amount` > 0 THEN `order_number` END) AS orders,
+                          COUNT(DISTINCT CASE WHEN `quantity` > 0 THEN `order_number` END) AS orders,
                           COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
                           COALESCE(SUM(`quantity`), 0) AS quantity
                         FROM `ads_sales_order_detail`
@@ -1476,9 +1578,11 @@ def build_sales_ads(
                     offline_customer_source_summary,
                     customer_summary,
                 )
-                brand_channel_scope_matches = summaries_match(
-                    detail_source_summary,
-                    brand_channel_scope_summary,
+                brand_channel_scope_matches = (
+                    detail_source_summary.paid_amount
+                    == brand_channel_scope_summary.paid_amount
+                    and detail_source_summary.quantity
+                    == brand_channel_scope_summary.quantity
                 )
                 brand_channel_product_amount_quantity_matches = (
                     detail_source_summary.paid_amount

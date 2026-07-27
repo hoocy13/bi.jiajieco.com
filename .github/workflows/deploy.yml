@@ -2,6 +2,21 @@ name: Deploy BI
 
 on:
   workflow_dispatch:
+    inputs:
+      rebuild_sales_ads:
+        description: Rebuild sales ADS before switching the application release
+        required: false
+        type: boolean
+        default: false
+      rebuild_inventory_ads:
+        description: Rebuild inventory ADS before switching the application release
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: bi-production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -55,9 +70,12 @@ jobs:
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+          REBUILD_SALES_ADS: ${{ inputs.rebuild_sales_ads }}
+          REBUILD_INVENTORY_ADS: ${{ inputs.rebuild_inventory_ads }}
         run: |
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
-            -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+            -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "REBUILD_SALES_ADS='$REBUILD_SALES_ADS' REBUILD_INVENTORY_ADS='$REBUILD_INVENTORY_ADS' bash -s" <<'REMOTE'
           set -e
 
           APP_DIR="/www/wwwroot/bi.jiajieco.com"
@@ -67,10 +85,12 @@ jobs:
           RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
           BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
           FAILED="/www/wwwroot/bi.jiajieco.com.failed.$TS"
+          CANDIDATE_IMAGE="jjc-bi-backend-candidate:$TS"
 
           rollback() {
             exit_code=$?
             rm -f "$ADS_BUILD_SECRET_FILE"
+            docker image rm "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
             if [ "$exit_code" -ne 0 ] && [ -d "$BACKUP" ]; then
               echo "Deploy failed; restoring previous release."
               if [ -d "$APP_DIR" ]; then
@@ -128,6 +148,35 @@ jobs:
           } >> "$ENV_FILE"
           chmod 600 "$ENV_FILE"
 
+          run_ads_build() {
+            label=$1
+            shift
+            if "$@" < /dev/null; then
+              return 0
+            fi
+            echo "$label failed."
+            return 1
+          }
+
+          if [ "$REBUILD_SALES_ADS" = "true" ] || [ "$REBUILD_INVENTORY_ADS" = "true" ]; then
+            echo "Building candidate backend image for ADS jobs."
+            docker build -t "$CANDIDATE_IMAGE" "$RELEASE/backend"
+          fi
+          if [ "$REBUILD_SALES_ADS" = "true" ]; then
+            run_ads_build "Sales ADS build" \
+              docker run --rm --env-file "$ENV_FILE" "$CANDIDATE_IMAGE" \
+                python -m app.jobs.build_sales_ads
+          else
+            echo "Skipping sales ADS rebuild."
+          fi
+          if [ "$REBUILD_INVENTORY_ADS" = "true" ]; then
+            run_ads_build "Inventory ADS build" \
+              docker run --rm --env-file "$ENV_FILE" "$CANDIDATE_IMAGE" \
+                python -m app.jobs.build_inventory_ads
+          else
+            echo "Skipping inventory ADS rebuild."
+          fi
+
           if [ -d "$APP_DIR" ]; then
             mv "$APP_DIR" "$BACKUP"
           fi
@@ -154,31 +203,6 @@ jobs:
 
             sleep 2
           done
-
-          run_ads_build() {
-            label=$1
-            shift
-
-            for attempt in 1 2 3; do
-              if "$@" < /dev/null; then
-                return 0
-              fi
-
-              if [ "$attempt" -eq 3 ]; then
-                echo "$label failed after 3 attempts."
-                return 1
-              fi
-
-              delay=$((attempt * 10))
-              echo "$label attempt $attempt failed; retrying in ${delay}s."
-              sleep "$delay"
-            done
-          }
-
-          run_ads_build "Sales ADS build" \
-            docker compose exec -T backend python -m app.jobs.build_sales_ads
-          run_ads_build "Inventory ADS build" \
-            docker compose exec -T backend python -m app.jobs.build_inventory_ads
 
           docker compose exec -T backend python - <<'PY'
           import json
@@ -247,6 +271,7 @@ jobs:
           PY
 
           install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads
+          docker image rm "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
 
           trap - ERR
           echo "Deploy finished."

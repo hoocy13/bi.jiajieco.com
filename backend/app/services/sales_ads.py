@@ -825,7 +825,7 @@ def load_sales_detail_from_ads(
         text(
             f"""
             SELECT
-              COUNT(DISTINCT CASE WHEN `paid_amount` > 0 THEN `order_number` END) AS orders,
+              COUNT(DISTINCT CASE WHEN `quantity` > 0 THEN `order_number` END) AS orders,
               COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
               COALESCE(SUM(`quantity`), 0) AS quantity,
               COUNT(*) AS total
@@ -1035,6 +1035,25 @@ def load_sales_brand_channel_from_ads(
             item["quantity"] += integer(row["quantity"])
             item["paid_amount"] += number(row["paid_amount"])
             item["detail_rows"] += integer(row["detail_rows"])
+
+    if not channel_types and not channel_names:
+        exact_rows = ads_db.execute(
+            text(
+                """
+                SELECT `sales_date`, `orders`
+                FROM `ads_sales_daily_brand_scope`
+                WHERE `data_version` = :data_version
+                  AND `sales_date` BETWEEN :start_date AND :end_date
+                  AND `brand` = :brand
+                  AND `product_type_scope` = :scope
+                """
+            ),
+            params,
+        ).mappings().all()
+        for row in exact_rows:
+            day = date_text(row["sales_date"])
+            if day in by_day:
+                by_day[day]["orders"] = integer(row["orders"])
     paid_amount = sum(item["paid_amount"] for item in by_day.values())
     orders = sum(item["orders"] for item in by_day.values())
     quantity = sum(item["quantity"] for item in by_day.values())
