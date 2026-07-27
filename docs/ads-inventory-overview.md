@@ -1,0 +1,39 @@
+# 库存总览 ADS
+
+## 目标
+
+库存总览 ADS 将页面首屏的仓库、货品分类、品牌筛选项，以及库存商品、可用库存、库存金额、上下限和临期批次聚合移出在线 ODS 查询链路。
+
+ODS 只由每日构建任务读取，在线接口仅使用 `ADS_DATABASE_URL` 的只读连接。
+
+## 表结构
+
+### `ads_inventory_product_warehouse`
+
+粒度为“数据版本 × 仓库 × 货品分类 × 货品编号”，保存：
+
+- 原始分仓记录数；
+- 库存数量和可用库存；
+- 库存金额；
+- 库存上下限；
+- 数据更新时间。
+
+### `ads_inventory_batch_summary`
+
+粒度为“数据版本 × 仓库 × 货品分类”，保存批次记录数、0–30 天临期批次数和更新时间。
+
+### `ads_inventory_filter_option`
+
+保存仓库、货品分类和品牌筛选项，避免页面首屏实时扫描多个 ODS 表。
+
+## 构建和发布
+
+构建命令：
+
+```powershell
+.venv\Scripts\python.exe -m app.jobs.build_inventory_ads
+```
+
+任务先写入不可变 `data_version`，核对分仓记录数、库存数量、可用库存、库存金额、批次记录数和临期批次数。全部一致后，才将 `ads_publish_batch` 中 `inventory_overview` 数据集的批次标记为 `ready`。
+
+生产定时任务在销售 ADS 构建后继续构建库存 ADS。在线接口始终读取最新 `ready` 版本；首次上线尚无库存版本时会暂时回退到 ODS。

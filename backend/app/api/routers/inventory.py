@@ -5,14 +5,22 @@ from decimal import Decimal
 from threading import Lock
 from time import monotonic
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.inventory_ads import (
+    InventoryAdsUnavailable,
+    latest_ready_inventory_batch,
+    load_inventory_filter_options_from_ads,
+    load_inventory_overview_from_ads,
+)
 
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -187,10 +195,37 @@ def _date_text(value: object) -> str | None:
 
 @router.get("/warehouses")
 def inventory_warehouses(
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
-    cache_key = _cache_key("warehouses-v5")
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "warehouses-v6",
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_filter_options_from_ads(ads_db, batch)
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key("warehouses-v6", query_mode="ods")
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -366,6 +401,7 @@ def inventory_product_detail(
 
 @router.get("/overview")
 def inventory_overview(
+    response: Response,
     warehouse: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
@@ -373,7 +409,45 @@ def inventory_overview(
 ) -> dict:
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
-    cache_key = _cache_key("overview-v4", warehouses=warehouses, product_types=product_types)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "overview-v5",
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_overview_from_ads(
+                    ads_db,
+                    batch,
+                    warehouses,
+                    product_types,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key(
+        "overview-v5",
+        warehouses=warehouses,
+        product_types=product_types,
+        query_mode="ods",
+    )
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)

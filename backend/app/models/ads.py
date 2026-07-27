@@ -129,3 +129,38 @@ class AdsSalesDetailDailyChannel(AdsBase):
     orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsInventoryProductWarehouse(AdsBase):
+    __tablename__ = "ads_inventory_product_warehouse"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    warehouse: Mapped[str] = mapped_column(String(255), primary_key=True)
+    product_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    product_code: Mapped[str] = mapped_column(String(128), primary_key=True)
+    records: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    stock_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    stock_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    stock_min: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    stock_max: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AdsInventoryBatchSummary(AdsBase):
+    __tablename__ = "ads_inventory_batch_summary"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    warehouse: Mapped[str] = mapped_column(String(255), primary_key=True)
+    product_type: Mapped[str] = mapped_column(String(64), primary_key=True)
+    batch_records: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    expiring_batch_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class AdsInventoryFilterOption(AdsBase):
+    __tablename__ = "ads_inventory_filter_option"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    option_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    option_value: Mapped[str] = mapped_column(String(255), primary_key=True)
