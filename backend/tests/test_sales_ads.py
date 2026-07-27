@@ -70,6 +70,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_inventory_filter_option",
                     "ads_inventory_health_item",
                     "ads_inventory_product_warehouse",
+                    "ads_inventory_turnover_item",
                     "ads_sales_daily",
                     "ads_sales_daily_brand_product",
                     "ads_sales_daily_brand_scope",

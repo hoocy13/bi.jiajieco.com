@@ -382,6 +382,133 @@ def load_inventory_health_from_ads(
     }
 
 
+def load_inventory_turnover_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    *,
+    keyword: str,
+    barcode: str,
+    min_stock: int,
+    warehouses: tuple[str, ...],
+    product_types: tuple[str, ...],
+    page: int,
+    page_size: int,
+) -> dict:
+    item_filter, params = _filters(warehouses, product_types, alias="t")
+    conditions = [
+        f"t.`data_version` = :data_version{item_filter}",
+        "t.`stock` >= :min_stock",
+    ]
+    params.update(
+        {
+            "data_version": batch.data_version,
+            "min_stock": min_stock,
+        }
+    )
+    if keyword:
+        params["keyword"] = f"%{keyword}%"
+        conditions.append(
+            """
+            (
+              t.`product_code` LIKE :keyword
+              OR t.`product` LIKE :keyword
+              OR t.`brand` LIKE :keyword
+              OR t.`barcode` LIKE :keyword
+            )
+            """
+        )
+    if barcode:
+        params["barcode"] = f"%{barcode}%"
+        conditions.append("t.`barcode` LIKE :barcode")
+    common_where = " AND ".join(conditions)
+    offset = (page - 1) * page_size
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              t.*,
+              COUNT(*) OVER () AS total_count,
+              CASE
+                WHEN t.`sales30` > 0
+                  THEN ROUND((t.`stock` * 30) / t.`sales30`, 1)
+                ELSE NULL
+              END AS turnover_days
+            FROM `ads_inventory_turnover_item` t
+            WHERE {common_where}
+            ORDER BY
+              COALESCE(turnover_days, 999999) DESC,
+              t.`stock` DESC,
+              t.`product_code`,
+              t.`product`,
+              t.`brand`,
+              t.`product_type`,
+              t.`warehouse`
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": offset},
+    ).mappings().all()
+    if rows:
+        total = _integer(rows[0]["total_count"])
+    elif page > 1:
+        total = _integer(
+            ads_db.execute(
+                text(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM `ads_inventory_turnover_item` t
+                    WHERE {common_where}
+                    """
+                ),
+                params,
+            ).scalar_one()
+        )
+    else:
+        total = 0
+    return {
+        "keyword": keyword,
+        "barcode": barcode,
+        "warehouses_selected": list(warehouses),
+        "product_types_selected": list(product_types),
+        "min_stock": min_stock,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": _integer(total),
+        },
+        "rows": [
+            {
+                "rank": offset + index + 1,
+                "product_code": str(row["product_code"] or "-"),
+                "barcode": str(row["barcode"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "brand": str(row["brand"] or "未归类"),
+                "product_type": str(row["product_type"] or "未归类"),
+                "warehouse": str(row["warehouse"] or "未归类"),
+                "stock": _number(row["stock"]),
+                "available_stock": _number(row["available_stock"]),
+                "sales30": _number(row["sales30"]),
+                "total_sales": 0,
+                "turnover_days": (
+                    _number(row["turnover_days"])
+                    if row["turnover_days"] is not None
+                    else None
+                ),
+                "status": (
+                    "无销量"
+                    if row["turnover_days"] is None
+                    else "正常"
+                    if _number(row["turnover_days"]) <= 90
+                    else "偏慢"
+                    if _number(row["turnover_days"]) <= 180
+                    else "过慢"
+                ),
+            }
+            for index, row in enumerate(rows)
+        ],
+    }
+
+
 def _as_date(value: object) -> date | None:
     if value is None:
         return None

@@ -22,6 +22,7 @@ from app.services.inventory_ads import (
     load_inventory_filter_options_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
+    load_inventory_turnover_from_ads,
 )
 
 
@@ -1124,6 +1125,7 @@ def batch_expiry_analysis(
 
 @router.get("/turnover")
 def inventory_turnover(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     min_stock: int = Query(100, ge=0),
@@ -1139,7 +1141,60 @@ def inventory_turnover(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
-    cache_key = _cache_key("turnover-v9", keyword=keyword, barcode=barcode, min_stock=min_stock, warehouses=warehouses, product_types=product_types, page=page, page_size=page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "turnover-v10",
+                    keyword=keyword,
+                    barcode=barcode,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_turnover_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key(
+        "turnover-v10",
+        keyword=keyword,
+        barcode=barcode,
+        min_stock=min_stock,
+        warehouses=warehouses,
+        product_types=product_types,
+        page=page,
+        page_size=page_size,
+        query_mode="ods",
+    )
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -1200,7 +1255,14 @@ def inventory_turnover(
               {product_type_sql}
             GROUP BY `货品编号`, `货品名称`, COALESCE(NULLIF(`品牌`, ''), '未归类'), COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类'), COALESCE(NULLIF(`仓库`, ''), '未归类')
             HAVING SUM(COALESCE(`库存数量`, 0)) >= :min_stock
-            ORDER BY COALESCE(turnover_days, 999999) DESC, stock DESC
+            ORDER BY
+              COALESCE(turnover_days, 999999) DESC,
+              stock DESC,
+              product_code,
+              product,
+              brand,
+              product_type,
+              warehouse
             LIMIT :limit OFFSET :offset
             """
         ),

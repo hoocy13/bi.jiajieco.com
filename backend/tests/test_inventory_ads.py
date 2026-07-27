@@ -16,6 +16,7 @@ from app.models.ads import (
     AdsInventoryFilterOption,
     AdsInventoryHealthItem,
     AdsInventoryProductWarehouse,
+    AdsInventoryTurnoverItem,
     AdsPublishBatch,
 )
 from app.services.inventory_ads import (
@@ -24,6 +25,7 @@ from app.services.inventory_ads import (
     load_inventory_filter_options_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
+    load_inventory_turnover_from_ads,
 )
 
 
@@ -225,6 +227,45 @@ class InventoryAdsTests(unittest.TestCase):
                     available_stock=Decimal("2"),
                     updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
+                AdsInventoryTurnoverItem(
+                    data_version=batch.data_version,
+                    item_id=1,
+                    product_code="A",
+                    barcode="BAR-A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    warehouse="仓库A",
+                    stock=Decimal("200"),
+                    available_stock=Decimal("180"),
+                    sales30=Decimal("100"),
+                ),
+                AdsInventoryTurnoverItem(
+                    data_version=batch.data_version,
+                    item_id=2,
+                    product_code="B",
+                    barcode=None,
+                    product="商品B",
+                    brand="品牌B",
+                    product_type="小样",
+                    warehouse="仓库A",
+                    stock=Decimal("150"),
+                    available_stock=Decimal("140"),
+                    sales30=Decimal("0"),
+                ),
+                AdsInventoryTurnoverItem(
+                    data_version=batch.data_version,
+                    item_id=3,
+                    product_code="C",
+                    barcode="BAR-C",
+                    product="商品C",
+                    brand="品牌A",
+                    product_type="正装",
+                    warehouse="仓库B",
+                    stock=Decimal("80"),
+                    available_stock=Decimal("70"),
+                    sales30=Decimal("20"),
+                ),
             ]
         )
         self.db.commit()
@@ -328,6 +369,22 @@ class InventoryAdsTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(expiry["data"]["metrics"]["batch_count"], 3)
+
+            response = Response()
+            turnover = inventory_router.inventory_turnover(
+                response=response,
+                keyword=None,
+                barcode=None,
+                min_stock=100,
+                warehouse=["仓库A"],
+                product_type=["正装", "小样"],
+                page=1,
+                page_size=50,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(turnover["data"]["pagination"]["total"], 2)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             inventory_router.AdsSessionLocal = original_session
@@ -373,6 +430,41 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(data["fefo_rows"][0]["remaining_days"], 10)
         self.assertEqual(data["long_pagination"]["total"], 1)
         self.assertEqual(data["long_expiry_rows"][0]["batch_count"], 1)
+
+    def test_loads_product_turnover_filters_and_pagination(self) -> None:
+        batch = latest_ready_inventory_batch(self.db)
+        data = load_inventory_turnover_from_ads(
+            self.db,
+            batch,
+            keyword="商品",
+            barcode="BAR",
+            min_stock=50,
+            warehouses=(),
+            product_types=("正装", "小样"),
+            page=1,
+            page_size=10,
+        )
+        self.assertEqual(data["pagination"]["total"], 2)
+        self.assertEqual(data["rows"][0]["product_code"], "C")
+        self.assertEqual(data["rows"][0]["turnover_days"], 120)
+        self.assertEqual(data["rows"][0]["status"], "偏慢")
+        self.assertEqual(data["rows"][1]["product_code"], "A")
+        self.assertEqual(data["rows"][1]["turnover_days"], 60)
+
+        no_sales = load_inventory_turnover_from_ads(
+            self.db,
+            batch,
+            keyword="商品B",
+            barcode="",
+            min_stock=100,
+            warehouses=("仓库A",),
+            product_types=("小样",),
+            page=1,
+            page_size=10,
+        )
+        self.assertEqual(no_sales["pagination"]["total"], 1)
+        self.assertIsNone(no_sales["rows"][0]["turnover_days"])
+        self.assertEqual(no_sales["rows"][0]["status"], "无销量")
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {

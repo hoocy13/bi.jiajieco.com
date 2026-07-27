@@ -186,6 +186,31 @@ class AdsInventoryHealthItem(AdsBase):
     issue_type: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
+class AdsInventoryTurnoverItem(AdsBase):
+    __tablename__ = "ads_inventory_turnover_item"
+    __table_args__ = (
+        Index(
+            "idx_ads_inventory_turnover_filter",
+            "data_version",
+            "warehouse",
+            "product_type",
+            "stock",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    product_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    sales30: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
 class AdsInventoryBatchItem(AdsBase):
     __tablename__ = "ads_inventory_batch_item"
 
