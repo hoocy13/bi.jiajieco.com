@@ -33,6 +33,7 @@ from app.models.ads import (
     AdsSalesDetailDailyChannel,
     AdsSalesDetailDailyScope,
     AdsSalesOrderDetail,
+    AdsSalesOrderDailyFilter,
 )
 from app.services.sales_ads import (
     compare_sales_overviews,
@@ -94,6 +95,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_detail_daily_channel",
                     "ads_sales_detail_daily_scope",
                     "ads_sales_order_detail",
+                    "ads_sales_order_daily_filter",
                 },
             )
         finally:
@@ -455,6 +457,16 @@ class SalesAdsReaderTests(unittest.TestCase):
                     receivable_amount=Decimal("70"),
                     paid_amount=Decimal("70"),
                     city="上海市",
+                ),
+                AdsSalesOrderDailyFilter(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    channel="渠道A",
+                    status="已完成",
+                    detail_rows=1,
+                    orders=1,
+                    quantity=Decimal("2"),
+                    paid_amount=Decimal("70"),
                 ),
                 AdsSalesDailyChannelCustomer(
                     data_version=batch.data_version,

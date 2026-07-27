@@ -30,6 +30,7 @@ from app.models.ads import (
     AdsSalesDetailDailyChannel,
     AdsSalesDetailDailyScope,
     AdsSalesOrderDetail,
+    AdsSalesOrderDailyFilter,
 )
 from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
@@ -767,6 +768,35 @@ def insert_order_detail_rows(
     )
 
 
+def insert_order_daily_filter_rows(
+    ads_db: Session,
+    data_version: str,
+) -> int:
+    result = ads_db.execute(
+        text(
+            """
+            INSERT INTO `ads_sales_order_daily_filter` (
+              `data_version`, `sales_date`, `channel`, `status`,
+              `detail_rows`, `orders`, `paid_amount`, `quantity`
+            )
+            SELECT
+              `data_version`, `sales_date`, `channel`, `status`,
+              COUNT(*) AS detail_rows,
+              COUNT(DISTINCT CASE WHEN `quantity` > 0 THEN `order_number` END) AS orders,
+              SUM(`paid_amount`) AS paid_amount,
+              SUM(`quantity`) AS quantity
+            FROM `ads_sales_order_detail`
+            WHERE `data_version` = :data_version
+            GROUP BY `data_version`, `sales_date`, `channel`, `status`
+            """
+        ),
+        {"data_version": data_version},
+    )
+    row_count = int(result.rowcount or 0)
+    ads_db.commit()
+    return row_count
+
+
 def load_brand_turnover_product_rows(
     ods_db: Session,
     start_date: date,
@@ -998,6 +1028,7 @@ def load_ads_table_summary(
         "ads_sales_daily_city_channel",
         "ads_sales_daily_channel_customer",
         "ads_sales_daily_brand_channel_product",
+        "ads_sales_order_daily_filter",
     }:
         raise ValueError("Unsupported ADS summary table")
     row = ads_db.execute(
@@ -1424,6 +1455,10 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
+                order_daily_filter_row_count = insert_order_daily_filter_rows(
+                    ads_db,
+                    version,
+                )
                 ads_db.execute(
                     insert(AdsSalesBrandTurnoverItem),
                     [
@@ -1574,6 +1609,29 @@ def build_sales_ads(
                 ).mappings().one()
                 order_detail_summary = summary_from_mapping(dict(order_detail_row))
                 order_detail_matches = summaries_match(source_summary, order_detail_summary)
+                order_filter_summary = load_ads_table_summary(
+                    ads_db,
+                    "ads_sales_order_daily_filter",
+                    version,
+                )
+                order_filter_row_total = int(
+                    ads_db.execute(
+                        text(
+                            """
+                            SELECT COALESCE(SUM(`detail_rows`), 0)
+                            FROM `ads_sales_order_daily_filter`
+                            WHERE `data_version` = :data_version
+                            """
+                        ),
+                        {"data_version": version},
+                    ).scalar()
+                    or 0
+                )
+                order_filter_matches = (
+                    source_summary.paid_amount == order_filter_summary.paid_amount
+                    and source_summary.quantity == order_filter_summary.quantity
+                    and order_detail_row_count == order_filter_row_total
+                )
                 customer_amount_quantity_matches = summaries_match(
                     offline_customer_source_summary,
                     customer_summary,
@@ -1619,6 +1677,7 @@ def build_sales_ads(
                 }
                 reconciliation["remaining_slow_endpoints"] = {
                     "order_detail_matches": order_detail_matches,
+                    "order_filter_matches": order_filter_matches,
                     "customer_amount_quantity_matches": customer_amount_quantity_matches,
                     "brand_channel_scope_matches": brand_channel_scope_matches,
                     "brand_channel_product_amount_quantity_matches": brand_channel_product_amount_quantity_matches,
@@ -1632,6 +1691,7 @@ def build_sales_ads(
                     and detail_channel_amount_quantity_matches
                     and city_channel_amount_quantity_matches
                     and order_detail_matches
+                    and order_filter_matches
                     and customer_amount_quantity_matches
                     and brand_channel_scope_matches
                     and brand_channel_product_amount_quantity_matches
@@ -1665,6 +1725,7 @@ def build_sales_ads(
                     "brand_scope_row_count": len(brand_scope_rows),
                     "brand_product_row_count": len(brand_product_rows),
                     "order_detail_row_count": order_detail_row_count,
+                    "order_daily_filter_row_count": order_daily_filter_row_count,
                     "channel_customer_row_count": len(channel_customer_rows),
                     "brand_channel_scope_row_count": len(brand_channel_scope_rows),
                     "brand_channel_product_row_count": len(brand_channel_product_rows),
@@ -1729,6 +1790,7 @@ def main() -> None:
         f"brand_scope_rows={result['brand_scope_row_count']} "
         f"brand_product_rows={result['brand_product_row_count']} "
         f"order_detail_rows={result['order_detail_row_count']} "
+        f"order_daily_filter_rows={result['order_daily_filter_row_count']} "
         f"channel_customer_rows={result['channel_customer_row_count']} "
         f"brand_channel_scope_rows={result['brand_channel_scope_row_count']} "
         f"brand_channel_product_rows={result['brand_channel_product_row_count']} "

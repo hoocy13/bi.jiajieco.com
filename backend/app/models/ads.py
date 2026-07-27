@@ -196,6 +196,20 @@ class AdsSalesOrderDetail(AdsBase):
             "data_version",
             "order_number",
         ),
+        Index(
+            "idx_ads_sales_order_detail_page",
+            "data_version",
+            "sales_time",
+            "order_number",
+        ),
+        Index(
+            "idx_ads_sales_order_detail_filter_page",
+            "data_version",
+            "channel",
+            "status",
+            "sales_time",
+            "order_number",
+        ),
     )
 
     data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -211,6 +225,28 @@ class AdsSalesOrderDetail(AdsBase):
     receivable_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     city: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class AdsSalesOrderDailyFilter(AdsBase):
+    __tablename__ = "ads_sales_order_daily_filter"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_order_daily_filter",
+            "data_version",
+            "sales_date",
+            "channel",
+            "status",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    status: Mapped[str] = mapped_column(String(64), primary_key=True)
+    detail_rows: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
 
 
 class AdsSalesDailyChannelCustomer(AdsBase):

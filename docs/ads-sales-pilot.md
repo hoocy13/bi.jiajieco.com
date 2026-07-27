@@ -96,6 +96,7 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 ### 剩余慢接口表
 
 - `ads_sales_order_detail`：销售明细页所需的窄字段事实表，按 5,000 行分批写入，并为日期、渠道、状态和订单编号建立索引。
+- `ads_sales_order_daily_filter`：按“日期 × 渠道 × 状态”预计算明细行数、订单数、金额和数量，避免列表页重复扫描 178 万行事实表。
 - `ads_sales_daily_channel_customer`：按“日期 × 渠道 × 客户”聚合，用于渠道客户下钻及关键字分页。
 - `ads_sales_daily_brand_channel_scope`：按“日期 × 品牌 × 渠道 × 货品分类范围”聚合，保证品牌渠道汇总和趋势的订单去重口径。
 - `ads_sales_daily_brand_channel_product`：按“日期 × 品牌 × 渠道 × 分类 × 商品”聚合，用于品牌渠道商品和负责人正装/小样分析。

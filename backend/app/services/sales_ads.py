@@ -806,35 +806,86 @@ def load_sales_detail_from_ads(
         "data_version": batch.data_version,
         "start_date": start_date,
         "end_date": end_date,
+        "end_exclusive": end_date + timedelta(days=1),
     }
-    filters = [
+    detail_filters = [
         "`data_version` = :data_version",
-        "`sales_date` BETWEEN :start_date AND :end_date",
+        "`sales_time` >= :start_date",
+        "`sales_time` < :end_exclusive",
     ]
     if keyword and keyword.strip():
         params["keyword"] = f"%{keyword.strip()}%"
-        filters.append("(`order_number` LIKE :keyword OR `product` LIKE :keyword)")
+        detail_filters.append("(`order_number` LIKE :keyword OR `product` LIKE :keyword)")
     if channel:
         params["channel"] = channel
-        filters.append("`channel` = :channel")
+        detail_filters.append("`channel` = :channel")
     if status:
         params["status"] = status
-        filters.append("`status` = :status")
-    where_sql = " AND ".join(filters)
-    summary = ads_db.execute(
-        text(
-            f"""
-            SELECT
-              COUNT(DISTINCT CASE WHEN `quantity` > 0 THEN `order_number` END) AS orders,
-              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
-              COALESCE(SUM(`quantity`), 0) AS quantity,
-              COUNT(*) AS total
-            FROM `ads_sales_order_detail`
-            WHERE {where_sql}
-            """
-        ),
-        params,
-    ).mappings().one()
+        detail_filters.append("`status` = :status")
+    detail_where_sql = " AND ".join(detail_filters)
+
+    if keyword and keyword.strip():
+        summary = ads_db.execute(
+            text(
+                f"""
+                SELECT
+                  COUNT(DISTINCT CASE WHEN `quantity` > 0 THEN `order_number` END) AS orders,
+                  COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+                  COALESCE(SUM(`quantity`), 0) AS quantity,
+                  COUNT(*) AS total
+                FROM `ads_sales_order_detail`
+                WHERE {detail_where_sql}
+                """
+            ),
+            params,
+        ).mappings().one()
+    else:
+        aggregate_filters = [
+            "`data_version` = :data_version",
+            "`sales_date` BETWEEN :start_date AND :end_date",
+        ]
+        if channel:
+            aggregate_filters.append("`channel` = :channel")
+        if status:
+            aggregate_filters.append("`status` = :status")
+        aggregate_where_sql = " AND ".join(aggregate_filters)
+        filter_summary = ads_db.execute(
+            text(
+                f"""
+                SELECT
+                  COALESCE(SUM(`orders`), 0) AS orders,
+                  COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+                  COALESCE(SUM(`quantity`), 0) AS quantity,
+                  COALESCE(SUM(`detail_rows`), 0) AS total
+                FROM `ads_sales_order_daily_filter`
+                WHERE {aggregate_where_sql}
+                """
+            ),
+            params,
+        ).mappings().one()
+        summary = filter_summary
+        if status is None:
+            exact_table = (
+                "ads_sales_daily_channel" if channel else "ads_sales_daily"
+            )
+            channel_filter = "AND `channel` = :channel" if channel else ""
+            exact_summary = ads_db.execute(
+                text(
+                    f"""
+                    SELECT
+                      COALESCE(SUM(`orders`), 0) AS orders,
+                      COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+                      COALESCE(SUM(`quantity`), 0) AS quantity
+                    FROM `{exact_table}`
+                    WHERE `data_version` = :data_version
+                      AND `sales_date` BETWEEN :start_date AND :end_date
+                      {channel_filter}
+                    """
+                ),
+                params,
+            ).mappings().one()
+            summary = {**dict(filter_summary), **dict(exact_summary)}
+
     rows = ads_db.execute(
         text(
             f"""
@@ -843,7 +894,7 @@ def load_sales_detail_from_ads(
               `settlement_status`, `product`, `quantity`,
               `receivable_amount`, `paid_amount`, `city`
             FROM `ads_sales_order_detail`
-            WHERE {where_sql}
+            WHERE {detail_where_sql}
             ORDER BY `sales_time` DESC, `order_number` DESC
             LIMIT :limit OFFSET :offset
             """
