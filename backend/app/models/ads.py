@@ -164,3 +164,23 @@ class AdsInventoryFilterOption(AdsBase):
     data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
     option_type: Mapped[str] = mapped_column(String(32), primary_key=True)
     option_value: Mapped[str] = mapped_column(String(255), primary_key=True)
+
+
+class AdsInventoryHealthItem(AdsBase):
+    __tablename__ = "ads_inventory_health_item"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    product_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    barcode: Mapped[str] = mapped_column(String(255), nullable=False)
+    product: Mapped[str] = mapped_column(String(512), nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    sales30: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    sales90: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    stock_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    available_days: Mapped[Decimal | None] = mapped_column(Numeric(24, 1), nullable=True)
+    issue_type: Mapped[str] = mapped_column(String(32), nullable=False)

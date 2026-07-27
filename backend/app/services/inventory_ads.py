@@ -236,3 +236,145 @@ def load_inventory_overview_from_ads(
             for row in warehouse_rows
         ],
     }
+
+
+def load_inventory_health_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    *,
+    keyword: str,
+    barcode: str,
+    warehouses: tuple[str, ...],
+    product_types: tuple[str, ...],
+    issue_type: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    item_filter, params = _filters(warehouses, product_types, alias="h")
+    conditions = [f"h.`data_version` = :data_version{item_filter}"]
+    params["data_version"] = batch.data_version
+    if keyword:
+        params["keyword"] = f"%{keyword}%"
+        conditions.append(
+            """
+            (
+              h.`product_code` LIKE :keyword
+              OR h.`product` LIKE :keyword
+              OR h.`brand` LIKE :keyword
+              OR h.`barcode` LIKE :keyword
+            )
+            """
+        )
+    if barcode:
+        params["barcode"] = f"%{barcode}%"
+        conditions.append("h.`barcode` LIKE :barcode")
+    common_where = " AND ".join(conditions)
+    metrics = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COUNT(*) AS item_count,
+              SUM(h.`issue_type` = 'negative') AS negative_count,
+              SUM(h.`issue_type` = 'missing_barcode') AS missing_barcode_count,
+              SUM(h.`issue_type` = 'out_of_stock') AS out_of_stock_count,
+              SUM(h.`issue_type` = 'no_sales') AS no_sales_count,
+              SUM(h.`issue_type` = 'shortage') AS shortage_count,
+              SUM(h.`issue_type` = 'overstock') AS overstock_count,
+              SUM(h.`issue_type` = 'healthy') AS healthy_count
+            FROM `ads_inventory_health_item` h
+            WHERE {common_where}
+            """
+        ),
+        params,
+    ).mappings().one()
+    issue_conditions = {
+        "negative": "h.`issue_type` = 'negative'",
+        "missing_barcode": "h.`issue_type` = 'missing_barcode'",
+        "out_of_stock": "h.`issue_type` = 'out_of_stock'",
+        "no_sales": "h.`issue_type` = 'no_sales'",
+        "shortage": "h.`issue_type` = 'shortage'",
+        "overstock": "h.`issue_type` = 'overstock'",
+        "healthy": "h.`issue_type` = 'healthy'",
+    }
+    issue_where = issue_conditions.get(issue_type, "h.`issue_type` <> 'healthy'")
+    filtered_where = f"{common_where} AND {issue_where}"
+    total = ads_db.execute(
+        text(
+            f"""
+            SELECT COUNT(*)
+            FROM `ads_inventory_health_item` h
+            WHERE {filtered_where}
+            """
+        ),
+        params,
+    ).scalar_one()
+    offset = (page - 1) * page_size
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT *
+            FROM `ads_inventory_health_item` h
+            WHERE {filtered_where}
+            ORDER BY
+              CASE h.`issue_type`
+                WHEN 'negative' THEN 1
+                WHEN 'out_of_stock' THEN 2
+                WHEN 'shortage' THEN 3
+                WHEN 'missing_barcode' THEN 4
+                WHEN 'no_sales' THEN 5
+                WHEN 'overstock' THEN 6
+                ELSE 7
+              END,
+              h.`stock_amount` DESC,
+              h.`available_stock` DESC,
+              h.`product_code`,
+              h.`brand`,
+              h.`product_type`,
+              h.`warehouse`
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": offset},
+    ).mappings().all()
+    issue_labels = {
+        "negative": "负库存",
+        "missing_barcode": "缺少条码",
+        "out_of_stock": "可用库存为零",
+        "no_sales": "90天无销量",
+        "shortage": "不足14天",
+        "overstock": "预计超180天",
+        "healthy": "正常",
+    }
+    return {
+        "keyword": keyword,
+        "barcode": barcode,
+        "warehouses_selected": list(warehouses),
+        "product_types_selected": list(product_types),
+        "issue_type": issue_type,
+        "pagination": {"page": page, "page_size": page_size, "total": _integer(total)},
+        "metrics": {key: _integer(value) for key, value in metrics.items()},
+        "rows": [
+            {
+                "rank": offset + index + 1,
+                "product_code": str(row["product_code"]),
+                "barcode": str(row["barcode"]),
+                "product": str(row["product"]),
+                "brand": str(row["brand"]),
+                "product_type": str(row["product_type"]),
+                "warehouse": str(row["warehouse"]),
+                "stock": _number(row["stock"]),
+                "available_stock": _number(row["available_stock"]),
+                "sales30": _number(row["sales30"]),
+                "sales90": _number(row["sales90"]),
+                "stock_amount": _number(row["stock_amount"]),
+                "available_days": (
+                    _number(row["available_days"])
+                    if row["available_days"] is not None
+                    else None
+                ),
+                "issue_type": str(row["issue_type"]),
+                "issue_label": issue_labels.get(str(row["issue_type"]), "待检查"),
+            }
+            for index, row in enumerate(rows)
+        ],
+    }

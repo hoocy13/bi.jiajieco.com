@@ -19,6 +19,7 @@ from app.services.inventory_ads import (
     InventoryAdsUnavailable,
     latest_ready_inventory_batch,
     load_inventory_filter_options_from_ads,
+    load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
 )
 
@@ -600,6 +601,7 @@ def inventory_overview(
 
 @router.get("/health")
 def inventory_health(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     warehouse: list[str] | None = Query(None),
@@ -615,8 +617,51 @@ def inventory_health(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "health-v5",
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    issue_type=issue_type,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_health_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    issue_type=issue_type,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "health-v4",
+        "health-v5",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
@@ -624,6 +669,7 @@ def inventory_health(
         issue_type=issue_type,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -721,7 +767,11 @@ def inventory_health(
             ORDER BY
               FIELD(issue_type, 'negative', 'out_of_stock', 'shortage', 'missing_barcode', 'no_sales', 'overstock'),
               stock_amount DESC,
-              available_stock DESC
+              available_stock DESC,
+              product_code,
+              brand,
+              product_type,
+              warehouse
             LIMIT :limit OFFSET :offset
             """
         ),

@@ -13,12 +13,14 @@ from app.models.ads import (
     AdsBase,
     AdsInventoryBatchSummary,
     AdsInventoryFilterOption,
+    AdsInventoryHealthItem,
     AdsInventoryProductWarehouse,
     AdsPublishBatch,
 )
 from app.services.inventory_ads import (
     latest_ready_inventory_batch,
     load_inventory_filter_options_from_ads,
+    load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
 )
 
@@ -121,6 +123,57 @@ class InventoryAdsTests(unittest.TestCase):
                     option_type="brand",
                     option_value="品牌A",
                 ),
+                AdsInventoryHealthItem(
+                    data_version=batch.data_version,
+                    item_id=1,
+                    product_code="A",
+                    barcode="BAR-A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    warehouse="仓库A",
+                    stock=Decimal("10"),
+                    available_stock=Decimal("8"),
+                    sales30=Decimal("30"),
+                    sales90=Decimal("90"),
+                    stock_amount=Decimal("100"),
+                    available_days=Decimal("8.0"),
+                    issue_type="shortage",
+                ),
+                AdsInventoryHealthItem(
+                    data_version=batch.data_version,
+                    item_id=2,
+                    product_code="B",
+                    barcode="-",
+                    product="商品B",
+                    brand="品牌B",
+                    product_type="小样",
+                    warehouse="仓库A",
+                    stock=Decimal("3"),
+                    available_stock=Decimal("2"),
+                    sales30=Decimal("0"),
+                    sales90=Decimal("0"),
+                    stock_amount=Decimal("30"),
+                    available_days=None,
+                    issue_type="missing_barcode",
+                ),
+                AdsInventoryHealthItem(
+                    data_version=batch.data_version,
+                    item_id=3,
+                    product_code="C",
+                    barcode="BAR-C",
+                    product="商品C",
+                    brand="品牌A",
+                    product_type="正装",
+                    warehouse="仓库B",
+                    stock=Decimal("2"),
+                    available_stock=Decimal("2"),
+                    sales30=Decimal("0"),
+                    sales90=Decimal("1"),
+                    stock_amount=Decimal("20"),
+                    available_days=None,
+                    issue_type="healthy",
+                ),
             ]
         )
         self.db.commit()
@@ -191,10 +244,45 @@ class InventoryAdsTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(options["data"]["warehouses"], ["仓库A", "仓库B"])
+
+            response = Response()
+            health = inventory_router.inventory_health(
+                response=response,
+                keyword=None,
+                barcode=None,
+                warehouse=["仓库A"],
+                product_type=["正装", "小样"],
+                issue_type="all",
+                page=1,
+                page_size=50,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(health["data"]["pagination"]["total"], 2)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             inventory_router.AdsSessionLocal = original_session
             inventory_router._inventory_cache.clear()
+
+    def test_loads_health_filters_and_pagination(self) -> None:
+        batch = latest_ready_inventory_batch(self.db)
+        data = load_inventory_health_from_ads(
+            self.db,
+            batch,
+            keyword="商品",
+            barcode="BAR",
+            warehouses=(),
+            product_types=("正装", "小样"),
+            issue_type="all",
+            page=1,
+            page_size=10,
+        )
+        self.assertEqual(data["metrics"]["item_count"], 2)
+        self.assertEqual(data["metrics"]["shortage_count"], 1)
+        self.assertEqual(data["pagination"]["total"], 1)
+        self.assertEqual(data["rows"][0]["product_code"], "A")
+        self.assertEqual(data["rows"][0]["available_days"], 8)
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {

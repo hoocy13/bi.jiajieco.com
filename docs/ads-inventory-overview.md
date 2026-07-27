@@ -26,6 +26,12 @@ ODS 只由每日构建任务读取，在线接口仅使用 `ADS_DATABASE_URL` �
 
 保存仓库、货品分类和品牌筛选项，避免页面首屏实时扫描多个 ODS 表。
 
+### `ads_inventory_health_item`
+
+粒度与库存健康页面一致，为“数据版本 × 商品 × 品牌 × 货品分类 × 仓库”。保存商品和条码信息、库存、可用库存、近 30/90 天销量、库存金额、预计可售天数及健康异常类型。
+
+在线接口仅在该快照上执行筛选、指标计数、排序和分页，不再重复扫描并聚合 `分仓库查询`。
+
 ## 构建和发布
 
 构建命令：
@@ -34,6 +40,6 @@ ODS 只由每日构建任务读取，在线接口仅使用 `ADS_DATABASE_URL` �
 .venv\Scripts\python.exe -m app.jobs.build_inventory_ads
 ```
 
-任务先写入不可变 `data_version`，核对分仓记录数、库存数量、可用库存、库存金额、批次记录数和临期批次数。全部一致后，才将 `ads_publish_batch` 中 `inventory_overview` 数据集的批次标记为 `ready`。
+任务先写入不可变 `data_version`，核对分仓记录数、库存数量、可用库存、库存金额、批次记录数、临期批次数，以及库存健康各异常类型的数量。全部一致后，才将 `ads_publish_batch` 中 `inventory_overview` 数据集的批次标记为 `ready`。
 
 生产定时任务在销售 ADS 构建后继续构建库存 ADS。在线接口始终读取最新 `ready` 版本；首次上线尚无库存版本时会暂时回退到 ODS。
