@@ -32,6 +32,13 @@ def _integer(value: object) -> int:
     return int(value or 0)
 
 
+def _text_value(value: object, fallback: str = "-") -> str:
+    if value is None:
+        return fallback
+    normalized = str(value).strip()
+    return normalized or fallback
+
+
 def _date_text(value: object) -> str | None:
     if value is None:
         return None
@@ -486,7 +493,7 @@ def load_inventory_turnover_from_ads(
                 "barcode": str(row["barcode"] or "-"),
                 "product": str(row["product"] or "未命名商品"),
                 "brand": str(row["brand"] or "未归类"),
-                "product_type": str(row["product_type"] or "未归类"),
+                "product_type": _text_value(row["product_type"], "未归类"),
                 "warehouse": str(row["warehouse"] or "未归类"),
                 "stock": _number(row["stock"]),
                 "available_stock": _number(row["available_stock"]),
@@ -612,7 +619,7 @@ def load_slow_moving_inventory_from_ads(
                 "barcode": str(row["barcode"] or "-"),
                 "product": str(row["product"] or "未命名商品"),
                 "brand": str(row["brand"] or "未归类"),
-                "product_type": str(row["product_type"] or "未归类"),
+                "product_type": _text_value(row["product_type"], "未归类"),
                 "warehouse_count": _integer(row["warehouse_count"]),
                 "stock": _number(row["stock"]),
                 "available_stock": _number(row["available_stock"]),
@@ -621,6 +628,392 @@ def load_slow_moving_inventory_from_ads(
                 "stock_amount": _number(row["stock_amount"]),
             }
             for index, row in enumerate(rows)
+        ],
+    }
+
+
+def load_brand_monthly_arrivals_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    *,
+    selected_start: date,
+    selected_end: date,
+    brands: tuple[str, ...],
+    product_types: tuple[str, ...],
+    warehouses: tuple[str, ...],
+    detail_product_type: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    conditions = [
+        "a.`data_version` = :data_version",
+        "a.`receipt_date` >= :start_date",
+        "a.`receipt_date` <= :end_date",
+    ]
+    params: dict[str, object] = {
+        "data_version": batch.data_version,
+        "start_date": selected_start,
+        "end_date": selected_end,
+    }
+
+    def add_multi_filter(
+        values: tuple[str, ...],
+        *,
+        column: str,
+        prefix: str,
+    ) -> None:
+        if not values:
+            return
+        placeholders = []
+        for index, value in enumerate(values):
+            key = f"{prefix}_{index}"
+            placeholders.append(f":{key}")
+            params[key] = value
+        conditions.append(f"a.`{column}` IN ({', '.join(placeholders)})")
+
+    add_multi_filter(brands, column="brand", prefix="brand")
+    add_multi_filter(
+        product_types,
+        column="product_type",
+        prefix="product_type",
+    )
+    add_multi_filter(warehouses, column="warehouse", prefix="warehouse")
+    common_where = " AND ".join(conditions)
+
+    option_rows = ads_db.execute(
+        text(
+            """
+            SELECT `option_type`, `option_value`
+            FROM `ads_inventory_filter_option`
+            WHERE `data_version` = :data_version
+              AND `option_type` IN (
+                'arrival_year',
+                'arrival_brand',
+                'arrival_product_type',
+                'arrival_warehouse'
+              )
+            ORDER BY `option_type`, `option_value`
+            """
+        ),
+        {"data_version": batch.data_version},
+    ).mappings().all()
+    summary = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(SUM(a.`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(a.`cost_amount`), 0) AS net_cost_amount,
+              COUNT(DISTINCT NULLIF(a.`brand`, '')) AS brand_count,
+              COUNT(DISTINCT a.`doc_id`) AS document_count,
+              COUNT(DISTINCT NULLIF(a.`product_code`, '')) AS sku_count,
+              COUNT(DISTINCT NULLIF(a.`supplier`, '')) AS supplier_count,
+              MAX(a.`updated_at`) AS updated_at
+            FROM `ads_inventory_arrival_item` a
+            WHERE {common_where}
+            """
+        ),
+        params,
+    ).mappings().one()
+    trend_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              a.`receipt_date`,
+              COALESCE(SUM(a.`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(a.`cost_amount`), 0) AS net_cost_amount,
+              COALESCE(
+                SUM(
+                  CASE
+                    WHEN a.`product_type` = '正装' THEN a.`quantity`
+                    ELSE 0
+                  END
+                ),
+                0
+              ) AS full_size_quantity,
+              COALESCE(
+                SUM(
+                  CASE
+                    WHEN a.`product_type` = '小样' THEN a.`quantity`
+                    ELSE 0
+                  END
+                ),
+                0
+              ) AS sample_quantity
+            FROM `ads_inventory_arrival_item` a
+            WHERE {common_where}
+            GROUP BY a.`receipt_date`
+            ORDER BY a.`receipt_date`
+            """
+        ),
+        params,
+    ).mappings().all()
+    product_type_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              a.`product_type`,
+              COALESCE(SUM(a.`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(a.`cost_amount`), 0) AS net_cost_amount,
+              COUNT(DISTINCT a.`doc_id`) AS document_count,
+              COUNT(DISTINCT NULLIF(a.`product_code`, '')) AS sku_count
+            FROM `ads_inventory_arrival_item` a
+            WHERE {common_where}
+            GROUP BY a.`product_type`
+            ORDER BY
+              net_quantity DESC,
+              a.`product_type`
+            """
+        ),
+        params,
+    ).mappings().all()
+    product_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              a.`product_code`,
+              a.`product`,
+              a.`brand`,
+              a.`product_type`,
+              COALESCE(SUM(a.`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(a.`cost_amount`), 0) AS net_cost_amount,
+              COUNT(DISTINCT a.`doc_id`) AS document_count,
+              MIN(a.`receipt_date`) AS first_receipt_date,
+              MAX(a.`receipt_date`) AS last_receipt_date
+            FROM `ads_inventory_arrival_item` a
+            WHERE {common_where}
+            GROUP BY
+              a.`product_code`,
+              a.`product`,
+              a.`brand`,
+              a.`product_type`
+            HAVING
+              SUM(a.`quantity`) <> 0
+              OR SUM(a.`cost_amount`) <> 0
+            ORDER BY
+              net_quantity DESC,
+              net_cost_amount DESC,
+              a.`product_code`,
+              a.`product`,
+              a.`brand`,
+              a.`product_type`
+            LIMIT 15
+            """
+        ),
+        params,
+    ).mappings().all()
+    brand_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COALESCE(NULLIF(a.`brand`, ''), '未归类') AS brand,
+              COALESCE(
+                SUM(CASE WHEN a.`quantity` > 0 THEN a.`quantity` ELSE 0 END),
+                0
+              ) AS gross_quantity,
+              COALESCE(
+                ABS(SUM(CASE WHEN a.`quantity` < 0 THEN a.`quantity` ELSE 0 END)),
+                0
+              ) AS reversal_quantity,
+              COALESCE(SUM(a.`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(a.`cost_amount`), 0) AS net_cost_amount,
+              COUNT(DISTINCT a.`doc_id`) AS document_count,
+              COUNT(DISTINCT NULLIF(a.`product_code`, '')) AS sku_count,
+              COUNT(DISTINCT NULLIF(a.`supplier`, '')) AS supplier_count
+            FROM `ads_inventory_arrival_item` a
+            WHERE {common_where}
+            GROUP BY COALESCE(NULLIF(a.`brand`, ''), '未归类')
+            ORDER BY
+              net_cost_amount DESC,
+              net_quantity DESC,
+              brand
+            """
+        ),
+        params,
+    ).mappings().all()
+
+    detail_conditions = list(conditions)
+    if detail_product_type in {"正装", "小样"}:
+        params["detail_product_type"] = detail_product_type
+        detail_conditions.append(
+            "a.`product_type` = :detail_product_type"
+        )
+    detail_where = " AND ".join(detail_conditions)
+    detail_total = _integer(
+        ads_db.execute(
+            text(
+                f"""
+                SELECT COUNT(*)
+                FROM `ads_inventory_arrival_item` a
+                WHERE {detail_where}
+                """
+            ),
+            params,
+        ).scalar_one()
+    )
+    offset = (page - 1) * page_size
+    detail_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT a.*
+            FROM `ads_inventory_arrival_item` a
+            WHERE {detail_where}
+            ORDER BY
+              a.`receipt_time` DESC,
+              a.`receipt_number` DESC,
+              a.`rec_id` DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": offset},
+    ).mappings().all()
+
+    total_cost = _number(summary["net_cost_amount"])
+    today = date.today()
+    is_full_year = (
+        selected_start == date(selected_start.year, 1, 1)
+        and selected_end == date(selected_start.year, 12, 31)
+    )
+    is_current_year_to_date = (
+        selected_start == date(today.year, 1, 1)
+        and selected_end == today
+    )
+    return {
+        "year": selected_start.year,
+        "period": (
+            "本年"
+            if is_current_year_to_date
+            else f"{selected_start.year}年"
+            if is_full_year
+            else "自定义"
+        ),
+        "start_date": selected_start.isoformat(),
+        "end_date": selected_end.isoformat(),
+        "brands_selected": list(brands),
+        "product_types_selected": list(product_types),
+        "warehouses_selected": list(warehouses),
+        "detail_product_type": detail_product_type,
+        "updated_at": _date_text(summary["updated_at"]),
+        "filter_options": {
+            "years": sorted(
+                {
+                    _integer(row["option_value"])
+                    for row in option_rows
+                    if row["option_type"] == "arrival_year"
+                },
+                reverse=True,
+            ),
+            "brands": sorted(
+                {
+                    str(row["option_value"]).strip()
+                    for row in option_rows
+                    if row["option_type"] == "arrival_brand"
+                }
+            ),
+            "product_types": sorted(
+                {
+                    str(row["option_value"]).strip()
+                    for row in option_rows
+                    if row["option_type"] == "arrival_product_type"
+                }
+            ),
+            "warehouses": sorted(
+                {
+                    str(row["option_value"]).strip()
+                    for row in option_rows
+                    if row["option_type"] == "arrival_warehouse"
+                }
+            ),
+        },
+        "summary": {
+            "net_quantity": _number(summary["net_quantity"]),
+            "net_cost_amount": total_cost,
+            "brand_count": _integer(summary["brand_count"]),
+            "document_count": _integer(summary["document_count"]),
+            "sku_count": _integer(summary["sku_count"]),
+            "supplier_count": _integer(summary["supplier_count"]),
+        },
+        "trend": [
+            {
+                "receipt_date": _date_text(row["receipt_date"]),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "full_size_quantity": _number(row["full_size_quantity"]),
+                "sample_quantity": _number(row["sample_quantity"]),
+            }
+            for row in trend_rows
+        ],
+        "product_type_summary": [
+            {
+                "product_type": str(row["product_type"] or "未归类"),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "document_count": _integer(row["document_count"]),
+                "sku_count": _integer(row["sku_count"]),
+            }
+            for row in product_type_rows
+        ],
+        "products": [
+            {
+                "rank": index + 1,
+                "product_code": _text_value(row["product_code"]),
+                "product": _text_value(row["product"]),
+                "brand": _text_value(row["brand"], "未归类"),
+                "product_type": _text_value(row["product_type"], "未归类"),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "document_count": _integer(row["document_count"]),
+                "first_receipt_date": _date_text(row["first_receipt_date"]),
+                "last_receipt_date": _date_text(row["last_receipt_date"]),
+            }
+            for index, row in enumerate(product_rows)
+        ],
+        "brands": [
+            {
+                "rank": index + 1,
+                "brand": _text_value(row["brand"], "未归类"),
+                "gross_quantity": _number(row["gross_quantity"]),
+                "reversal_quantity": _number(row["reversal_quantity"]),
+                "net_quantity": _number(row["net_quantity"]),
+                "net_cost_amount": _number(row["net_cost_amount"]),
+                "share": (
+                    round(_number(row["net_cost_amount"]) / total_cost * 100, 2)
+                    if total_cost
+                    else 0
+                ),
+                "brand_document_count": _integer(row["document_count"]),
+                "monthly_sku_count": _integer(row["sku_count"]),
+                "monthly_supplier_count": _integer(row["supplier_count"]),
+            }
+            for index, row in enumerate(brand_rows)
+        ],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": detail_total,
+        },
+        "details": [
+            {
+                "receipt_time": _date_text(row["receipt_time"]),
+                "receipt_number": _text_value(row["receipt_number"]),
+                "receipt_type": _text_value(row["receipt_type"]),
+                "warehouse": _text_value(row["warehouse_raw"]),
+                "supplier": _text_value(row["supplier"]),
+                "reversal_status": _text_value(row["reversal_status"]),
+                "product_code": _text_value(row["product_code"]),
+                "product": _text_value(row["product"]),
+                "brand": _text_value(row["brand"], "未归类"),
+                "product_type": _text_value(
+                    row["product_type_raw"],
+                    "未归类",
+                ),
+                "quantity": _number(row["quantity"]),
+                "unit_cost": _number(row["unit_cost"]),
+                "cost_amount": _number(row["cost_amount"]),
+                "batch": _text_value(row["batch"]),
+                "production_date": _date_text(row["production_date"]),
+                "expiry_date": _date_text(row["expiry_date"]),
+            }
+            for row in detail_rows
         ],
     }
 

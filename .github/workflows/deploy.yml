@@ -226,6 +226,7 @@ jobs:
           check_ads_endpoint("/api/v1/inventory/turnover", "inventory_product_turnover")
           check_ads_endpoint("/api/v1/inventory/brand-turnover", "inventory_brand_turnover")
           check_ads_endpoint("/api/v1/inventory/slow-moving", "inventory_slow_moving")
+          check_ads_endpoint("/api/v1/inventory/brand-monthly-arrivals", "inventory_brand_monthly_arrivals")
           PY
 
           install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads

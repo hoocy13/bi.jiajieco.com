@@ -19,6 +19,7 @@ from app.services.inventory_ads import (
     InventoryAdsUnavailable,
     latest_ready_inventory_batch,
     load_batch_expiry_from_ads,
+    load_brand_monthly_arrivals_from_ads,
     load_inventory_filter_options_from_ads,
     load_inventory_brand_turnover_from_ads,
     load_inventory_health_from_ads,
@@ -1860,6 +1861,7 @@ def slow_moving_inventory(
 
 @router.get("/brand-monthly-arrivals")
 def brand_monthly_arrivals(
+    response: Response,
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     brand: list[str] | None = Query(None),
@@ -1884,9 +1886,62 @@ def brand_monthly_arrivals(
     selected_end = end_date or date(today.year, 12, 31)
     if selected_end < selected_start:
         selected_start, selected_end = selected_end, selected_start
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                arrival_reconciliation = (batch.reconciliation or {}).get(
+                    "brand_monthly_arrivals",
+                    {},
+                )
+                if not arrival_reconciliation.get("matches"):
+                    raise InventoryAdsUnavailable(
+                        "Inventory ADS does not contain reconciled arrival details"
+                    )
+                cache_key = _cache_key(
+                    "brand-monthly-arrivals-v4",
+                    start_date=selected_start.isoformat(),
+                    end_date=selected_end.isoformat(),
+                    brands=brands,
+                    product_types=product_types,
+                    warehouses=warehouses,
+                    detail_product_type=detail_product_type,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_brand_monthly_arrivals_from_ads(
+                    ads_db,
+                    batch,
+                    selected_start=selected_start,
+                    selected_end=selected_end,
+                    brands=brands,
+                    product_types=product_types,
+                    warehouses=warehouses,
+                    detail_product_type=detail_product_type,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     end_exclusive = selected_end + timedelta(days=1)
     cache_key = _cache_key(
-        "brand-monthly-arrivals-v3",
+        "brand-monthly-arrivals-v4",
         start_date=selected_start.isoformat(),
         end_date=selected_end.isoformat(),
         brands=brands,
@@ -1895,6 +1950,7 @@ def brand_monthly_arrivals(
         detail_product_type=detail_product_type,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -2031,7 +2087,13 @@ def brand_monthly_arrivals(
             WHERE {common_filter}
             GROUP BY d.`货品编号`, d.`货品名称`, d.`品牌`, COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')
             HAVING net_quantity <> 0 OR net_cost_amount <> 0
-            ORDER BY net_quantity DESC, net_cost_amount DESC
+            ORDER BY
+              net_quantity DESC,
+              net_cost_amount DESC,
+              product_code,
+              product,
+              brand,
+              product_type
             LIMIT 15
             """
         ),
@@ -2054,7 +2116,7 @@ def brand_monthly_arrivals(
             INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
             WHERE {common_filter}
             GROUP BY COALESCE(NULLIF(d.`品牌`, ''), '未归类')
-            ORDER BY net_cost_amount DESC, net_quantity DESC
+            ORDER BY net_cost_amount DESC, net_quantity DESC, brand
             """
         ),
         params,

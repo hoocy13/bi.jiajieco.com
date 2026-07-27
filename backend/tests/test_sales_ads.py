@@ -67,6 +67,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_publish_batch",
                     "ads_inventory_batch_summary",
                     "ads_inventory_batch_item",
+                    "ads_inventory_arrival_item",
                     "ads_inventory_filter_option",
                     "ads_inventory_health_item",
                     "ads_inventory_product_warehouse",

@@ -14,6 +14,7 @@ from app.db.ods import create_ods_engine
 from app.models.ads import (
     AdsInventoryBatchSummary,
     AdsInventoryBatchItem,
+    AdsInventoryArrivalItem,
     AdsInventoryFilterOption,
     AdsInventoryHealthItem,
     AdsInventoryProductWarehouse,
@@ -271,6 +272,50 @@ def load_turnover_rows(ods_db: Session) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def load_arrival_rows(ods_db: Session) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              h.`入库时间` AS receipt_time,
+              DATE(h.`入库时间`) AS receipt_date,
+              YEAR(h.`入库时间`) AS receipt_year,
+              h.`docId` AS doc_id,
+              d.`recId` AS rec_id,
+              h.`入库单号` AS receipt_number,
+              h.`入库类型` AS receipt_type,
+              COALESCE(NULLIF(TRIM(h.`入库仓库`), ''), '未设置') AS warehouse,
+              h.`入库仓库` AS warehouse_raw,
+              h.`往来单位` AS supplier,
+              h.`红冲状态` AS reversal_status,
+              d.`货品编号` AS product_code,
+              d.`货品名称` AS product,
+              d.`品牌` AS brand,
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+              d.`货品分类` AS product_type_raw,
+              COALESCE(d.`数量`, 0) AS quantity,
+              COALESCE(d.`入库成本单价`, 0) AS unit_cost,
+              COALESCE(d.`入库成本金额`, 0) AS cost_amount,
+              d.`批次` AS batch,
+              d.`生产日期` AS production_date,
+              d.`到期日期` AS expiry_date,
+              GREATEST(
+                COALESCE(h.`updatetime`, h.`入库时间`),
+                COALESCE(d.`updatetime`, h.`入库时间`)
+              ) AS updated_at
+            FROM `入库查询明细` d
+            INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
+            WHERE h.`入库时间` IS NOT NULL
+            ORDER BY
+              h.`入库时间`,
+              h.`入库单号`,
+              d.`recId`
+            """
+        )
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def source_summary(
     product_rows: list[dict],
     batch_rows: list[dict],
@@ -437,6 +482,42 @@ def ads_turnover_summary(ads_db: Session, data_version: str) -> dict:
     }
 
 
+def arrival_summary(rows: list[dict]) -> dict:
+    return {
+        "item_count": len(rows),
+        "document_count": len(
+            {str(row["doc_id"]) for row in rows if row["doc_id"]}
+        ),
+        "net_quantity": sum(decimal_value(row["quantity"]) for row in rows),
+        "net_cost_amount": sum(
+            decimal_value(row["cost_amount"]) for row in rows
+        ),
+    }
+
+
+def ads_arrival_summary(ads_db: Session, data_version: str) -> dict:
+    row = ads_db.execute(
+        text(
+            """
+            SELECT
+              COUNT(*) AS item_count,
+              COUNT(DISTINCT `doc_id`) AS document_count,
+              COALESCE(SUM(`quantity`), 0) AS net_quantity,
+              COALESCE(SUM(`cost_amount`), 0) AS net_cost_amount
+            FROM `ads_inventory_arrival_item`
+            WHERE `data_version` = :data_version
+            """
+        ),
+        {"data_version": data_version},
+    ).mappings().one()
+    return {
+        "item_count": int(row["item_count"] or 0),
+        "document_count": int(row["document_count"] or 0),
+        "net_quantity": decimal_value(row["net_quantity"]),
+        "net_cost_amount": decimal_value(row["net_cost_amount"]),
+    }
+
+
 def reconciliation_payload(source: dict, ads: dict) -> dict:
     fields = (
         "warehouse_records",
@@ -486,6 +567,37 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                 health_rows = load_health_rows(ods_db)
                 batch_item_rows = load_batch_item_rows(ods_db)
                 turnover_rows = load_turnover_rows(ods_db)
+                arrival_rows = load_arrival_rows(ods_db)
+                arrival_options = {
+                    ("arrival_year", str(row["receipt_year"]))
+                    for row in arrival_rows
+                }
+                arrival_options.update(
+                    {
+                        ("arrival_brand", str(row["brand"]).strip())
+                        for row in arrival_rows
+                        if row["brand"] and str(row["brand"]).strip()
+                    }
+                )
+                arrival_options.update(
+                    {
+                        ("arrival_product_type", str(row["product_type"]))
+                        for row in arrival_rows
+                    }
+                )
+                arrival_options.update(
+                    {
+                        ("arrival_warehouse", str(row["warehouse"]))
+                        for row in arrival_rows
+                    }
+                )
+                option_rows.extend(
+                    {
+                        "option_type": option_type,
+                        "option_value": option_value,
+                    }
+                    for option_type, option_value in sorted(arrival_options)
+                )
                 if (
                     not product_rows
                     or not batch_rows
@@ -493,6 +605,7 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                     or not health_rows
                     or not batch_item_rows
                     or not turnover_rows
+                    or not arrival_rows
                 ):
                     raise RuntimeError("No inventory rows found")
 
@@ -611,6 +724,39 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                         for index, row in enumerate(turnover_rows, start=1)
                     ],
                 )
+                ads_db.execute(
+                    insert(AdsInventoryArrivalItem),
+                    [
+                        {
+                            "data_version": version,
+                            "item_id": index,
+                            "receipt_time": row["receipt_time"],
+                            "receipt_date": row["receipt_date"],
+                            "receipt_year": int(row["receipt_year"]),
+                            "doc_id": str(row["doc_id"]),
+                            "rec_id": str(row["rec_id"]),
+                            "receipt_number": row["receipt_number"],
+                            "receipt_type": row["receipt_type"],
+                            "warehouse": str(row["warehouse"]),
+                            "warehouse_raw": row["warehouse_raw"],
+                            "supplier": row["supplier"],
+                            "reversal_status": row["reversal_status"],
+                            "product_code": row["product_code"],
+                            "product": row["product"],
+                            "brand": row["brand"],
+                            "product_type": str(row["product_type"]),
+                            "product_type_raw": row["product_type_raw"],
+                            "quantity": decimal_value(row["quantity"]),
+                            "unit_cost": decimal_value(row["unit_cost"]),
+                            "cost_amount": decimal_value(row["cost_amount"]),
+                            "batch": row["batch"],
+                            "production_date": row["production_date"],
+                            "expiry_date": row["expiry_date"],
+                            "updated_at": row["updated_at"],
+                        }
+                        for index, row in enumerate(arrival_rows, start=1)
+                    ],
+                )
 
                 source = source_summary(product_rows, batch_rows)
                 ads = ads_summary(ads_db, version)
@@ -657,11 +803,29 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                         field: str(value) for field, value in ads_turnover.items()
                     },
                 }
+                source_arrivals = arrival_summary(arrival_rows)
+                ads_arrivals = ads_arrival_summary(ads_db, version)
+                arrival_field_matches = {
+                    field: source_arrivals[field] == ads_arrivals[field]
+                    for field in source_arrivals
+                }
+                arrival_matches = all(arrival_field_matches.values())
+                reconciliation["brand_monthly_arrivals"] = {
+                    "matches": arrival_matches,
+                    "field_matches": arrival_field_matches,
+                    "source": {
+                        field: str(value) for field, value in source_arrivals.items()
+                    },
+                    "ads": {
+                        field: str(value) for field, value in ads_arrivals.items()
+                    },
+                }
                 reconciliation["passed"] = (
                     reconciliation["passed"]
                     and health_matches
                     and batch_items_match
                     and turnover_matches
+                    and arrival_matches
                 )
                 if not reconciliation["passed"]:
                     failed_sections = [
@@ -671,6 +835,7 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                             ("health", health_matches),
                             ("batch_expiry", batch_items_match),
                             ("product_turnover", turnover_matches),
+                            ("brand_monthly_arrivals", arrival_matches),
                         )
                         if not passed
                     ]
@@ -710,6 +875,7 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                     "health_item_rows": len(health_rows),
                     "batch_item_rows": len(batch_item_rows),
                     "turnover_item_rows": len(turnover_rows),
+                    "arrival_item_rows": len(arrival_rows),
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
@@ -745,7 +911,8 @@ def main() -> None:
         f"filter_option_rows={result['filter_option_rows']} "
         f"health_item_rows={result['health_item_rows']} "
         f"batch_item_rows={result['batch_item_rows']} "
-        f"turnover_item_rows={result['turnover_item_rows']}"
+        f"turnover_item_rows={result['turnover_item_rows']} "
+        f"arrival_item_rows={result['arrival_item_rows']}"
     )
 
 

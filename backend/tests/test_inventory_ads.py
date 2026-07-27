@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.jobs.build_inventory_ads import reconciliation_payload
 from app.models.ads import (
     AdsBase,
+    AdsInventoryArrivalItem,
     AdsInventoryBatchSummary,
     AdsInventoryBatchItem,
     AdsInventoryFilterOption,
@@ -24,6 +25,7 @@ from app.models.ads import (
 from app.services.inventory_ads import (
     latest_ready_inventory_batch,
     load_batch_expiry_from_ads,
+    load_brand_monthly_arrivals_from_ads,
     load_inventory_filter_options_from_ads,
     load_inventory_brand_turnover_from_ads,
     load_inventory_health_from_ads,
@@ -46,7 +48,8 @@ class InventoryAdsTests(unittest.TestCase):
                 "product_turnover": {
                     "matches": True,
                     "field_matches": {"sales90": True},
-                }
+                },
+                "brand_monthly_arrivals": {"matches": True},
             },
             source_start_date=date(2026, 7, 27),
             source_end_date=date(2026, 7, 27),
@@ -154,6 +157,36 @@ class InventoryAdsTests(unittest.TestCase):
                     data_version=batch.data_version,
                     option_type="brand",
                     option_value="品牌A",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_year",
+                    option_value="2026",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_brand",
+                    option_value="品牌A",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_brand",
+                    option_value="品牌B",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_product_type",
+                    option_value="正装",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_product_type",
+                    option_value="小样",
+                ),
+                AdsInventoryFilterOption(
+                    data_version=batch.data_version,
+                    option_type="arrival_warehouse",
+                    option_value="仓库A",
                 ),
                 AdsInventoryHealthItem(
                     data_version=batch.data_version,
@@ -301,6 +334,87 @@ class InventoryAdsTests(unittest.TestCase):
                     sales30=Decimal("20"),
                     sales90=Decimal("50"),
                     updated_at=datetime(2026, 7, 27, 3, 0),
+                ),
+                AdsInventoryArrivalItem(
+                    data_version=batch.data_version,
+                    item_id=1,
+                    receipt_time=datetime(2026, 1, 10, 9, 0),
+                    receipt_date=date(2026, 1, 10),
+                    receipt_year=2026,
+                    doc_id="D1",
+                    rec_id="R1",
+                    receipt_number="RK001",
+                    receipt_type="采购入库",
+                    warehouse="仓库A",
+                    warehouse_raw="仓库A",
+                    supplier="供应商A",
+                    reversal_status="否",
+                    product_code="A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    product_type_raw="正装",
+                    quantity=Decimal("100"),
+                    unit_cost=Decimal("10"),
+                    cost_amount=Decimal("1000"),
+                    batch="BA1",
+                    production_date=date(2025, 12, 1),
+                    expiry_date=date(2027, 12, 1),
+                    updated_at=datetime(2026, 1, 10, 10, 0),
+                ),
+                AdsInventoryArrivalItem(
+                    data_version=batch.data_version,
+                    item_id=2,
+                    receipt_time=datetime(2026, 2, 10, 9, 0),
+                    receipt_date=date(2026, 2, 10),
+                    receipt_year=2026,
+                    doc_id="D2",
+                    rec_id="R2",
+                    receipt_number="RK002",
+                    receipt_type="采购入库",
+                    warehouse="仓库A",
+                    warehouse_raw="仓库A",
+                    supplier="供应商B",
+                    reversal_status="否",
+                    product_code="B",
+                    product="商品B",
+                    brand="品牌B",
+                    product_type="小样",
+                    product_type_raw="小样",
+                    quantity=Decimal("50"),
+                    unit_cost=Decimal("2"),
+                    cost_amount=Decimal("100"),
+                    batch=None,
+                    production_date=None,
+                    expiry_date=None,
+                    updated_at=datetime(2026, 2, 10, 10, 0),
+                ),
+                AdsInventoryArrivalItem(
+                    data_version=batch.data_version,
+                    item_id=3,
+                    receipt_time=datetime(2026, 2, 12, 9, 0),
+                    receipt_date=date(2026, 2, 12),
+                    receipt_year=2026,
+                    doc_id="D3",
+                    rec_id="R3",
+                    receipt_number="RK003",
+                    receipt_type="红冲",
+                    warehouse="仓库A",
+                    warehouse_raw="仓库A",
+                    supplier="供应商A",
+                    reversal_status="是",
+                    product_code="A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    product_type_raw="正装",
+                    quantity=Decimal("-10"),
+                    unit_cost=Decimal("10"),
+                    cost_amount=Decimal("-100"),
+                    batch="BA1",
+                    production_date=date(2025, 12, 1),
+                    expiry_date=date(2027, 12, 1),
+                    updated_at=datetime(2026, 2, 12, 10, 0),
                 ),
                 AdsSalesBrandTurnoverItem(
                     data_version=sales_batch.data_version,
@@ -529,6 +643,24 @@ class InventoryAdsTests(unittest.TestCase):
                 brand_turnover["data"]["summary"]["brand_count"],
                 2,
             )
+
+            response = Response()
+            arrivals = inventory_router.brand_monthly_arrivals(
+                response=response,
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 2, 28),
+                brand=None,
+                product_type=None,
+                warehouse=None,
+                detail_product_type=None,
+                page=1,
+                page_size=20,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(arrivals["data"]["summary"]["net_quantity"], 140)
+            self.assertEqual(arrivals["data"]["pagination"]["total"], 3)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             inventory_router.AdsSessionLocal = original_session
@@ -671,6 +803,45 @@ class InventoryAdsTests(unittest.TestCase):
         )
         self.assertEqual(filtered["pagination"]["total"], 1)
         self.assertEqual(filtered["rows"][0]["warehouse_count"], 1)
+
+    def test_loads_brand_monthly_arrivals_with_reversals_and_details(self) -> None:
+        batch = latest_ready_inventory_batch(self.db)
+        data = load_brand_monthly_arrivals_from_ads(
+            self.db,
+            batch,
+            selected_start=date(2026, 1, 1),
+            selected_end=date(2026, 2, 28),
+            brands=(),
+            product_types=(),
+            warehouses=(),
+            detail_product_type="",
+            page=1,
+            page_size=20,
+        )
+        self.assertEqual(data["summary"]["net_quantity"], 140)
+        self.assertEqual(data["summary"]["net_cost_amount"], 1000)
+        self.assertEqual(data["summary"]["document_count"], 3)
+        self.assertEqual(data["summary"]["brand_count"], 2)
+        self.assertEqual(data["brands"][0]["brand"], "品牌A")
+        self.assertEqual(data["brands"][0]["gross_quantity"], 100)
+        self.assertEqual(data["brands"][0]["reversal_quantity"], 10)
+        self.assertEqual(data["details"][0]["receipt_number"], "RK003")
+
+        filtered = load_brand_monthly_arrivals_from_ads(
+            self.db,
+            batch,
+            selected_start=date(2026, 1, 1),
+            selected_end=date(2026, 2, 28),
+            brands=("品牌A",),
+            product_types=("正装",),
+            warehouses=("仓库A",),
+            detail_product_type="正装",
+            page=1,
+            page_size=20,
+        )
+        self.assertEqual(filtered["summary"]["net_quantity"], 90)
+        self.assertEqual(filtered["pagination"]["total"], 2)
+        self.assertEqual(filtered["product_type_summary"][0]["product_type"], "正装")
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {

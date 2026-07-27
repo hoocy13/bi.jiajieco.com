@@ -264,6 +264,51 @@ class AdsInventoryTurnoverItem(AdsBase):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AdsInventoryArrivalItem(AdsBase):
+    __tablename__ = "ads_inventory_arrival_item"
+    __table_args__ = (
+        Index(
+            "idx_ads_inventory_arrival_filter",
+            "data_version",
+            "receipt_date",
+            "warehouse",
+        ),
+        Index(
+            "idx_ads_inventory_arrival_detail",
+            "data_version",
+            "receipt_time",
+            "receipt_number",
+            "rec_id",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    receipt_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    receipt_date: Mapped[date] = mapped_column(Date, nullable=False)
+    receipt_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    doc_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    rec_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    receipt_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    receipt_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    warehouse_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    supplier: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reversal_status: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product_code: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    brand: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    product_type_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    unit_cost: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    cost_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    batch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    production_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class AdsInventoryBatchItem(AdsBase):
     __tablename__ = "ads_inventory_batch_item"
 
