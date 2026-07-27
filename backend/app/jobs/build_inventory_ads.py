@@ -13,6 +13,7 @@ from app.db.ads import initialize_ads_schema, require_ads_build_session_factory
 from app.db.ods import create_ods_engine
 from app.models.ads import (
     AdsInventoryBatchSummary,
+    AdsInventoryBatchItem,
     AdsInventoryFilterOption,
     AdsInventoryHealthItem,
     AdsInventoryProductWarehouse,
@@ -206,6 +207,32 @@ def load_health_rows(ods_db: Session) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def load_batch_item_rows(ods_db: Session) -> list[dict]:
+    rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              COALESCE(NULLIF(`仓库`, ''), '未归类') AS warehouse,
+              `货品编号` AS product_code,
+              `条码` AS barcode,
+              `货品名称` AS product,
+              COALESCE(NULLIF(`品牌`, ''), '未归类') AS brand,
+              COALESCE(NULLIF(TRIM(`货品分类`), ''), '未归类') AS product_type,
+              `批次` AS batch,
+              `生产日期` AS production_date,
+              `到期日期` AS expiry_date,
+              COALESCE(`库存数量`, 0) AS stock,
+              COALESCE(`可用库存`, 0) AS available_stock,
+              `updatetime` AS updated_at
+            FROM `批次货品库存查询`
+            WHERE COALESCE(`可用库存`, 0) > 0
+            ORDER BY warehouse, product_code, expiry_date, production_date, batch
+            """
+        )
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def source_summary(
     product_rows: list[dict],
     batch_rows: list[dict],
@@ -299,6 +326,37 @@ def ads_health_summary(ads_db: Session, data_version: str) -> dict:
     return {key: int(value or 0) for key, value in row.items()}
 
 
+def batch_item_summary(rows: list[dict]) -> dict:
+    return {
+        "batch_count": len(rows),
+        "stock": sum(decimal_value(row["stock"]) for row in rows),
+        "available_stock": sum(
+            decimal_value(row["available_stock"]) for row in rows
+        ),
+    }
+
+
+def ads_batch_item_summary(ads_db: Session, data_version: str) -> dict:
+    row = ads_db.execute(
+        text(
+            """
+            SELECT
+              COUNT(*) AS batch_count,
+              COALESCE(SUM(`stock`), 0) AS stock,
+              COALESCE(SUM(`available_stock`), 0) AS available_stock
+            FROM `ads_inventory_batch_item`
+            WHERE `data_version` = :data_version
+            """
+        ),
+        {"data_version": data_version},
+    ).mappings().one()
+    return {
+        "batch_count": int(row["batch_count"] or 0),
+        "stock": decimal_value(row["stock"]),
+        "available_stock": decimal_value(row["available_stock"]),
+    }
+
+
 def reconciliation_payload(source: dict, ads: dict) -> dict:
     fields = (
         "warehouse_records",
@@ -346,7 +404,14 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                 batch_rows = load_batch_summary_rows(ods_db)
                 option_rows = load_filter_option_rows(ods_db)
                 health_rows = load_health_rows(ods_db)
-                if not product_rows or not batch_rows or not option_rows or not health_rows:
+                batch_item_rows = load_batch_item_rows(ods_db)
+                if (
+                    not product_rows
+                    or not batch_rows
+                    or not option_rows
+                    or not health_rows
+                    or not batch_item_rows
+                ):
                     raise RuntimeError("No inventory rows found")
 
                 ads_db.execute(
@@ -420,6 +485,28 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                         for index, row in enumerate(health_rows, start=1)
                     ],
                 )
+                ads_db.execute(
+                    insert(AdsInventoryBatchItem),
+                    [
+                        {
+                            "data_version": version,
+                            "item_id": index,
+                            "warehouse": str(row["warehouse"]),
+                            "product_code": row["product_code"],
+                            "barcode": row["barcode"],
+                            "product": row["product"],
+                            "brand": str(row["brand"]),
+                            "product_type": str(row["product_type"]),
+                            "batch": row["batch"],
+                            "production_date": row["production_date"],
+                            "expiry_date": row["expiry_date"],
+                            "stock": decimal_value(row["stock"]),
+                            "available_stock": decimal_value(row["available_stock"]),
+                            "updated_at": row["updated_at"],
+                        }
+                        for index, row in enumerate(batch_item_rows, start=1)
+                    ],
+                )
 
                 source = source_summary(product_rows, batch_rows)
                 ads = ads_summary(ads_db, version)
@@ -432,9 +519,50 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                     "source": source_health,
                     "ads": ads_health,
                 }
-                reconciliation["passed"] = reconciliation["passed"] and health_matches
+                source_batch_items = batch_item_summary(batch_item_rows)
+                ads_batch_items = ads_batch_item_summary(ads_db, version)
+                batch_item_matches = {
+                    field: source_batch_items[field] == ads_batch_items[field]
+                    for field in source_batch_items
+                }
+                batch_items_match = all(batch_item_matches.values())
+                reconciliation["batch_expiry"] = {
+                    "matches": batch_items_match,
+                    "field_matches": batch_item_matches,
+                    "source": {
+                        field: str(value) for field, value in source_batch_items.items()
+                    },
+                    "ads": {
+                        field: str(value) for field, value in ads_batch_items.items()
+                    },
+                }
+                reconciliation["passed"] = (
+                    reconciliation["passed"] and health_matches and batch_items_match
+                )
                 if not reconciliation["passed"]:
-                    raise RuntimeError("Inventory ADS reconciliation failed")
+                    failed_sections = [
+                        section
+                        for section, passed in (
+                            ("overview", all(reconciliation["matches"].values())),
+                            ("health", health_matches),
+                            ("batch_expiry", batch_items_match),
+                        )
+                        if not passed
+                    ]
+                    raise RuntimeError(
+                        "Inventory ADS reconciliation failed: "
+                        + ",".join(failed_sections)
+                        + (
+                            " fields="
+                            + ",".join(
+                                field
+                                for field, matched in batch_item_matches.items()
+                                if not matched
+                            )
+                            if not batch_items_match
+                            else ""
+                        )
+                    )
 
                 finished_at = utc_now()
                 published = ads_db.get(AdsPublishBatch, batch_id)
@@ -455,6 +583,7 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                     "batch_summary_rows": len(batch_rows),
                     "filter_option_rows": len(option_rows),
                     "health_item_rows": len(health_rows),
+                    "batch_item_rows": len(batch_item_rows),
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
@@ -488,7 +617,8 @@ def main() -> None:
         f"product_warehouse_rows={result['product_warehouse_rows']} "
         f"batch_summary_rows={result['batch_summary_rows']} "
         f"filter_option_rows={result['filter_option_rows']} "
-        f"health_item_rows={result['health_item_rows']}"
+        f"health_item_rows={result['health_item_rows']} "
+        f"batch_item_rows={result['batch_item_rows']}"
     )
 
 

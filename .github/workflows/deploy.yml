@@ -200,6 +200,7 @@ jobs:
           check_ads_endpoint("/api/v1/inventory/warehouses", "inventory_warehouses")
           check_ads_endpoint("/api/v1/inventory/overview", "inventory_overview")
           check_ads_endpoint("/api/v1/inventory/health", "inventory_health")
+          check_ads_endpoint("/api/v1/inventory/batch-expiry", "inventory_batch_expiry")
           PY
 
           install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads

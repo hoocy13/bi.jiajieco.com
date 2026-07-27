@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select, text
@@ -376,5 +378,295 @@ def load_inventory_health_from_ads(
                 "issue_label": issue_labels.get(str(row["issue_type"]), "待检查"),
             }
             for index, row in enumerate(rows)
+        ],
+    }
+
+
+def _as_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value)[:10])
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + months
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    return date(year, month, min(value.day, monthrange(year, month)[1]))
+
+
+def _batch_status(remaining_days: int | None) -> str:
+    if remaining_days is None:
+        return "缺少到期日期"
+    if remaining_days < 0:
+        return "已过期"
+    if remaining_days <= 183:
+        return "6个月内"
+    if remaining_days <= 365:
+        return "6-12个月"
+    if remaining_days <= 730:
+        return "12-24个月"
+    return "24个月以上"
+
+
+def load_batch_expiry_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    *,
+    keyword: str,
+    barcode: str,
+    warehouses: tuple[str, ...],
+    product_types: tuple[str, ...],
+    expiry_range: str,
+    page: int,
+    long_page: int,
+    page_size: int,
+) -> dict:
+    item_filter, params = _filters(warehouses, product_types, alias="b")
+    search_filter = ""
+    if keyword:
+        params["keyword"] = f"%{keyword}%"
+        search_filter += """
+          AND (
+            b.`product_code` LIKE :keyword
+            OR b.`product` LIKE :keyword
+            OR b.`brand` LIKE :keyword
+            OR b.`barcode` LIKE :keyword
+          )
+        """
+    if barcode:
+        params["barcode"] = f"%{barcode}%"
+        search_filter += " AND b.`barcode` LIKE :barcode"
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT *
+            FROM `ads_inventory_batch_item` b
+            WHERE b.`data_version` = :data_version
+              {item_filter}
+              {search_filter}
+            """
+        ),
+        {"data_version": batch.data_version, **params},
+    ).mappings().all()
+
+    keyword_folded = keyword.casefold()
+    barcode_folded = barcode.casefold()
+
+    def text_value(row: dict, field: str) -> str:
+        return str(row[field] or "")
+
+    filtered_rows = []
+    for row in rows:
+        if keyword_folded and not any(
+            keyword_folded in text_value(row, field).casefold()
+            for field in ("product_code", "product", "brand", "barcode")
+        ):
+            continue
+        if barcode_folded and barcode_folded not in text_value(row, "barcode").casefold():
+            continue
+        filtered_rows.append(dict(row))
+
+    today = datetime.now(timezone(timedelta(hours=8))).date()
+    month_6 = _add_months(today, 6)
+    month_12 = _add_months(today, 12)
+    month_24 = _add_months(today, 24)
+
+    def expiry(row: dict) -> date | None:
+        return _as_date(row["expiry_date"])
+
+    def in_expiry_range(row: dict) -> bool:
+        value = expiry(row)
+        if expiry_range == "expired":
+            return value is not None and value < today
+        if expiry_range == "0_6":
+            return value is not None and today <= value <= month_6
+        if expiry_range == "6_12":
+            return value is not None and month_6 < value <= month_12
+        if expiry_range == "12_24":
+            return value is not None and month_12 < value <= month_24
+        if expiry_range == "gt_24":
+            return value is not None and value > month_24
+        if expiry_range == "missing":
+            return value is None
+        return True
+
+    available_stock = sum(_number(row["available_stock"]) for row in filtered_rows)
+    metrics = {
+        "batch_count": len(filtered_rows),
+        "product_count": len({row["product_code"] for row in filtered_rows}),
+        "available_stock": available_stock,
+        "expired_stock": sum(
+            _number(row["available_stock"])
+            for row in filtered_rows
+            if expiry(row) is not None and expiry(row) < today
+        ),
+        "within_6_months_stock": sum(
+            _number(row["available_stock"])
+            for row in filtered_rows
+            if expiry(row) is not None and today <= expiry(row) <= month_6
+        ),
+        "within_12_months_stock": sum(
+            _number(row["available_stock"])
+            for row in filtered_rows
+            if expiry(row) is not None and today <= expiry(row) <= month_12
+        ),
+        "over_24_months_stock": sum(
+            _number(row["available_stock"])
+            for row in filtered_rows
+            if expiry(row) is not None and expiry(row) > month_24
+        ),
+        "missing_expiry_stock": sum(
+            _number(row["available_stock"])
+            for row in filtered_rows
+            if expiry(row) is None
+        ),
+    }
+    updated_at = max(
+        (row["updated_at"] for row in filtered_rows if row["updated_at"] is not None),
+        default=None,
+    )
+
+    partitions: dict[tuple[str, object], list[dict]] = {}
+    for row in filtered_rows:
+        partitions.setdefault((str(row["warehouse"]), row["product_code"]), []).append(row)
+    ranked_rows = []
+    far_future = date.max
+    for partition in partitions.values():
+        partition.sort(
+            key=lambda row: (
+                expiry(row) is None,
+                expiry(row) or far_future,
+                _as_date(row["production_date"]) or far_future,
+                text_value(row, "batch"),
+            )
+        )
+        count = len(partition)
+        for index, row in enumerate(partition, start=1):
+            item = dict(row)
+            item["product_batch_count"] = count
+            item["fefo_rank"] = index
+            ranked_rows.append(item)
+    expiry_rows = [row for row in ranked_rows if in_expiry_range(row)]
+    expiry_rows.sort(
+        key=lambda row: (
+            expiry(row) is None,
+            expiry(row) or far_future,
+            -_number(row["available_stock"]),
+            text_value(row, "product_code"),
+            str(row["warehouse"]),
+            text_value(row, "batch"),
+        )
+    )
+    offset = (page - 1) * page_size
+    page_rows = expiry_rows[offset : offset + page_size]
+
+    long_groups: dict[tuple, dict] = {}
+    long_total_keys = set()
+    for row in filtered_rows:
+        expiry_date = expiry(row)
+        if expiry_date is None or expiry_date <= month_24:
+            continue
+        long_total_keys.add((row["warehouse"], row["product_code"], row["product_type"]))
+        key = (
+            row["warehouse"],
+            row["product_code"],
+            row["product"],
+            row["brand"],
+            row["product_type"],
+        )
+        item = long_groups.setdefault(
+            key,
+            {
+                "warehouse": row["warehouse"],
+                "product_code": row["product_code"],
+                "barcode": row["barcode"],
+                "product": row["product"],
+                "brand": row["brand"],
+                "product_type": row["product_type"],
+                "batch_count": 0,
+                "nearest_expiry_date": expiry_date,
+                "available_stock": 0.0,
+            },
+        )
+        item["batch_count"] += 1
+        item["available_stock"] += _number(row["available_stock"])
+        item["nearest_expiry_date"] = min(item["nearest_expiry_date"], expiry_date)
+        if text_value(row, "barcode") > str(item["barcode"] or ""):
+            item["barcode"] = row["barcode"]
+    long_rows = list(long_groups.values())
+    long_rows.sort(
+        key=lambda row: (
+            -row["available_stock"],
+            row["nearest_expiry_date"],
+            str(row["product_code"] or ""),
+            str(row["warehouse"]),
+            str(row["brand"]),
+        )
+    )
+    long_offset = (long_page - 1) * page_size
+    long_page_rows = long_rows[long_offset : long_offset + page_size]
+
+    return {
+        "keyword": keyword,
+        "barcode": barcode,
+        "warehouses_selected": list(warehouses),
+        "product_types_selected": list(product_types),
+        "expiry_range": expiry_range,
+        "pagination": {"page": page, "page_size": page_size, "total": len(expiry_rows)},
+        "long_pagination": {
+            "page": long_page,
+            "page_size": page_size,
+            "total": len(long_total_keys),
+        },
+        "updated_at": _date_text(updated_at),
+        "metrics": metrics,
+        "fefo_rows": [
+            {
+                "rank": offset + index + 1,
+                "warehouse": str(row["warehouse"]),
+                "product_code": str(row["product_code"] or "-"),
+                "barcode": str(row["barcode"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "brand": str(row["brand"]),
+                "product_type": str(row["product_type"]),
+                "batch": str(row["batch"] or "未标批次"),
+                "production_date": _date_text(row["production_date"]),
+                "expiry_date": _date_text(row["expiry_date"]),
+                "remaining_days": (
+                    (expiry(row) - today).days if expiry(row) is not None else None
+                ),
+                "stock": _number(row["stock"]),
+                "available_stock": _number(row["available_stock"]),
+                "product_batch_count": _integer(row["product_batch_count"]),
+                "fefo_rank": _integer(row["fefo_rank"]),
+                "status": _batch_status(
+                    (expiry(row) - today).days if expiry(row) is not None else None
+                ),
+            }
+            for index, row in enumerate(page_rows)
+        ],
+        "long_expiry_rows": [
+            {
+                "rank": long_offset + index + 1,
+                "warehouse": str(row["warehouse"]),
+                "product_code": str(row["product_code"] or "-"),
+                "barcode": str(row["barcode"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "brand": str(row["brand"]),
+                "product_type": str(row["product_type"]),
+                "batch_count": _integer(row["batch_count"]),
+                "nearest_expiry_date": _date_text(row["nearest_expiry_date"]),
+                "remaining_months": round(
+                    (row["nearest_expiry_date"] - today).days / 30.4375,
+                    1,
+                ),
+                "available_stock": _number(row["available_stock"]),
+            }
+            for index, row in enumerate(long_page_rows)
         ],
     }

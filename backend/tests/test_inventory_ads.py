@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import Response
@@ -12,6 +12,7 @@ from app.jobs.build_inventory_ads import reconciliation_payload
 from app.models.ads import (
     AdsBase,
     AdsInventoryBatchSummary,
+    AdsInventoryBatchItem,
     AdsInventoryFilterOption,
     AdsInventoryHealthItem,
     AdsInventoryProductWarehouse,
@@ -19,6 +20,7 @@ from app.models.ads import (
 )
 from app.services.inventory_ads import (
     latest_ready_inventory_batch,
+    load_batch_expiry_from_ads,
     load_inventory_filter_options_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
@@ -41,6 +43,7 @@ class InventoryAdsTests(unittest.TestCase):
             published_at=datetime(2026, 7, 27, 1, 1),
         )
         self.db.add(batch)
+        today = datetime.now(timezone(timedelta(hours=8))).date()
         self.db.add_all(
             [
                 AdsInventoryProductWarehouse(
@@ -174,6 +177,54 @@ class InventoryAdsTests(unittest.TestCase):
                     available_days=None,
                     issue_type="healthy",
                 ),
+                AdsInventoryBatchItem(
+                    data_version=batch.data_version,
+                    item_id=1,
+                    warehouse="仓库A",
+                    product_code="A",
+                    barcode="BAR-A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    batch="B1",
+                    production_date=today - timedelta(days=100),
+                    expiry_date=today + timedelta(days=10),
+                    stock=Decimal("10"),
+                    available_stock=Decimal("8"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
+                ),
+                AdsInventoryBatchItem(
+                    data_version=batch.data_version,
+                    item_id=2,
+                    warehouse="仓库A",
+                    product_code="A",
+                    barcode="BAR-A",
+                    product="商品A",
+                    brand="品牌A",
+                    product_type="正装",
+                    batch="B2",
+                    production_date=today - timedelta(days=10),
+                    expiry_date=today + timedelta(days=800),
+                    stock=Decimal("4"),
+                    available_stock=Decimal("3"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
+                ),
+                AdsInventoryBatchItem(
+                    data_version=batch.data_version,
+                    item_id=3,
+                    warehouse="仓库A",
+                    product_code="B",
+                    barcode=None,
+                    product="商品B",
+                    brand="品牌B",
+                    product_type="小样",
+                    batch=None,
+                    production_date=None,
+                    expiry_date=None,
+                    stock=Decimal("2"),
+                    available_stock=Decimal("2"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
+                ),
             ]
         )
         self.db.commit()
@@ -260,6 +311,23 @@ class InventoryAdsTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(health["data"]["pagination"]["total"], 2)
+
+            response = Response()
+            expiry = inventory_router.batch_expiry_analysis(
+                response=response,
+                keyword=None,
+                barcode=None,
+                warehouse=["仓库A"],
+                product_type=["正装", "小样"],
+                expiry_range="all",
+                page=1,
+                long_page=1,
+                page_size=50,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(expiry["data"]["metrics"]["batch_count"], 3)
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             inventory_router.AdsSessionLocal = original_session
@@ -283,6 +351,28 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(data["pagination"]["total"], 1)
         self.assertEqual(data["rows"][0]["product_code"], "A")
         self.assertEqual(data["rows"][0]["available_days"], 8)
+
+    def test_loads_batch_expiry_and_fefo(self) -> None:
+        batch = latest_ready_inventory_batch(self.db)
+        data = load_batch_expiry_from_ads(
+            self.db,
+            batch,
+            keyword="商品A",
+            barcode="BAR",
+            warehouses=("仓库A",),
+            product_types=("正装",),
+            expiry_range="all",
+            page=1,
+            long_page=1,
+            page_size=10,
+        )
+        self.assertEqual(data["metrics"]["batch_count"], 2)
+        self.assertEqual(data["metrics"]["product_count"], 1)
+        self.assertEqual(data["pagination"]["total"], 2)
+        self.assertEqual(data["fefo_rows"][0]["fefo_rank"], 1)
+        self.assertEqual(data["fefo_rows"][0]["remaining_days"], 10)
+        self.assertEqual(data["long_pagination"]["total"], 1)
+        self.assertEqual(data["long_expiry_rows"][0]["batch_count"], 1)
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {

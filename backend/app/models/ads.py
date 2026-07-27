@@ -184,3 +184,22 @@ class AdsInventoryHealthItem(AdsBase):
     stock_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     available_days: Mapped[Decimal | None] = mapped_column(Numeric(24, 1), nullable=True)
     issue_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class AdsInventoryBatchItem(AdsBase):
+    __tablename__ = "ads_inventory_batch_item"
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    product_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    barcode: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    batch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    production_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    expiry_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
