@@ -789,6 +789,461 @@ def load_sales_channel_analysis_from_ads(
     }
 
 
+def load_sales_detail_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    page: int,
+    page_size: int,
+    keyword: str | None,
+    channel: str | None,
+    status: str | None,
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    params: dict = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    filters = [
+        "`data_version` = :data_version",
+        "`sales_date` BETWEEN :start_date AND :end_date",
+    ]
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        filters.append("(`order_number` LIKE :keyword OR `product` LIKE :keyword)")
+    if channel:
+        params["channel"] = channel
+        filters.append("`channel` = :channel")
+    if status:
+        params["status"] = status
+        filters.append("`status` = :status")
+    where_sql = " AND ".join(filters)
+    summary = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              COUNT(DISTINCT CASE WHEN `paid_amount` > 0 THEN `order_number` END) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity,
+              COUNT(*) AS total
+            FROM `ads_sales_order_detail`
+            WHERE {where_sql}
+            """
+        ),
+        params,
+    ).mappings().one()
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              `sales_date`, `order_number`, `channel`, `status`,
+              `settlement_status`, `product`, `quantity`,
+              `receivable_amount`, `paid_amount`, `city`
+            FROM `ads_sales_order_detail`
+            WHERE {where_sql}
+            ORDER BY `sales_time` DESC, `order_number` DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": (page - 1) * page_size},
+    ).mappings().all()
+    return {
+        **meta,
+        "summary": {
+            "paid_amount": number(summary["paid_amount"]),
+            "orders": integer(summary["orders"]),
+            "quantity": integer(summary["quantity"]),
+        },
+        "rows": [
+            {
+                "date": date_text(row["sales_date"]),
+                "order_no": row["order_number"],
+                "channel": row["channel"],
+                "status": row["status"],
+                "settlement_status": row["settlement_status"],
+                "product": row["product"],
+                "quantity": integer(row["quantity"]),
+                "receivable_amount": number(row["receivable_amount"]),
+                "paid_amount": number(row["paid_amount"]),
+                "city": row["city"],
+            }
+            for row in rows
+        ],
+        "total": integer(summary["total"]),
+        "page": page,
+        "page_size": page_size,
+    }
+
+
+def load_sales_channel_customer_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    channel_name: str,
+    owner: str,
+    keyword: str | None,
+    page: int,
+    page_size: int,
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    params: dict = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+        "channel": channel_name.strip(),
+    }
+    customer_filter = ""
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        customer_filter = (
+            "WHERE customer_code LIKE :keyword OR customer_name LIKE :keyword"
+        )
+    grouped_sql = """
+        SELECT
+          `customer_code`, `customer_name`,
+          SUM(`orders`) AS orders,
+          SUM(`quantity`) AS quantity,
+          SUM(`paid_amount`) AS paid_amount
+        FROM `ads_sales_daily_channel_customer`
+        WHERE `data_version` = :data_version
+          AND `sales_date` BETWEEN :start_date AND :end_date
+          AND `channel` = :channel
+        GROUP BY `customer_code`, `customer_name`
+    """
+    summary = ads_db.execute(
+        text(
+            f"""
+            SELECT COUNT(*) AS customers, COALESCE(SUM(orders), 0) AS orders,
+                   COALESCE(SUM(quantity), 0) AS quantity,
+                   COALESCE(SUM(paid_amount), 0) AS paid_amount
+            FROM ({grouped_sql}) customer_sales
+            {customer_filter}
+            """
+        ),
+        params,
+    ).mappings().one()
+    rows = ads_db.execute(
+        text(
+            f"""
+            SELECT * FROM ({grouped_sql}) customer_sales
+            {customer_filter}
+            ORDER BY paid_amount DESC, quantity DESC, customer_code
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        {**params, "limit": page_size, "offset": (page - 1) * page_size},
+    ).mappings().all()
+    total_paid = number(summary["paid_amount"])
+    return {
+        **meta,
+        "channel_name": channel_name.strip(),
+        "owner": owner or "-",
+        "summary": {
+            "customers": integer(summary["customers"]),
+            "orders": integer(summary["orders"]),
+            "quantity": integer(summary["quantity"]),
+            "paid_amount": total_paid,
+        },
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": integer(summary["customers"]),
+        },
+        "rows": [
+            {
+                "customer_code": row["customer_code"],
+                "customer_name": row["customer_name"],
+                "orders": orders,
+                "quantity": integer(row["quantity"]),
+                "paid_amount": paid,
+                "share": paid / total_paid * 100 if total_paid else 0,
+                "avg_order_amount": paid / orders if orders else 0,
+            }
+            for row in rows
+            for orders in [integer(row["orders"])]
+            for paid in [number(row["paid_amount"])]
+        ],
+    }
+
+
+def load_sales_brand_channel_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    brand: str,
+    product_types: list[str],
+    channel_types: list[str],
+    channel_names: list[str],
+    dimension_rows: list[dict],
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    scope = product_type_scope(product_types)
+    dimensions = {str(row["channel_name"]): row for row in dimension_rows}
+    selected_names = {
+        name
+        for name, row in dimensions.items()
+        if (not channel_types or str(row["channel_type"]) in channel_types)
+        and (not channel_names or name in channel_names)
+    }
+    params = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+        "brand": brand.strip(),
+        "scope": scope,
+    }
+    facts = ads_db.execute(
+        text(
+            """
+            SELECT `sales_date`, `channel`, `detail_rows`, `orders`, `quantity`, `paid_amount`
+            FROM `ads_sales_daily_brand_channel_scope`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `brand` = :brand
+              AND `product_type_scope` = :scope
+            """
+        ),
+        params,
+    ).mappings().all()
+    selected_facts = [
+        row
+        for row in facts
+        if (
+            str(row["channel"]) in selected_names
+            if str(row["channel"]) in dimensions
+            else not channel_types and not channel_names
+        )
+    ]
+    by_day: dict[str, dict] = {}
+    by_channel: dict[str, dict] = {}
+    for row in selected_facts:
+        day = date_text(row["sales_date"])
+        channel = str(row["channel"])
+        for target, key in ((by_day, day), (by_channel, channel)):
+            item = target.setdefault(
+                key,
+                {"orders": 0, "quantity": 0, "paid_amount": 0.0, "detail_rows": 0},
+            )
+            item["orders"] += integer(row["orders"])
+            item["quantity"] += integer(row["quantity"])
+            item["paid_amount"] += number(row["paid_amount"])
+            item["detail_rows"] += integer(row["detail_rows"])
+    paid_amount = sum(item["paid_amount"] for item in by_day.values())
+    orders = sum(item["orders"] for item in by_day.values())
+    quantity = sum(item["quantity"] for item in by_day.values())
+
+    product_filter = ""
+    if scope == "full_size":
+        product_filter = "AND `product_type` = '正装'"
+    elif scope == "sample":
+        product_filter = "AND `product_type` = '小样'"
+    elif scope == "selected":
+        product_filter = "AND `product_type` IN ('正装', '小样')"
+    product_facts = ads_db.execute(
+        text(
+            f"""
+            SELECT `channel`, `product_type`, `product`,
+                   `orders`, `quantity`, `paid_amount`
+            FROM `ads_sales_daily_brand_channel_product`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `brand` = :brand
+              {product_filter}
+            """
+        ),
+        params,
+    ).mappings().all()
+    product_totals: dict[str, dict] = {}
+    salesperson_totals: dict[str, dict] = {}
+    for row in product_facts:
+        channel = str(row["channel"])
+        if channel in dimensions:
+            if channel not in selected_names:
+                continue
+            owner = str(dimensions[channel]["owner"])
+        elif channel_types or channel_names:
+            continue
+        else:
+            owner = "-"
+        product = str(row["product"])
+        item = product_totals.setdefault(
+            product, {"orders": 0, "quantity": 0, "paid_amount": 0.0}
+        )
+        item["orders"] += integer(row["orders"])
+        item["quantity"] += integer(row["quantity"])
+        item["paid_amount"] += number(row["paid_amount"])
+        if str(row["product_type"]) in {"正装", "小样"}:
+            sales = salesperson_totals.setdefault(
+                owner,
+                {
+                    "salesperson": owner,
+                    "regular_quantity": 0,
+                    "regular_paid_amount": 0.0,
+                    "sample_quantity": 0,
+                    "sample_paid_amount": 0.0,
+                },
+            )
+            prefix = "regular" if row["product_type"] == "正装" else "sample"
+            sales[f"{prefix}_quantity"] += integer(row["quantity"])
+            sales[f"{prefix}_paid_amount"] += number(row["paid_amount"])
+
+    channel_data = []
+    for name in sorted(selected_names):
+        row = dimensions[name]
+        fact = by_channel.get(
+            name, {"orders": 0, "quantity": 0, "paid_amount": 0.0, "detail_rows": 0}
+        )
+        row_orders = fact["orders"]
+        row_quantity = fact["quantity"]
+        row_paid = fact["paid_amount"]
+        channel_data.append(
+            {
+                **row,
+                "detail_rows": fact["detail_rows"],
+                "orders": row_orders,
+                "quantity": row_quantity,
+                "paid_amount": row_paid,
+                "share": row_paid / paid_amount * 100 if paid_amount else 0,
+                "avg_order_amount": row_paid / row_orders if row_orders else 0,
+                "avg_unit_price": row_paid / row_quantity if row_quantity else 0,
+                "is_online": is_online_sales_channel(
+                    row["channel_type"], row["platform"], name
+                ),
+                "matched": True,
+            }
+        )
+    unmatched = [
+        {
+            "channel": name,
+            "orders": fact["orders"],
+            "quantity": fact["quantity"],
+            "paid_amount": fact["paid_amount"],
+        }
+        for name, fact in by_channel.items()
+        if name not in dimensions
+    ]
+    for item in unmatched:
+        channel_data.append(
+            {
+                "channel_code": None,
+                "channel_name": item["channel"],
+                "channel_type": "未匹配渠道",
+                "source_channel_type": "未匹配渠道",
+                "platform": "未设置",
+                "owner": "-",
+                "detail_rows": 0,
+                **{key: item[key] for key in ("orders", "quantity", "paid_amount")},
+                "share": item["paid_amount"] / paid_amount * 100 if paid_amount else 0,
+                "avg_order_amount": item["paid_amount"] / item["orders"] if item["orders"] else 0,
+                "avg_unit_price": item["paid_amount"] / item["quantity"] if item["quantity"] else 0,
+                "is_online": is_online_sales_channel("未匹配渠道", "未设置", item["channel"]),
+                "matched": False,
+            }
+        )
+    channel_data.sort(key=lambda row: row["paid_amount"], reverse=True)
+
+    def dimension_summary(key: str, online_only: bool = False) -> list[dict]:
+        groups: dict[str, dict] = {}
+        candidates = [
+            row
+            for row in channel_data
+            if row["matched"] and (not online_only or row["platform"] != "未设置")
+        ]
+        for row in candidates:
+            label = str(row[key])
+            group = groups.setdefault(
+                label,
+                {"channels": 0, "active_channels": 0, "orders": 0, "quantity": 0, "paid_amount": 0.0},
+            )
+            group["channels"] += 1
+            group["active_channels"] += int(row["orders"] > 0)
+            for metric in ("orders", "quantity", "paid_amount"):
+                group[metric] += row[metric]
+        return sorted(
+            [
+                {
+                    key: label,
+                    **group,
+                    "share": group["paid_amount"] / paid_amount * 100 if paid_amount else 0,
+                    "avg_order_amount": group["paid_amount"] / group["orders"] if group["orders"] else 0,
+                }
+                for label, group in groups.items()
+            ],
+            key=lambda row: row["paid_amount"],
+            reverse=True,
+        )
+
+    online = [row for row in channel_data if row["is_online"]]
+    offline = [row for row in channel_data if not row["is_online"]]
+    salesperson_rows = []
+    for item in salesperson_totals.values():
+        item["total_quantity"] = item["regular_quantity"] + item["sample_quantity"]
+        item["total_paid_amount"] = item["regular_paid_amount"] + item["sample_paid_amount"]
+        salesperson_rows.append(item)
+    salesperson_rows.sort(key=lambda row: row["total_paid_amount"], reverse=True)
+    ranked_products = sorted(
+        product_totals.items(), key=lambda item: item[1]["paid_amount"], reverse=True
+    )[:20]
+    return {
+        **meta,
+        "brand": brand.strip(),
+        "summary": {
+            "paid_amount": paid_amount,
+            "orders": orders,
+            "quantity": quantity,
+            "avg_order_amount": paid_amount / orders if orders else 0,
+            "avg_unit_price": paid_amount / quantity if quantity else 0,
+        },
+        "trend": [
+            {
+                "date": day,
+                "orders": by_day[day]["orders"],
+                "quantity": by_day[day]["quantity"],
+                "paid_amount": by_day[day]["paid_amount"],
+            }
+            for day in sorted(by_day)
+        ],
+        "channel_types": dimension_summary("channel_type"),
+        "platforms": dimension_summary("platform", online_only=True)[:12],
+        "channels": channel_data,
+        "sales_contribution": {
+            "online": {
+                "paid_amount": sum(row["paid_amount"] for row in online),
+                "quantity": sum(row["quantity"] for row in online),
+            },
+            "offline": {
+                "paid_amount": sum(row["paid_amount"] for row in offline),
+                "quantity": sum(row["quantity"] for row in offline),
+            },
+            "paid_amount_difference": 0,
+            "quantity_difference": 0,
+        },
+        "salesperson_product_types": salesperson_rows,
+        "products": [
+            {
+                "rank": index,
+                "product": product,
+                **values,
+                "share": values["paid_amount"] / paid_amount * 100 if paid_amount else 0,
+                "avg_unit_price": values["paid_amount"] / values["quantity"] if values["quantity"] else 0,
+            }
+            for index, (product, values) in enumerate(ranked_products, start=1)
+        ],
+        "unmatched_channels": unmatched,
+        "filter_options": {
+            "channel_types": sorted({str(row["channel_type"]) for row in dimension_rows}),
+            "channel_names": sorted(dimensions),
+        },
+    }
+
+
 def _numbers_equal(left: object, right: object, tolerance: float = 0.01) -> bool:
     return abs(number(left) - number(right)) <= tolerance
 

@@ -7,7 +7,7 @@ jobs:
   deploy:
     name: Deploy to Tencent Cloud
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -181,6 +181,8 @@ jobs:
             docker compose exec -T backend python -m app.jobs.build_inventory_ads
 
           docker compose exec -T backend python - <<'PY'
+          import json
+          import urllib.parse
           import urllib.request
 
           from app.core.security import create_access_token
@@ -203,6 +205,7 @@ jobs:
                   query_mode = response.headers.get("X-BI-Query-Mode")
                   response_source = response.headers.get("X-BI-Response-Source")
                   server_timing = response.headers.get("Server-Timing")
+                  payload = json.load(response)
 
               if query_mode != "ads" or response_source != "ads":
                   raise SystemExit(
@@ -213,11 +216,25 @@ jobs:
                   f"{label} ADS health check passed: "
                   f"mode=ads source=ads server_timing={server_timing or 'unknown'}"
               )
+              return payload
 
           check_ads_endpoint("/api/v1/sales/overview?range=last_30", "sales_overview")
           check_ads_endpoint("/api/v1/sales/product-rank?range=last_30&limit=30", "sales_product_rank")
-          check_ads_endpoint("/api/v1/sales/brand-analysis?range=this_year&limit=30", "sales_brand_analysis")
-          check_ads_endpoint("/api/v1/sales/channel-analysis?range=this_year", "sales_channel_analysis")
+          brand_payload = check_ads_endpoint("/api/v1/sales/brand-analysis?range=this_year&limit=30", "sales_brand_analysis")
+          channel_payload = check_ads_endpoint("/api/v1/sales/channel-analysis?range=this_year", "sales_channel_analysis")
+          check_ads_endpoint("/api/v1/sales/detail?range=last_30&page=1&page_size=20", "sales_detail")
+          brand = brand_payload["data"]["rows"][0]["brand"]
+          channel = channel_payload["data"]["rows"][0]["channel_name"]
+          check_ads_endpoint(
+              "/api/v1/sales/brand-channel-analysis?"
+              + urllib.parse.urlencode({"brand": brand, "range": "last_30"}),
+              "sales_brand_channel_analysis",
+          )
+          check_ads_endpoint(
+              "/api/v1/sales/channel-customer-analysis?"
+              + urllib.parse.urlencode({"channel_name": channel, "range": "this_year"}),
+              "sales_channel_customer_analysis",
+          )
           check_ads_endpoint("/api/v1/dashboard/overview", "dashboard_overview")
           check_ads_endpoint("/api/v1/inventory/warehouses", "inventory_warehouses")
           check_ads_endpoint("/api/v1/inventory/overview", "inventory_overview")

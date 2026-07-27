@@ -22,19 +22,26 @@ from app.models.ads import (
     AdsPublishBatch,
     AdsSalesDaily,
     AdsSalesDailyBrandProduct,
+    AdsSalesDailyBrandChannelProduct,
+    AdsSalesDailyBrandChannelScope,
     AdsSalesDailyBrandScope,
     AdsSalesDailyChannel,
+    AdsSalesDailyChannelCustomer,
     AdsSalesDailyCityChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
     AdsSalesDetailDailyChannel,
     AdsSalesDetailDailyScope,
+    AdsSalesOrderDetail,
 )
 from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
+    load_sales_brand_channel_from_ads,
+    load_sales_channel_customer_from_ads,
     load_sales_channel_analysis_from_ads,
+    load_sales_detail_from_ads,
     load_dashboard_overview_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
@@ -74,7 +81,10 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_inventory_turnover_item",
                     "ads_sales_daily",
                     "ads_sales_daily_brand_product",
+                    "ads_sales_daily_brand_channel_product",
+                    "ads_sales_daily_brand_channel_scope",
                     "ads_sales_daily_brand_scope",
+                    "ads_sales_daily_channel_customer",
                     "ads_sales_brand_turnover_item",
                     "ads_sales_brand_turnover_order",
                     "ads_sales_daily_channel",
@@ -83,6 +93,7 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_detail_daily",
                     "ads_sales_detail_daily_channel",
                     "ads_sales_detail_daily_scope",
+                    "ads_sales_order_detail",
                 },
             )
         finally:
@@ -428,6 +439,57 @@ class SalesAdsReaderTests(unittest.TestCase):
                 ),
             ]
         )
+        self.db.add_all(
+            [
+                AdsSalesOrderDetail(
+                    data_version=batch.data_version,
+                    item_id=1,
+                    sales_date=date(2026, 7, 1),
+                    sales_time=datetime(2026, 7, 1, 12, 0),
+                    order_number="SO-1",
+                    channel="渠道A",
+                    status="已完成",
+                    settlement_status="已结算",
+                    product="商品A",
+                    quantity=Decimal("2"),
+                    receivable_amount=Decimal("70"),
+                    paid_amount=Decimal("70"),
+                    city="上海市",
+                ),
+                AdsSalesDailyChannelCustomer(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    channel="渠道A",
+                    customer_code="C-1",
+                    customer_name="客户A",
+                    orders=1,
+                    quantity=Decimal("2"),
+                    paid_amount=Decimal("70"),
+                ),
+                AdsSalesDailyBrandChannelScope(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    brand="品牌A",
+                    channel="渠道A",
+                    product_type_scope="all",
+                    detail_rows=1,
+                    orders=1,
+                    quantity=Decimal("2"),
+                    paid_amount=Decimal("70"),
+                ),
+                AdsSalesDailyBrandChannelProduct(
+                    data_version=batch.data_version,
+                    sales_date=date(2026, 7, 1),
+                    brand="品牌A",
+                    channel="渠道A",
+                    product_type="正装",
+                    product="商品A",
+                    orders=1,
+                    quantity=Decimal("2"),
+                    paid_amount=Decimal("70"),
+                ),
+            ]
+        )
         self.db.commit()
 
     def tearDown(self) -> None:
@@ -452,6 +514,49 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual(data["metrics"]["paid_amount"], 150)
         self.assertEqual([row["channel"] for row in data["channels"]], ["渠道A", "渠道B"])
         self.assertEqual(data["channels"][0]["paid_amount"], 130)
+
+    def test_loads_remaining_slow_endpoints_from_ads(self) -> None:
+        batch = latest_ready_sales_batch(self.db)
+        meta = {
+            "as_of": "2026-07-02",
+            "period": "自定义",
+            "range": "custom",
+            "start_date": "2026-07-01",
+            "end_date": "2026-07-02",
+        }
+        detail = load_sales_detail_from_ads(
+            self.db, batch, meta, 1, 20, None, None, None
+        )
+        self.assertEqual(detail["total"], 1)
+        self.assertEqual(detail["rows"][0]["order_no"], "SO-1")
+
+        customer = load_sales_channel_customer_from_ads(
+            self.db, batch, meta, "渠道A", "负责人A", None, 1, 20
+        )
+        self.assertEqual(customer["summary"]["customers"], 1)
+        self.assertEqual(customer["rows"][0]["customer_name"], "客户A")
+
+        brand = load_sales_brand_channel_from_ads(
+            self.db,
+            batch,
+            meta,
+            "品牌A",
+            [],
+            [],
+            [],
+            [
+                {
+                    "channel_code": "A",
+                    "channel_name": "渠道A",
+                    "channel_type": "线下",
+                    "source_channel_type": "经销",
+                    "platform": "未设置",
+                    "owner": "负责人A",
+                }
+            ],
+        )
+        self.assertEqual(brand["summary"]["paid_amount"], 70)
+        self.assertEqual(brand["products"][0]["product"], "商品A")
 
     def test_loads_dashboard_overview_from_ads(self) -> None:
         batch = latest_ready_sales_batch(self.db)

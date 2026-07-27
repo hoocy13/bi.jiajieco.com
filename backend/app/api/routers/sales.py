@@ -27,7 +27,10 @@ from app.services.sales_ads import (
     compare_sales_overviews,
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
+    load_sales_brand_channel_from_ads,
+    load_sales_channel_customer_from_ads,
     load_sales_channel_analysis_from_ads,
+    load_sales_detail_from_ads,
     load_sales_overview_from_ads,
     load_sales_product_rank_from_ads,
 )
@@ -463,6 +466,25 @@ def _load_ads_channel_analysis(
         )
 
 
+def _ads_period_meta(
+    batch,
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+) -> dict:
+    as_of = batch.source_end_date
+    resolved_start, resolved_end, period, applied_range = _range_bounds(
+        range_key, as_of, start_date, end_date
+    )
+    return {
+        "as_of": as_of.isoformat(),
+        "period": period,
+        "range": applied_range,
+        "start_date": resolved_start.isoformat(),
+        "end_date": resolved_end.isoformat(),
+    }
+
+
 @router.get("/overview")
 def sales_overview(
     response: Response,
@@ -607,6 +629,7 @@ def sales_overview(
 
 @router.get("/detail")
 def sales_detail(
+    response: Response,
     range: str = Query("last_30"),
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
@@ -616,8 +639,10 @@ def sales_detail(
     channel: str | None = Query(None),
     status: str | None = Query(None),
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_ods_db),
+    db: Session | None = Depends(_get_sales_overview_ods_db),
 ) -> dict:
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
         "detail",
         range=range,
@@ -628,11 +653,37 @@ def sales_detail(
         keyword=keyword,
         channel=channel,
         status=status,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="ADS database is not configured")
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_sales_batch(ads_db)
+                data = load_sales_detail_from_ads(
+                    ads_db,
+                    batch,
+                    _ads_period_meta(batch, range, start_date, end_date),
+                    page,
+                    page_size,
+                    keyword,
+                    channel,
+                    status,
+                )
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    if db is None:
+        raise HTTPException(status_code=503, detail="ODS database is not configured")
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(cache_key, {**meta, "summary": {"paid_amount": 0, "orders": 0, "quantity": 0}, "rows": [], "total": 0})
@@ -1347,6 +1398,7 @@ def sales_channel_analysis(
 
 @router.get("/channel-customer-analysis")
 def sales_channel_customer_analysis(
+    response: Response,
     channel_name: str = Query(..., min_length=1),
     range: str = Query("this_year"),
     start_date: date | None = Query(None),
@@ -1358,6 +1410,8 @@ def sales_channel_customer_analysis(
     db: Session = Depends(get_ods_db),
 ) -> dict:
     """Drill an offline sales channel down to customer-level sales performance."""
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
         "channel-customer-analysis-v1",
         channel_name=channel_name,
@@ -1367,11 +1421,43 @@ def sales_channel_customer_analysis(
         keyword=keyword,
         page=page,
         page_size=page_size,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        owner = db.execute(
+            text(
+                """
+                SELECT COALESCE(NULLIF(TRIM(`负责人`), ''), '-')
+                FROM `渠道列表`
+                WHERE `渠道名称` = :channel_name
+                LIMIT 1
+                """
+            ),
+            {"channel_name": channel_name.strip()},
+        ).scalar()
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="ADS database is not configured")
+        with AdsSessionLocal() as ads_db:
+            batch = latest_ready_sales_batch(ads_db)
+            data = load_sales_channel_customer_from_ads(
+                ads_db,
+                batch,
+                _ads_period_meta(batch, range, start_date, end_date),
+                channel_name,
+                owner or "-",
+                keyword,
+                page,
+                page_size,
+            )
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(
@@ -1496,6 +1582,7 @@ def sales_channel_customer_analysis(
 
 @router.get("/brand-channel-analysis")
 def sales_brand_channel_analysis(
+    response: Response,
     brand: str = Query(..., min_length=1),
     range: str = Query("last_30"),
     start_date: date | None = Query(None),
@@ -1506,6 +1593,8 @@ def sales_brand_channel_analysis(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
     selected_product_types = list(
         dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
     )
@@ -1518,11 +1607,56 @@ def sales_brand_channel_analysis(
         channel_type=channel_type,
         channel_name=channel_name,
         product_type=selected_product_types,
+        query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
 
+    if query_mode == "ads":
+        selected_channel_types = list(
+            dict.fromkeys(item.strip() for item in channel_type or [] if item.strip())
+        )
+        selected_channel_names = list(
+            dict.fromkeys(item.strip() for item in channel_name or [] if item.strip())
+        )
+        dimension_rows = [
+            dict(row)
+            for row in db.execute(
+                text(
+                    """
+                    SELECT
+                      `渠道编号` AS channel_code,
+                      `渠道名称` AS channel_name,
+                      COALESCE(NULLIF(`分类`, ''), '未分类') AS channel_type,
+                      COALESCE(NULLIF(`渠道类型`, ''), '未分类') AS source_channel_type,
+                      COALESCE(NULLIF(`线上平台`, ''), '未设置') AS platform,
+                      COALESCE(NULLIF(`负责人`, ''), '-') AS owner
+                    FROM `渠道列表`
+                    WHERE NULLIF(`渠道名称`, '') IS NOT NULL
+                    """
+                )
+            ).mappings().all()
+        ]
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="ADS database is not configured")
+        with AdsSessionLocal() as ads_db:
+            batch = latest_ready_sales_batch(ads_db)
+            data = load_sales_brand_channel_from_ads(
+                ads_db,
+                batch,
+                _ads_period_meta(batch, range, start_date, end_date),
+                brand,
+                selected_product_types,
+                selected_channel_types,
+                selected_channel_names,
+                dimension_rows,
+            )
+        response.headers["X-BI-Response-Source"] = "ads"
+        return _cached_ok(cache_key, data)
+
+    response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _cached_ok(

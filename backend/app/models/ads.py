@@ -181,6 +181,107 @@ class AdsSalesDetailDailyChannel(AdsBase):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
 
 
+class AdsSalesOrderDetail(AdsBase):
+    __tablename__ = "ads_sales_order_detail"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_order_detail_filter",
+            "data_version",
+            "sales_date",
+            "channel",
+            "status",
+        ),
+        Index(
+            "idx_ads_sales_order_detail_order",
+            "data_version",
+            "order_number",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sales_time: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    order_number: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False)
+    settlement_status: Mapped[str] = mapped_column(String(64), nullable=False)
+    product: Mapped[str] = mapped_column(String(1024), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    receivable_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    city: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class AdsSalesDailyChannelCustomer(AdsBase):
+    __tablename__ = "ads_sales_daily_channel_customer"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_channel_customer_filter",
+            "data_version",
+            "channel",
+            "sales_date",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    customer_code: Mapped[str] = mapped_column(String(128), primary_key=True)
+    customer_name: Mapped[str] = mapped_column(String(255), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesDailyBrandChannelScope(AdsBase):
+    __tablename__ = "ads_sales_daily_brand_channel_scope"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_brand_channel_scope_filter",
+            "data_version",
+            "brand",
+            "sales_date",
+            "product_type_scope",
+            "channel",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    brand: Mapped[str] = mapped_column(String(128), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    product_type_scope: Mapped[str] = mapped_column(String(32), primary_key=True)
+    detail_rows: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesDailyBrandChannelProduct(AdsBase):
+    __tablename__ = "ads_sales_daily_brand_channel_product"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_brand_channel_product_filter",
+            "data_version",
+            "brand",
+            "sales_date",
+            "channel",
+            "product_type",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    brand: Mapped[str] = mapped_column(String(128), primary_key=True)
+    channel: Mapped[str] = mapped_column(String(255), primary_key=True)
+    product_type: Mapped[str] = mapped_column(String(32), primary_key=True)
+    product: Mapped[str] = mapped_column(String(255), primary_key=True)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
 class AdsInventoryProductWarehouse(AdsBase):
     __tablename__ = "ads_inventory_product_warehouse"
 
