@@ -11,6 +11,9 @@ from app.models.ads import AdsPublishBatch
 
 
 INVENTORY_DATASET = "inventory_overview"
+BRAND_TURNOVER_DEFAULT_WAREHOUSES = tuple(
+    sorted(("上海仓库新", "【商家仓】抖超上海仓"))
+)
 
 
 class InventoryAdsUnavailable(RuntimeError):
@@ -506,6 +509,411 @@ def load_inventory_turnover_from_ads(
             }
             for index, row in enumerate(rows)
         ],
+    }
+
+
+def load_inventory_brand_turnover_from_ads(
+    ads_db: Session,
+    inventory_batch: AdsPublishBatch,
+    sales_batch: AdsPublishBatch,
+    *,
+    year: int,
+    quarter: int,
+    keyword: str,
+    min_stock: int,
+    warehouses: tuple[str, ...],
+    product_types: tuple[str, ...],
+    page: int,
+    page_size: int,
+) -> dict:
+    start_month = (quarter - 1) * 3 + 1
+    end_month = start_month + 2
+    start_date = date(year, start_month, 1)
+    end_date = date(year, end_month, monthrange(year, end_month)[1])
+    period_days = (end_date - start_date).days + 1
+    stock_filter, stock_params = _filters(
+        warehouses,
+        product_types,
+        alias="i",
+    )
+    sales_filter, sales_params = _filters(
+        warehouses,
+        product_types,
+        alias="s",
+    )
+    if not warehouses:
+        order_warehouse_scope = "__all__"
+    elif set(warehouses) == set(BRAND_TURNOVER_DEFAULT_WAREHOUSES):
+        order_warehouse_scope = "__default__"
+    elif len(warehouses) == 1:
+        order_warehouse_scope = warehouses[0]
+    else:
+        raise InventoryAdsUnavailable(
+            "Brand turnover order scope does not cover this warehouse combination"
+        )
+    if not product_types:
+        order_product_type_scope = "all"
+    elif product_types == ("正装",):
+        order_product_type_scope = "full_size"
+    elif product_types == ("小样",):
+        order_product_type_scope = "sample"
+    elif set(product_types) == {"正装", "小样"}:
+        order_product_type_scope = "selected"
+    else:
+        raise InventoryAdsUnavailable(
+            "Brand turnover order scope does not cover this product type combination"
+        )
+    stock_brand_filter = ""
+    sales_brand_filter = ""
+    if keyword:
+        stock_params["brand_keyword"] = keyword
+        sales_params["brand_keyword"] = keyword
+        stock_brand_filter = " AND i.`brand` = :brand_keyword"
+        sales_brand_filter = " AND s.`brand` = :brand_keyword"
+    order_brand_filter = " AND o.`brand` = :brand_keyword" if keyword else ""
+
+    stock_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              i.`brand`,
+              SUM(i.`stock`) AS ending_stock,
+              SUM(i.`available_stock`) AS available_stock,
+              SUM(i.`stock_amount`) AS inventory_amount,
+              MAX(i.`updated_at`) AS snapshot_at
+            FROM `ads_inventory_turnover_item` i
+            WHERE i.`data_version` = :data_version
+              {stock_filter}
+              {stock_brand_filter}
+            GROUP BY i.`brand`
+            """
+        ),
+        {
+            "data_version": inventory_batch.data_version,
+            **stock_params,
+        },
+    ).mappings().all()
+    sales_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              s.`brand`,
+              SUM(s.`quantity`) AS net_sales_quantity,
+              SUM(s.`paid_amount`) AS net_sales_amount
+            FROM `ads_sales_brand_turnover_item` s
+            WHERE s.`data_version` = :data_version
+              AND s.`sales_date` BETWEEN :start_date AND :end_date
+              {sales_filter}
+              {sales_brand_filter}
+            GROUP BY s.`brand`
+            """
+        ),
+        {
+            "data_version": sales_batch.data_version,
+            "start_date": start_date,
+            "end_date": end_date,
+            **sales_params,
+        },
+    ).mappings().all()
+    sales_order_rows = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              o.`brand`,
+              SUM(o.`orders`) AS orders
+            FROM `ads_sales_brand_turnover_order` o
+            WHERE o.`data_version` = :data_version
+              AND o.`sales_date` BETWEEN :start_date AND :end_date
+              AND o.`warehouse` = :warehouse_scope
+              AND o.`product_type` = :product_type_scope
+              {order_brand_filter}
+            GROUP BY o.`brand`
+            """
+        ),
+        {
+            "data_version": sales_batch.data_version,
+            "start_date": start_date,
+            "end_date": end_date,
+            "warehouse_scope": order_warehouse_scope,
+            "product_type_scope": order_product_type_scope,
+            **({"brand_keyword": keyword} if keyword else {}),
+        },
+    ).mappings().all()
+
+    product_stock_rows = []
+    product_sales_rows = []
+    if keyword:
+        product_stock_rows = ads_db.execute(
+            text(
+                f"""
+                SELECT
+                  CONCAT(
+                    MAX(i.`brand`),
+                    '|',
+                    MAX(
+                      COALESCE(
+                        NULLIF(TRIM(i.`product_code`), ''),
+                        CONCAT(
+                          'NAME:',
+                          COALESCE(
+                            NULLIF(TRIM(i.`product`), ''),
+                            '未命名商品'
+                          )
+                        )
+                      )
+                    )
+                  ) AS product_key,
+                  MAX(i.`product_code`) AS product_code,
+                  MAX(i.`product`) AS product,
+                  i.`product_type`,
+                  SUM(i.`available_stock`) AS available_stock
+                FROM `ads_inventory_turnover_item` i
+                WHERE i.`data_version` = :data_version
+                  {stock_filter}
+                  {stock_brand_filter}
+                GROUP BY
+                  i.`brand`,
+                  i.`product_type`,
+                  COALESCE(
+                    NULLIF(TRIM(i.`product_code`), ''),
+                    CONCAT(
+                      'NAME:',
+                      COALESCE(NULLIF(TRIM(i.`product`), ''), '未命名商品')
+                    )
+                  )
+                """
+            ),
+            {
+                "data_version": inventory_batch.data_version,
+                **stock_params,
+            },
+        ).mappings().all()
+        product_sales_rows = ads_db.execute(
+            text(
+                f"""
+                SELECT
+                  s.`product_key`,
+                  s.`product_type`,
+                  SUM(s.`quantity`) AS net_sales_quantity
+                FROM `ads_sales_brand_turnover_item` s
+                WHERE s.`data_version` = :data_version
+                  AND s.`sales_date` BETWEEN :start_date AND :end_date
+                  {sales_filter}
+                  {sales_brand_filter}
+                GROUP BY s.`product_key`, s.`product_type`
+                """
+            ),
+            {
+                "data_version": sales_batch.data_version,
+                "start_date": start_date,
+                "end_date": end_date,
+                **sales_params,
+            },
+        ).mappings().all()
+
+    stock_by_brand = {row["brand"]: row for row in stock_rows}
+    sales_by_brand = {row["brand"]: dict(row) for row in sales_rows}
+    for row in sales_order_rows:
+        sales_by_brand.setdefault(row["brand"], {})["orders"] = row["orders"]
+    merged_rows = []
+    for brand in set(stock_by_brand) | set(sales_by_brand):
+        stock_row = stock_by_brand.get(brand, {})
+        sales_row = sales_by_brand.get(brand, {})
+        ending_stock = _number(stock_row.get("ending_stock"))
+        available_stock = _number(stock_row.get("available_stock"))
+        net_sales_quantity = _number(sales_row.get("net_sales_quantity"))
+        turnover_rate = (
+            net_sales_quantity / available_stock
+            if available_stock > 0 and net_sales_quantity > 0
+            else None
+        )
+        turnover_days = period_days / turnover_rate if turnover_rate else None
+        if available_stock <= 0 and net_sales_quantity > 0:
+            status = "缺货风险"
+        elif net_sales_quantity <= 0:
+            status = "无销售"
+        elif turnover_days <= 90:
+            status = "正常"
+        elif turnover_days <= 180:
+            status = "偏慢"
+        else:
+            status = "过慢"
+        merged_rows.append(
+            {
+                "brand": str(brand or "未归类"),
+                "ending_stock": ending_stock,
+                "available_stock": available_stock,
+                "inventory_amount": _number(stock_row.get("inventory_amount")),
+                "orders": _integer(sales_row.get("orders")),
+                "net_sales_quantity": net_sales_quantity,
+                "net_sales_amount": _number(sales_row.get("net_sales_amount")),
+                "turnover_rate": (
+                    round(turnover_rate, 4)
+                    if turnover_rate is not None
+                    else None
+                ),
+                "turnover_days": (
+                    round(turnover_days, 1)
+                    if turnover_days is not None
+                    else None
+                ),
+                "snapshot_at": _date_text(stock_row.get("snapshot_at")),
+                "status": status,
+            }
+        )
+
+    if min_stock > 0:
+        merged_rows = [
+            row for row in merged_rows if row["available_stock"] >= min_stock
+        ]
+    merged_rows.sort(
+        key=lambda row: (
+            row["turnover_days"] is None,
+            row["turnover_days"] or 0,
+            row["available_stock"],
+            row["brand"],
+        ),
+        reverse=True,
+    )
+    for index, row in enumerate(merged_rows):
+        row["rank"] = index + 1
+    total = len(merged_rows)
+    offset = (page - 1) * page_size
+    paged_rows = merged_rows[offset : offset + page_size]
+
+    total_stock = sum(row["ending_stock"] for row in merged_rows)
+    total_available_stock = sum(row["available_stock"] for row in merged_rows)
+    total_sales_quantity = sum(row["net_sales_quantity"] for row in merged_rows)
+    total_turnover_rate = (
+        total_sales_quantity / total_available_stock
+        if total_available_stock > 0 and total_sales_quantity > 0
+        else None
+    )
+    total_turnover_days = (
+        period_days / total_turnover_rate if total_turnover_rate else None
+    )
+    snapshot_at = max(
+        (row["snapshot_at"] for row in merged_rows if row["snapshot_at"]),
+        default=None,
+    )
+    product_sales_by_key = {
+        row["product_key"]: _number(row["net_sales_quantity"])
+        for row in product_sales_rows
+    }
+    product_turnover_rows = []
+    for row in product_stock_rows:
+        available_stock = _number(row["available_stock"])
+        net_sales_quantity = product_sales_by_key.get(row["product_key"], 0)
+        turnover_rate = (
+            net_sales_quantity / available_stock
+            if available_stock > 0 and net_sales_quantity > 0
+            else None
+        )
+        turnover_days = period_days / turnover_rate if turnover_rate else None
+        if available_stock <= 0:
+            status = "无可用库存"
+        elif net_sales_quantity <= 0:
+            status = "无销售"
+        elif turnover_days <= 90:
+            status = "正常"
+        elif turnover_days <= 180:
+            status = "偏慢"
+        else:
+            status = "过慢"
+        product_turnover_rows.append(
+            {
+                "product_key": str(row["product_key"] or "-"),
+                "product_code": str(row["product_code"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "product_type": str(row["product_type"] or "未归类"),
+                "available_stock": available_stock,
+                "net_sales_quantity": net_sales_quantity,
+                "turnover_days": (
+                    round(turnover_days, 1)
+                    if turnover_days is not None
+                    else None
+                ),
+                "status": status,
+            }
+        )
+
+    def build_product_panel(label: str, type_names: tuple[str, ...]) -> dict:
+        rows = [
+            row
+            for row in product_turnover_rows
+            if row["product_type"] in type_names
+        ]
+        panel_available_stock = sum(row["available_stock"] for row in rows)
+        panel_sales_quantity = sum(row["net_sales_quantity"] for row in rows)
+        average_turnover_days = (
+            period_days * panel_available_stock / panel_sales_quantity
+            if panel_available_stock > 0 and panel_sales_quantity > 0
+            else None
+        )
+        rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
+        return {
+            "label": label,
+            "total_available_stock": panel_available_stock,
+            "average_turnover_days": (
+                round(average_turnover_days, 1)
+                if average_turnover_days is not None
+                else None
+            ),
+            "rows": rows[:10],
+        }
+
+    product_turnover_panels = []
+    if keyword:
+        product_turnover_rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
+        product_turnover_panels = [
+            build_product_panel("正装 + 小样", ("正装", "小样")),
+            build_product_panel("正装", ("正装",)),
+            build_product_panel("小样", ("小样",)),
+        ]
+    return {
+        "year": year,
+        "quarter": quarter,
+        "period": f"{year} Q{quarter}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "period_days": period_days,
+        "basis": "ending_stock_proxy",
+        "snapshot_at": snapshot_at,
+        "warehouses_selected": list(warehouses),
+        "product_types_selected": list(product_types),
+        "min_stock": min_stock,
+        "summary": {
+            "brand_count": total,
+            "ending_stock": total_stock,
+            "available_stock": total_available_stock,
+            "net_sales_quantity": total_sales_quantity,
+            "turnover_rate": (
+                round(total_turnover_rate, 4)
+                if total_turnover_rate is not None
+                else None
+            ),
+            "turnover_days": (
+                round(total_turnover_days, 1)
+                if total_turnover_days is not None
+                else None
+            ),
+            "attention_brands": sum(
+                1
+                for row in merged_rows
+                if row["status"] in {"偏慢", "过慢", "无销售"}
+            ),
+        },
+        "pagination": {"page": page, "page_size": page_size, "total": total},
+        "chart_rows": merged_rows,
+        "product_turnover_panels": product_turnover_panels,
+        "product_turnover_rows": product_turnover_rows,
+        "rows": paged_rows,
     }
 
 

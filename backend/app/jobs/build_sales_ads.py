@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
@@ -17,6 +17,8 @@ from app.models.ads import (
     AdsSalesDaily,
     AdsSalesDailyBrandProduct,
     AdsSalesDailyBrandScope,
+    AdsSalesBrandTurnoverItem,
+    AdsSalesBrandTurnoverOrder,
     AdsSalesDailyChannel,
     AdsSalesDailyCityChannel,
     AdsSalesDailyProduct,
@@ -34,6 +36,10 @@ from app.services.sales_sources import (
 
 
 DATASET = "sales_daily"
+BRAND_TURNOVER_DEFAULT_WAREHOUSES = (
+    "上海仓库新",
+    "【商家仓】抖超上海仓",
+)
 PRODUCT_TYPE_SCOPES_SQL = """
     SELECT 'all' AS product_type_scope
     UNION ALL SELECT 'full_size'
@@ -427,6 +433,165 @@ def load_brand_product_rows(
     return [dict(row) for row in rows]
 
 
+def load_brand_turnover_product_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = []
+    cursor = start_date
+    while cursor <= end_date:
+        if cursor.month == 12:
+            next_month = date(cursor.year + 1, 1, 1)
+        else:
+            next_month = date(cursor.year, cursor.month + 1, 1)
+        slice_end = min(end_date, next_month - timedelta(days=1))
+        slice_rows = ods_db.execute(
+            text(
+            """
+            SELECT
+              DATE(d.`下单时间`) AS sales_date,
+              COALESCE(NULLIF(TRIM(d.`发货仓库`), ''), '未归类') AS warehouse,
+              COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS brand,
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+              CONCAT(
+                COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类'),
+                '|',
+                COALESCE(
+                  NULLIF(TRIM(d.`货品编号`), ''),
+                  CONCAT(
+                    'NAME:',
+                    COALESCE(NULLIF(TRIM(d.`货品名称`), ''), '未命名商品')
+                  )
+                )
+              ) AS product_key,
+              MAX(d.`货品编号`) AS product_code,
+              MAX(d.`货品名称`) AS product,
+              SUM(COALESCE(d.`数量`, 0)) AS quantity,
+              SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
+            FROM `销售单明细账` d
+            WHERE d.`下单时间` >= :start_date
+              AND d.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            GROUP BY
+              DATE(d.`下单时间`),
+              COALESCE(NULLIF(TRIM(d.`发货仓库`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类'),
+              CONCAT(
+                COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类'),
+                '|',
+                COALESCE(
+                  NULLIF(TRIM(d.`货品编号`), ''),
+                  CONCAT(
+                    'NAME:',
+                    COALESCE(NULLIF(TRIM(d.`货品名称`), ''), '未命名商品')
+                  )
+                )
+              )
+            """
+            ),
+            {"start_date": cursor, "end_date": slice_end},
+        ).mappings().all()
+        rows.extend(dict(row) for row in slice_rows)
+        cursor = next_month
+    return rows
+
+
+def load_brand_turnover_order_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    rows = []
+    scope_specs = (
+        ("__all__", "", ""),
+        (
+            "__default__",
+            "AND COALESCE(NULLIF(TRIM(d.`发货仓库`), ''), '未归类') "
+            "IN (:default_warehouse_0, :default_warehouse_1)",
+            "",
+        ),
+        (
+            None,
+            "",
+            ", COALESCE(NULLIF(TRIM(d.`发货仓库`), ''), '未归类')",
+        ),
+    )
+    for warehouse_scope, warehouse_filter, warehouse_group in scope_specs:
+        warehouse_expression = (
+            "COALESCE(NULLIF(TRIM(d.`发货仓库`), ''), '未归类')"
+            if warehouse_scope is None
+            else f"'{warehouse_scope}'"
+        )
+        slice_rows = ods_db.execute(
+            text(
+            f"""
+            SELECT
+              DATE(d.`下单时间`) AS sales_date,
+              NULL AS order_number,
+              {warehouse_expression} AS warehouse,
+              COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS brand,
+              scopes.product_type_scope AS product_type,
+              COUNT(DISTINCT d.`订单编号`) AS orders
+            FROM `销售单明细账` d
+            JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
+              ON scopes.product_type_scope = 'all'
+              OR (
+                scopes.product_type_scope = 'full_size'
+                AND COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') = '正装'
+              )
+              OR (
+                scopes.product_type_scope = 'sample'
+                AND COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') = '小样'
+              )
+              OR (
+                scopes.product_type_scope = 'selected'
+                AND COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')
+                    IN ('正装', '小样')
+              )
+            WHERE d.`下单时间` >= :start_date
+              AND d.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+              {warehouse_filter}
+            GROUP BY
+              DATE(d.`下单时间`),
+              COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类'),
+              scopes.product_type_scope
+              {warehouse_group}
+            """
+            ),
+            {
+                "start_date": start_date,
+                "end_date": end_date,
+                "default_warehouse_0": BRAND_TURNOVER_DEFAULT_WAREHOUSES[0],
+                "default_warehouse_1": BRAND_TURNOVER_DEFAULT_WAREHOUSES[1],
+            },
+        ).mappings().all()
+        rows.extend(dict(row) for row in slice_rows)
+    return rows
+
+
+def brand_turnover_summary(
+    product_rows: list[dict],
+    order_rows: list[dict],
+) -> SalesSummary:
+    return SalesSummary(
+        orders=sum(
+            int(row["orders"] or 0)
+            for row in order_rows
+            if row["warehouse"] == "__all__"
+            and row["product_type"] == "all"
+        ),
+        paid_amount=sum(
+            (decimal_value(row["paid_amount"]) for row in product_rows),
+            start=Decimal(0),
+        ),
+        quantity=sum(
+            (decimal_value(row["quantity"]) for row in product_rows),
+            start=Decimal(0),
+        ),
+    )
+
+
 def load_ads_summary(ads_db: Session, data_version: str) -> SalesSummary:
     row = ads_db.execute(
         text(
@@ -436,6 +601,32 @@ def load_ads_summary(ads_db: Session, data_version: str) -> SalesSummary:
               COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
               COALESCE(SUM(`quantity`), 0) AS quantity
             FROM `ads_sales_daily`
+            WHERE `data_version` = :data_version
+            """
+        ),
+        {"data_version": data_version},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
+
+
+def load_ads_brand_turnover_summary(
+    ads_db: Session,
+    data_version: str,
+) -> SalesSummary:
+    row = ads_db.execute(
+        text(
+            """
+            SELECT
+              (
+                SELECT COALESCE(SUM(o.`orders`), 0)
+                FROM `ads_sales_brand_turnover_order` o
+                WHERE o.`data_version` = :data_version
+                  AND o.`warehouse` = '__all__'
+                  AND o.`product_type` = 'all'
+              ) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `ads_sales_brand_turnover_item`
             WHERE `data_version` = :data_version
             """
         ),
@@ -661,6 +852,16 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
+                brand_turnover_product_rows = load_brand_turnover_product_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
+                brand_turnover_order_rows = load_brand_turnover_order_rows(
+                    ods_db,
+                    resolved_start,
+                    resolved_end,
+                )
 
                 if (
                     not daily_rows
@@ -671,6 +872,8 @@ def build_sales_ads(
                     or not detail_scope_rows
                     or not brand_scope_rows
                     or not brand_product_rows
+                    or not brand_turnover_product_rows
+                    or not brand_turnover_order_rows
                 ):
                     raise RuntimeError("No sales rows found for the requested range")
 
@@ -802,6 +1005,48 @@ def build_sales_ads(
                         for row in brand_product_rows
                     ],
                 )
+                ads_db.execute(
+                    insert(AdsSalesBrandTurnoverItem),
+                    [
+                        {
+                            "data_version": version,
+                            "item_id": index,
+                            "sales_date": row["sales_date"],
+                            "order_number": None,
+                            "warehouse": str(row["warehouse"]),
+                            "brand": str(row["brand"]),
+                            "product_type": str(row["product_type"]),
+                            "product_key": str(row["product_key"]),
+                            "product_code": row["product_code"],
+                            "product": row["product"],
+                            "quantity": decimal_value(row["quantity"]),
+                            "paid_amount": decimal_value(row["paid_amount"]),
+                        }
+                        for index, row in enumerate(
+                            brand_turnover_product_rows,
+                            start=1,
+                        )
+                    ],
+                )
+                ads_db.execute(
+                    insert(AdsSalesBrandTurnoverOrder),
+                    [
+                        {
+                            "data_version": version,
+                            "item_id": index,
+                            "sales_date": row["sales_date"],
+                            "order_number": row["order_number"],
+                            "warehouse": str(row["warehouse"]),
+                            "brand": str(row["brand"]),
+                            "product_type": str(row["product_type"]),
+                            "orders": int(row["orders"] or 0),
+                        }
+                        for index, row in enumerate(
+                            brand_turnover_order_rows,
+                            start=1,
+                        )
+                    ],
+                )
 
                 daily_summary = load_ads_summary(ads_db, version)
                 channel_summary = load_ads_channel_summary(ads_db, version)
@@ -838,6 +1083,18 @@ def build_sales_ads(
                     "ads_sales_daily_brand_product",
                     version,
                 )
+                source_brand_turnover_summary = brand_turnover_summary(
+                    brand_turnover_product_rows,
+                    brand_turnover_order_rows,
+                )
+                ads_brand_turnover_summary = load_ads_brand_turnover_summary(
+                    ads_db,
+                    version,
+                )
+                brand_turnover_matches = summaries_match(
+                    source_brand_turnover_summary,
+                    ads_brand_turnover_summary,
+                )
                 detail_channel_summary = load_ads_table_summary(
                     ads_db,
                     "ads_sales_detail_daily_channel",
@@ -873,6 +1130,22 @@ def build_sales_ads(
                     "brand_scope_amount_quantity_matches": brand_scope_amount_quantity_matches,
                     "brand_product_amount_quantity_matches": brand_product_amount_quantity_matches,
                 }
+                reconciliation["brand_turnover"] = {
+                    "matches": brand_turnover_matches,
+                    "scope_mode": "compact_v1",
+                    "source": {
+                        "orders": source_brand_turnover_summary.orders,
+                        "paid_amount": str(
+                            source_brand_turnover_summary.paid_amount
+                        ),
+                        "quantity": str(source_brand_turnover_summary.quantity),
+                    },
+                    "ads": {
+                        "orders": ads_brand_turnover_summary.orders,
+                        "paid_amount": str(ads_brand_turnover_summary.paid_amount),
+                        "quantity": str(ads_brand_turnover_summary.quantity),
+                    },
+                }
                 reconciliation["channel_analysis"] = {
                     "detail_channel_amount_quantity_matches": detail_channel_amount_quantity_matches,
                 }
@@ -884,6 +1157,7 @@ def build_sales_ads(
                     and detail_scope_matches
                     and brand_scope_amount_quantity_matches
                     and brand_product_amount_quantity_matches
+                    and brand_turnover_matches
                     and detail_channel_amount_quantity_matches
                     and city_channel_amount_quantity_matches
                 )
@@ -915,6 +1189,12 @@ def build_sales_ads(
                     "detail_scope_row_count": len(detail_scope_rows),
                     "brand_scope_row_count": len(brand_scope_rows),
                     "brand_product_row_count": len(brand_product_rows),
+                    "brand_turnover_product_row_count": len(
+                        brand_turnover_product_rows
+                    ),
+                    "brand_turnover_order_row_count": len(
+                        brand_turnover_order_rows
+                    ),
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
@@ -968,7 +1248,9 @@ def main() -> None:
         f"product_rows={result['product_row_count']} "
         f"detail_scope_rows={result['detail_scope_row_count']} "
         f"brand_scope_rows={result['brand_scope_row_count']} "
-        f"brand_product_rows={result['brand_product_row_count']}"
+        f"brand_product_rows={result['brand_product_row_count']} "
+        f"brand_turnover_product_rows={result['brand_turnover_product_row_count']} "
+        f"brand_turnover_order_rows={result['brand_turnover_order_row_count']}"
     )
 
 

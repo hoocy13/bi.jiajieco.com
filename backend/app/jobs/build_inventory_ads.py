@@ -247,7 +247,9 @@ def load_turnover_rows(ods_db: Session) -> list[dict]:
               COALESCE(NULLIF(`仓库`, ''), '未归类') AS warehouse,
               SUM(COALESCE(`库存数量`, 0)) AS stock,
               SUM(COALESCE(`可用库存`, 0)) AS available_stock,
-              SUM(COALESCE(`近30天销量`, 0)) AS sales30
+              SUM(COALESCE(`库存金额`, 0)) AS stock_amount,
+              SUM(COALESCE(`近30天销量`, 0)) AS sales30,
+              MAX(`updatetime`) AS updated_at
             FROM `分仓库查询` s
             WHERE COALESCE(`库存数量`, 0) > 0
             GROUP BY
@@ -399,6 +401,9 @@ def turnover_summary(rows: list[dict]) -> dict:
         "available_stock": sum(
             decimal_value(row["available_stock"]) for row in rows
         ),
+        "stock_amount": sum(
+            decimal_value(row["stock_amount"]) for row in rows
+        ),
         "sales30": sum(decimal_value(row["sales30"]) for row in rows),
     }
 
@@ -411,6 +416,7 @@ def ads_turnover_summary(ads_db: Session, data_version: str) -> dict:
               COUNT(*) AS item_count,
               COALESCE(SUM(`stock`), 0) AS stock,
               COALESCE(SUM(`available_stock`), 0) AS available_stock,
+              COALESCE(SUM(`stock_amount`), 0) AS stock_amount,
               COALESCE(SUM(`sales30`), 0) AS sales30
             FROM `ads_inventory_turnover_item`
             WHERE `data_version` = :data_version
@@ -422,6 +428,7 @@ def ads_turnover_summary(ads_db: Session, data_version: str) -> dict:
         "item_count": int(row["item_count"] or 0),
         "stock": decimal_value(row["stock"]),
         "available_stock": decimal_value(row["available_stock"]),
+        "stock_amount": decimal_value(row["stock_amount"]),
         "sales30": decimal_value(row["sales30"]),
     }
 
@@ -592,7 +599,9 @@ def build_inventory_ads(data_version: str | None = None) -> dict:
                             "warehouse": str(row["warehouse"]),
                             "stock": decimal_value(row["stock"]),
                             "available_stock": decimal_value(row["available_stock"]),
+                            "stock_amount": decimal_value(row["stock_amount"]),
                             "sales30": decimal_value(row["sales30"]),
+                            "updated_at": row["updated_at"],
                         }
                         for index, row in enumerate(turnover_rows, start=1)
                     ],

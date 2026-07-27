@@ -120,6 +120,56 @@ class AdsSalesDailyBrandProduct(AdsBase):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
 
 
+class AdsSalesBrandTurnoverItem(AdsBase):
+    __tablename__ = "ads_sales_brand_turnover_item"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_brand_turnover_filter",
+            "data_version",
+            "sales_date",
+            "warehouse",
+            "product_type",
+            "brand",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    order_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    product_key: Mapped[str] = mapped_column(String(768), nullable=False)
+    product_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    product: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+
+
+class AdsSalesBrandTurnoverOrder(AdsBase):
+    __tablename__ = "ads_sales_brand_turnover_order"
+    __table_args__ = (
+        Index(
+            "idx_ads_sales_brand_turnover_order_filter",
+            "data_version",
+            "sales_date",
+            "warehouse",
+            "product_type",
+            "brand",
+        ),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    order_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class AdsSalesDetailDailyChannel(AdsBase):
     __tablename__ = "ads_sales_detail_daily_channel"
 
@@ -208,7 +258,9 @@ class AdsInventoryTurnoverItem(AdsBase):
     warehouse: Mapped[str] = mapped_column(String(255), nullable=False)
     stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
     available_stock: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    stock_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
     sales30: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AdsInventoryBatchItem(AdsBase):

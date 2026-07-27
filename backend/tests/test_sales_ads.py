@@ -74,6 +74,8 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_daily",
                     "ads_sales_daily_brand_product",
                     "ads_sales_daily_brand_scope",
+                    "ads_sales_brand_turnover_item",
+                    "ads_sales_brand_turnover_order",
                     "ads_sales_daily_channel",
                     "ads_sales_daily_city_channel",
                     "ads_sales_daily_product",

@@ -15,7 +15,7 @@ BI_QUERY_SOURCE=ads
 使用两个 ADS 账号：
 
 - `ADS_DATABASE_URL`：FastAPI 使用，只授予 `ads` 的 `SELECT` 权限。
-- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，仅授予十张销售 ADS 表所需的 `SELECT`、`INSERT`、`UPDATE` 权限。
+- `ADS_BUILD_DATABASE_URL`：独立构建任务使用，仅授予销售 ADS 表所需的 `SELECT`、`INSERT`、`UPDATE` 权限。
 
 两者都必须指向独立的 `ads` 数据库。程序会拒绝将 ADS 配置为 ODS 数据库，防止构建任务误写源库。
 
@@ -79,6 +79,16 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 
 粒度为“数据版本 × 销售日期 × 品牌 × 货品分类 × 商品”，用于品牌商品数去重和后续品牌下钻。
 
+### `ads_sales_brand_turnover_item`
+
+粒度为“数据版本 × 销售日期 × 发货仓库 × 品牌 × 货品分类 × 商品”，保存货品编号、商品名称、净销售数量和分摊后金额，用于品牌周转和品牌下商品周转。
+
+构建时按月读取 ODS，避免全年度单条查询超过数据库读取时限。
+
+### `ads_sales_brand_turnover_order`
+
+保存品牌周转所需的日订单去重汇总，覆盖全部仓、单仓和页面默认双仓，以及全部、正装、小样、正装与小样四种货品分类范围。非常规多仓或分类组合由接口安全回退 ODS。
+
 ### `ads_sales_detail_daily_channel`
 
 粒度为“数据版本 × 销售日期 × 渠道”，保存销售单明细账的订单去重数、分摊后金额和数量。渠道类型、平台、负责人和授权状态仍实时读取渠道主数据。
@@ -91,7 +101,7 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 .venv\Scripts\python.exe -m app.jobs.build_sales_ads --initialize-only
 ```
 
-初始化完成后，可以撤销构建账号的 DDL 权限。当前版本化构建只需要十张 ADS 表上的 `SELECT`、`INSERT`，以及发布批次表上的 `UPDATE`。
+初始化完成后，可以撤销构建账号的 DDL 权限。当前版本化构建只需要销售 ADS 表上的 `SELECT`、`INSERT`，以及发布批次表上的 `UPDATE`。
 
 ## 构建
 
@@ -118,8 +128,9 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 7. 核对品牌分类范围与品牌商品汇总的金额、数量和订单口径；
 8. 核对渠道日汇总的金额和数量口径；
 9. 核对城市渠道日汇总的金额和数量口径；
-10. 对账成功后原子标记为 `ready`；
-11. 失败时回滚数据并将批次标记为 `failed`。
+10. 核对品牌周转的订单数、金额和数量口径；
+11. 对账成功后原子标记为 `ready`；
+12. 失败时回滚数据并将批次标记为 `failed`。
 
 构建日志只输出版本、日期范围和行数，不输出连接地址、账号、密码、Token 或业务明细。
 

@@ -20,9 +20,15 @@ from app.services.inventory_ads import (
     latest_ready_inventory_batch,
     load_batch_expiry_from_ads,
     load_inventory_filter_options_from_ads,
+    load_inventory_brand_turnover_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
     load_inventory_turnover_from_ads,
+)
+from app.services.sales_ads import (
+    AdsDataUnavailable,
+    ensure_batch_covers,
+    latest_ready_sales_batch,
 )
 
 
@@ -1300,6 +1306,7 @@ def inventory_turnover(
 
 @router.get("/brand-turnover")
 def inventory_brand_turnover(
+    response: Response,
     year: int | None = Query(None, ge=2000, le=2100),
     quarter: int | None = Query(None, ge=1, le=4),
     keyword: str | None = Query(None),
@@ -1328,8 +1335,69 @@ def inventory_brand_turnover(
     start_date = date(year, start_month, 1)
     end_date = date(year, end_month, monthrange(year, end_month)[1])
     period_days = (end_date - start_date).days + 1
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                inventory_batch = latest_ready_inventory_batch(ads_db)
+                sales_batch = latest_ready_sales_batch(ads_db)
+                ensure_batch_covers(sales_batch, start_date, end_date)
+                brand_turnover_reconciliation = (
+                    (sales_batch.reconciliation or {}).get("brand_turnover")
+                    or {}
+                )
+                if (
+                    not brand_turnover_reconciliation.get("matches")
+                    or brand_turnover_reconciliation.get("scope_mode")
+                    != "compact_v1"
+                ):
+                    raise AdsDataUnavailable(
+                        "Latest sales ADS batch does not contain compact brand turnover data"
+                    )
+                cache_key = _cache_key(
+                    "brand-turnover-v13",
+                    year=year,
+                    quarter=quarter,
+                    keyword=keyword,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    inventory_version=inventory_batch.data_version,
+                    sales_version=sales_batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_brand_turnover_from_ads(
+                    ads_db,
+                    inventory_batch,
+                    sales_batch,
+                    year=year,
+                    quarter=quarter,
+                    keyword=keyword,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except (InventoryAdsUnavailable, AdsDataUnavailable):
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "brand-turnover-v12",
+        "brand-turnover-v13",
         year=year,
         quarter=quarter,
         keyword=keyword,
@@ -1338,6 +1406,7 @@ def inventory_brand_turnover(
         product_types=product_types,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -1503,6 +1572,7 @@ def inventory_brand_turnover(
             row["turnover_days"] is None,
             row["turnover_days"] or 0,
             row["available_stock"],
+            row["brand"],
         ),
         reverse=True,
     )
@@ -1560,7 +1630,10 @@ def inventory_brand_turnover(
             if total_available_stock > 0 and total_net_sales_quantity > 0
             else None
         )
-        rows.sort(key=lambda row: row["available_stock"], reverse=True)
+        rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
         return {
             "label": label,
             "total_available_stock": total_available_stock,
@@ -1570,7 +1643,10 @@ def inventory_brand_turnover(
 
     product_turnover_panels = []
     if keyword:
-        product_turnover_rows.sort(key=lambda row: row["available_stock"], reverse=True)
+        product_turnover_rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
         product_turnover_panels = [
             build_product_panel("正装 + 小样", ("正装", "小样")),
             build_product_panel("正装", ("正装",)),

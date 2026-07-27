@@ -18,11 +18,14 @@ from app.models.ads import (
     AdsInventoryProductWarehouse,
     AdsInventoryTurnoverItem,
     AdsPublishBatch,
+    AdsSalesBrandTurnoverItem,
+    AdsSalesBrandTurnoverOrder,
 )
 from app.services.inventory_ads import (
     latest_ready_inventory_batch,
     load_batch_expiry_from_ads,
     load_inventory_filter_options_from_ads,
+    load_inventory_brand_turnover_from_ads,
     load_inventory_health_from_ads,
     load_inventory_overview_from_ads,
     load_inventory_turnover_from_ads,
@@ -45,6 +48,23 @@ class InventoryAdsTests(unittest.TestCase):
             published_at=datetime(2026, 7, 27, 1, 1),
         )
         self.db.add(batch)
+        sales_batch = AdsPublishBatch(
+            data_version="sales-test-ready",
+            dataset="sales_daily",
+            status="ready",
+            reconciliation={
+                "brand_turnover": {
+                    "matches": True,
+                    "scope_mode": "compact_v1",
+                }
+            },
+            source_start_date=date(2025, 1, 1),
+            source_end_date=date(2026, 7, 27),
+            created_at=datetime(2026, 7, 27, 1, 0),
+            finished_at=datetime(2026, 7, 27, 1, 1),
+            published_at=datetime(2026, 7, 27, 1, 2),
+        )
+        self.db.add(sales_batch)
         today = datetime.now(timezone(timedelta(hours=8))).date()
         self.db.add_all(
             [
@@ -238,7 +258,9 @@ class InventoryAdsTests(unittest.TestCase):
                     warehouse="仓库A",
                     stock=Decimal("200"),
                     available_stock=Decimal("180"),
+                    stock_amount=Decimal("2000"),
                     sales30=Decimal("100"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
                 AdsInventoryTurnoverItem(
                     data_version=batch.data_version,
@@ -251,7 +273,9 @@ class InventoryAdsTests(unittest.TestCase):
                     warehouse="仓库A",
                     stock=Decimal("150"),
                     available_stock=Decimal("140"),
+                    stock_amount=Decimal("1500"),
                     sales30=Decimal("0"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
                 ),
                 AdsInventoryTurnoverItem(
                     data_version=batch.data_version,
@@ -264,7 +288,81 @@ class InventoryAdsTests(unittest.TestCase):
                     warehouse="仓库B",
                     stock=Decimal("80"),
                     available_stock=Decimal("70"),
+                    stock_amount=Decimal("800"),
                     sales30=Decimal("20"),
+                    updated_at=datetime(2026, 7, 27, 3, 0),
+                ),
+                AdsSalesBrandTurnoverItem(
+                    data_version=sales_batch.data_version,
+                    item_id=1,
+                    sales_date=date(2026, 4, 10),
+                    order_number=None,
+                    warehouse="仓库A",
+                    brand="品牌A",
+                    product_type="正装",
+                    product_key="品牌A|A",
+                    product_code="A",
+                    product="商品A",
+                    quantity=Decimal("90"),
+                    paid_amount=Decimal("900"),
+                ),
+                AdsSalesBrandTurnoverItem(
+                    data_version=sales_batch.data_version,
+                    item_id=2,
+                    sales_date=date(2026, 5, 10),
+                    order_number=None,
+                    warehouse="仓库A",
+                    brand="品牌B",
+                    product_type="小样",
+                    product_key="品牌B|B",
+                    product_code="B",
+                    product="商品B",
+                    quantity=Decimal("0"),
+                    paid_amount=Decimal("0"),
+                ),
+                AdsSalesBrandTurnoverItem(
+                    data_version=sales_batch.data_version,
+                    item_id=3,
+                    sales_date=date(2026, 6, 10),
+                    order_number=None,
+                    warehouse="仓库B",
+                    brand="品牌A",
+                    product_type="正装",
+                    product_key="品牌A|C",
+                    product_code="C",
+                    product="商品C",
+                    quantity=Decimal("35"),
+                    paid_amount=Decimal("350"),
+                ),
+                AdsSalesBrandTurnoverOrder(
+                    data_version=sales_batch.data_version,
+                    item_id=1,
+                    sales_date=date(2026, 4, 10),
+                    order_number=None,
+                    warehouse="仓库A",
+                    brand="品牌A",
+                    product_type="selected",
+                    orders=1,
+                ),
+                AdsSalesBrandTurnoverOrder(
+                    data_version=sales_batch.data_version,
+                    item_id=2,
+                    sales_date=date(2026, 5, 10),
+                    order_number=None,
+                    warehouse="仓库A",
+                    brand="品牌B",
+                    product_type="selected",
+                    orders=1,
+                ),
+                AdsSalesBrandTurnoverOrder(
+                    data_version=sales_batch.data_version,
+                    item_id=3,
+                    sales_date=date(2026, 6, 10),
+                    order_number=None,
+                    warehouse="仓库B",
+                    brand="品牌A",
+                    product_type="selected",
+                    orders=1,
                 ),
             ]
         )
@@ -385,6 +483,26 @@ class InventoryAdsTests(unittest.TestCase):
             )
             self.assertEqual(response.headers["x-bi-response-source"], "ads")
             self.assertEqual(turnover["data"]["pagination"]["total"], 2)
+
+            response = Response()
+            brand_turnover = inventory_router.inventory_brand_turnover(
+                response=response,
+                year=2026,
+                quarter=2,
+                keyword=None,
+                min_stock=100,
+                warehouse=["仓库A"],
+                product_type=["正装", "小样"],
+                page=1,
+                page_size=50,
+                current_user=None,
+                db=None,
+            )
+            self.assertEqual(response.headers["x-bi-response-source"], "ads")
+            self.assertEqual(
+                brand_turnover["data"]["summary"]["brand_count"],
+                2,
+            )
         finally:
             settings.BI_QUERY_SOURCE = original_mode
             inventory_router.AdsSessionLocal = original_session
@@ -465,6 +583,37 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(no_sales["pagination"]["total"], 1)
         self.assertIsNone(no_sales["rows"][0]["turnover_days"])
         self.assertEqual(no_sales["rows"][0]["status"], "无销量")
+
+    def test_loads_brand_turnover_default_and_brand_detail(self) -> None:
+        inventory_batch = latest_ready_inventory_batch(self.db)
+        sales_batch = self.db.query(AdsPublishBatch).filter_by(
+            dataset="sales_daily",
+            status="ready",
+        ).one()
+        data = load_inventory_brand_turnover_from_ads(
+            self.db,
+            inventory_batch,
+            sales_batch,
+            year=2026,
+            quarter=2,
+            keyword="品牌A",
+            min_stock=0,
+            warehouses=("仓库A",),
+            product_types=("正装", "小样"),
+            page=1,
+            page_size=50,
+        )
+        self.assertEqual(data["summary"]["brand_count"], 1)
+        self.assertEqual(data["summary"]["available_stock"], 180)
+        self.assertEqual(data["summary"]["net_sales_quantity"], 90)
+        self.assertEqual(data["summary"]["turnover_rate"], 0.5)
+        self.assertEqual(data["summary"]["turnover_days"], 182)
+        self.assertEqual(data["rows"][0]["orders"], 1)
+        self.assertEqual(data["product_turnover_rows"][0]["product_code"], "A")
+        self.assertEqual(
+            data["product_turnover_panels"][0]["total_available_stock"],
+            180,
+        )
 
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {
