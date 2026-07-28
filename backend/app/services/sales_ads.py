@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
 from app.models.ads import AdsPublishBatch
@@ -1109,60 +1109,98 @@ def load_sales_brand_channel_from_ads(
     orders = sum(item["orders"] for item in by_day.values())
     quantity = sum(item["quantity"] for item in by_day.values())
 
-    product_filter = ""
+    product_conditions: list[str] = []
+    product_params = dict(params)
     if scope == "full_size":
-        product_filter = "AND `product_type` = '正装'"
+        product_conditions.append("`product_type` = :single_product_type")
+        product_params["single_product_type"] = "正装"
     elif scope == "sample":
-        product_filter = "AND `product_type` = '小样'"
+        product_conditions.append("`product_type` = :single_product_type")
+        product_params["single_product_type"] = "小样"
     elif scope == "selected":
-        product_filter = "AND `product_type` IN ('正装', '小样')"
-    product_facts = ads_db.execute(
-        text(
-            f"""
-            SELECT `channel`, `product_type`, `product`,
-                   `orders`, `quantity`, `paid_amount`
+        product_conditions.append("`product_type` IN :selected_product_types")
+        product_params["selected_product_types"] = ("正装", "小样")
+    if channel_types or channel_names:
+        product_conditions.append("`channel` IN :selected_channels")
+        product_params["selected_channels"] = tuple(selected_names)
+    product_filter = "".join(
+        f"\n              AND {condition}" for condition in product_conditions
+    )
+    product_query = text(
+        f"""
+            SELECT `product`,
+                   SUM(`orders`) AS `orders`,
+                   SUM(`quantity`) AS `quantity`,
+                   SUM(`paid_amount`) AS `paid_amount`
             FROM `ads_sales_daily_brand_channel_product`
             WHERE `data_version` = :data_version
               AND `sales_date` BETWEEN :start_date AND :end_date
               AND `brand` = :brand
               {product_filter}
-            """
+            GROUP BY `product`
+            ORDER BY `paid_amount` DESC
+            LIMIT 20
+        """
+    )
+    salesperson_query = text(
+        f"""
+            SELECT `channel`, `product_type`,
+                   SUM(`quantity`) AS `quantity`,
+                   SUM(`paid_amount`) AS `paid_amount`
+            FROM `ads_sales_daily_brand_channel_product`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `brand` = :brand
+              {product_filter}
+              AND `product_type` IN :salesperson_product_types
+            GROUP BY `channel`, `product_type`
+        """
+    )
+    if "selected_product_types" in product_params:
+        product_query = product_query.bindparams(
+            bindparam("selected_product_types", expanding=True)
+        )
+        salesperson_query = salesperson_query.bindparams(
+            bindparam("selected_product_types", expanding=True)
+        )
+    if "selected_channels" in product_params:
+        product_query = product_query.bindparams(
+            bindparam("selected_channels", expanding=True)
+        )
+        salesperson_query = salesperson_query.bindparams(
+            bindparam("selected_channels", expanding=True)
+        )
+    product_rows = ads_db.execute(product_query, product_params).mappings().all()
+    salesperson_params = {
+        **product_params,
+        "salesperson_product_types": ("正装", "小样"),
+    }
+    salesperson_rows_by_channel = ads_db.execute(
+        salesperson_query.bindparams(
+            bindparam("salesperson_product_types", expanding=True)
         ),
-        params,
+        salesperson_params,
     ).mappings().all()
-    product_totals: dict[str, dict] = {}
     salesperson_totals: dict[str, dict] = {}
-    for row in product_facts:
+    for row in salesperson_rows_by_channel:
         channel = str(row["channel"])
         if channel in dimensions:
-            if channel not in selected_names:
-                continue
             owner = str(dimensions[channel]["owner"])
-        elif channel_types or channel_names:
-            continue
         else:
             owner = "-"
-        product = str(row["product"])
-        item = product_totals.setdefault(
-            product, {"orders": 0, "quantity": 0, "paid_amount": 0.0}
+        sales = salesperson_totals.setdefault(
+            owner,
+            {
+                "salesperson": owner,
+                "regular_quantity": 0,
+                "regular_paid_amount": 0.0,
+                "sample_quantity": 0,
+                "sample_paid_amount": 0.0,
+            },
         )
-        item["orders"] += integer(row["orders"])
-        item["quantity"] += integer(row["quantity"])
-        item["paid_amount"] += number(row["paid_amount"])
-        if str(row["product_type"]) in {"正装", "小样"}:
-            sales = salesperson_totals.setdefault(
-                owner,
-                {
-                    "salesperson": owner,
-                    "regular_quantity": 0,
-                    "regular_paid_amount": 0.0,
-                    "sample_quantity": 0,
-                    "sample_paid_amount": 0.0,
-                },
-            )
-            prefix = "regular" if row["product_type"] == "正装" else "sample"
-            sales[f"{prefix}_quantity"] += integer(row["quantity"])
-            sales[f"{prefix}_paid_amount"] += number(row["paid_amount"])
+        prefix = "regular" if row["product_type"] == "正装" else "sample"
+        sales[f"{prefix}_quantity"] += integer(row["quantity"])
+        sales[f"{prefix}_paid_amount"] += number(row["paid_amount"])
 
     channel_data = []
     for name in sorted(selected_names):
@@ -1258,9 +1296,6 @@ def load_sales_brand_channel_from_ads(
         item["total_paid_amount"] = item["regular_paid_amount"] + item["sample_paid_amount"]
         salesperson_rows.append(item)
     salesperson_rows.sort(key=lambda row: row["total_paid_amount"], reverse=True)
-    ranked_products = sorted(
-        product_totals.items(), key=lambda item: item[1]["paid_amount"], reverse=True
-    )[:20]
     return {
         **meta,
         "brand": brand.strip(),
@@ -1299,12 +1334,22 @@ def load_sales_brand_channel_from_ads(
         "products": [
             {
                 "rank": index,
-                "product": product,
-                **values,
-                "share": values["paid_amount"] / paid_amount * 100 if paid_amount else 0,
-                "avg_unit_price": values["paid_amount"] / values["quantity"] if values["quantity"] else 0,
+                "product": str(row["product"]),
+                "orders": integer(row["orders"]),
+                "quantity": integer(row["quantity"]),
+                "paid_amount": number(row["paid_amount"]),
+                "share": (
+                    number(row["paid_amount"]) / paid_amount * 100
+                    if paid_amount
+                    else 0
+                ),
+                "avg_unit_price": (
+                    number(row["paid_amount"]) / integer(row["quantity"])
+                    if integer(row["quantity"])
+                    else 0
+                ),
             }
-            for index, (product, values) in enumerate(ranked_products, start=1)
+            for index, row in enumerate(product_rows, start=1)
         ],
         "unmatched_channels": unmatched,
         "filter_options": {
