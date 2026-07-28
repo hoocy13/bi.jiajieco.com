@@ -5,14 +5,33 @@ from decimal import Decimal
 from threading import Lock
 from time import monotonic
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.inventory_ads import (
+    InventoryAdsUnavailable,
+    latest_ready_inventory_batch,
+    load_batch_expiry_from_ads,
+    load_brand_monthly_arrivals_from_ads,
+    load_inventory_filter_options_from_ads,
+    load_inventory_brand_turnover_from_ads,
+    load_inventory_health_from_ads,
+    load_inventory_overview_from_ads,
+    load_slow_moving_inventory_from_ads,
+    load_inventory_turnover_from_ads,
+)
+from app.services.sales_ads import (
+    AdsDataUnavailable,
+    ensure_batch_covers,
+    latest_ready_sales_batch,
+)
 
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -187,10 +206,37 @@ def _date_text(value: object) -> str | None:
 
 @router.get("/warehouses")
 def inventory_warehouses(
+    response: Response,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
-    cache_key = _cache_key("warehouses-v5")
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "warehouses-v6",
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_filter_options_from_ads(ads_db, batch)
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key("warehouses-v6", query_mode="ods")
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -366,6 +412,7 @@ def inventory_product_detail(
 
 @router.get("/overview")
 def inventory_overview(
+    response: Response,
     warehouse: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
@@ -373,7 +420,45 @@ def inventory_overview(
 ) -> dict:
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
-    cache_key = _cache_key("overview-v4", warehouses=warehouses, product_types=product_types)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "overview-v5",
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_overview_from_ads(
+                    ads_db,
+                    batch,
+                    warehouses,
+                    product_types,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key(
+        "overview-v5",
+        warehouses=warehouses,
+        product_types=product_types,
+        query_mode="ods",
+    )
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -526,6 +611,7 @@ def inventory_overview(
 
 @router.get("/health")
 def inventory_health(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     warehouse: list[str] | None = Query(None),
@@ -541,8 +627,51 @@ def inventory_health(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "health-v5",
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    issue_type=issue_type,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_health_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    issue_type=issue_type,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "health-v4",
+        "health-v5",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
@@ -550,6 +679,7 @@ def inventory_health(
         issue_type=issue_type,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -647,7 +777,11 @@ def inventory_health(
             ORDER BY
               FIELD(issue_type, 'negative', 'out_of_stock', 'shortage', 'missing_barcode', 'no_sales', 'overstock'),
               stock_amount DESC,
-              available_stock DESC
+              available_stock DESC,
+              product_code,
+              brand,
+              product_type,
+              warehouse
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -697,6 +831,7 @@ def inventory_health(
 
 @router.get("/batch-expiry")
 def batch_expiry_analysis(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     warehouse: list[str] | None = Query(None),
@@ -714,8 +849,53 @@ def batch_expiry_analysis(
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
     long_page, _, long_offset = _pagination(long_page, page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "batch-expiry-v7",
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    expiry_range=expiry_range,
+                    page=page,
+                    long_page=long_page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_batch_expiry_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    expiry_range=expiry_range,
+                    page=page,
+                    long_page=long_page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "batch-expiry-v6",
+        "batch-expiry-v7",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
@@ -724,6 +904,7 @@ def batch_expiry_analysis(
         page=page,
         long_page=long_page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -816,7 +997,10 @@ def batch_expiry_analysis(
             ORDER BY
               CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
               expiry_date,
-              available_stock DESC
+              available_stock DESC,
+              product_code,
+              warehouse,
+              batch
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -846,7 +1030,12 @@ def batch_expiry_analysis(
               `货品名称`,
               COALESCE(NULLIF(`品牌`, ''), '未归类'),
               COALESCE(NULLIF(TRIM(`货品分类`), ''), '未归类')
-            ORDER BY available_stock DESC, nearest_expiry_date
+            ORDER BY
+              available_stock DESC,
+              nearest_expiry_date,
+              product_code,
+              warehouse,
+              brand
             LIMIT :limit OFFSET :long_offset
             """
         ),
@@ -944,6 +1133,7 @@ def batch_expiry_analysis(
 
 @router.get("/turnover")
 def inventory_turnover(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     min_stock: int = Query(100, ge=0),
@@ -959,7 +1149,60 @@ def inventory_turnover(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
-    cache_key = _cache_key("turnover-v9", keyword=keyword, barcode=barcode, min_stock=min_stock, warehouses=warehouses, product_types=product_types, page=page, page_size=page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                cache_key = _cache_key(
+                    "turnover-v10",
+                    keyword=keyword,
+                    barcode=barcode,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_turnover_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key(
+        "turnover-v10",
+        keyword=keyword,
+        barcode=barcode,
+        min_stock=min_stock,
+        warehouses=warehouses,
+        product_types=product_types,
+        page=page,
+        page_size=page_size,
+        query_mode="ods",
+    )
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -1020,7 +1263,14 @@ def inventory_turnover(
               {product_type_sql}
             GROUP BY `货品编号`, `货品名称`, COALESCE(NULLIF(`品牌`, ''), '未归类'), COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类'), COALESCE(NULLIF(`仓库`, ''), '未归类')
             HAVING SUM(COALESCE(`库存数量`, 0)) >= :min_stock
-            ORDER BY COALESCE(turnover_days, 999999) DESC, stock DESC
+            ORDER BY
+              COALESCE(turnover_days, 999999) DESC,
+              stock DESC,
+              product_code,
+              product,
+              brand,
+              product_type,
+              warehouse
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -1058,6 +1308,7 @@ def inventory_turnover(
 
 @router.get("/brand-turnover")
 def inventory_brand_turnover(
+    response: Response,
     year: int | None = Query(None, ge=2000, le=2100),
     quarter: int | None = Query(None, ge=1, le=4),
     keyword: str | None = Query(None),
@@ -1086,8 +1337,69 @@ def inventory_brand_turnover(
     start_date = date(year, start_month, 1)
     end_date = date(year, end_month, monthrange(year, end_month)[1])
     period_days = (end_date - start_date).days + 1
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                inventory_batch = latest_ready_inventory_batch(ads_db)
+                sales_batch = latest_ready_sales_batch(ads_db)
+                ensure_batch_covers(sales_batch, start_date, end_date)
+                brand_turnover_reconciliation = (
+                    (sales_batch.reconciliation or {}).get("brand_turnover")
+                    or {}
+                )
+                if (
+                    not brand_turnover_reconciliation.get("matches")
+                    or brand_turnover_reconciliation.get("scope_mode")
+                    != "compact_v1"
+                ):
+                    raise AdsDataUnavailable(
+                        "Latest sales ADS batch does not contain compact brand turnover data"
+                    )
+                cache_key = _cache_key(
+                    "brand-turnover-v13",
+                    year=year,
+                    quarter=quarter,
+                    keyword=keyword,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    inventory_version=inventory_batch.data_version,
+                    sales_version=sales_batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_inventory_brand_turnover_from_ads(
+                    ads_db,
+                    inventory_batch,
+                    sales_batch,
+                    year=year,
+                    quarter=quarter,
+                    keyword=keyword,
+                    min_stock=min_stock,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except (InventoryAdsUnavailable, AdsDataUnavailable):
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "brand-turnover-v12",
+        "brand-turnover-v13",
         year=year,
         quarter=quarter,
         keyword=keyword,
@@ -1096,6 +1408,7 @@ def inventory_brand_turnover(
         product_types=product_types,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -1261,6 +1574,7 @@ def inventory_brand_turnover(
             row["turnover_days"] is None,
             row["turnover_days"] or 0,
             row["available_stock"],
+            row["brand"],
         ),
         reverse=True,
     )
@@ -1318,7 +1632,10 @@ def inventory_brand_turnover(
             if total_available_stock > 0 and total_net_sales_quantity > 0
             else None
         )
-        rows.sort(key=lambda row: row["available_stock"], reverse=True)
+        rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
         return {
             "label": label,
             "total_available_stock": total_available_stock,
@@ -1328,7 +1645,10 @@ def inventory_brand_turnover(
 
     product_turnover_panels = []
     if keyword:
-        product_turnover_rows.sort(key=lambda row: row["available_stock"], reverse=True)
+        product_turnover_rows.sort(
+            key=lambda row: (row["available_stock"], row["product_key"]),
+            reverse=True,
+        )
         product_turnover_panels = [
             build_product_panel("正装 + 小样", ("正装", "小样")),
             build_product_panel("正装", ("正装",)),
@@ -1366,6 +1686,7 @@ def inventory_brand_turnover(
 
 @router.get("/slow-moving")
 def slow_moving_inventory(
+    response: Response,
     keyword: str | None = Query(None),
     barcode: str | None = Query(None),
     warehouse: list[str] | None = Query(None),
@@ -1380,7 +1701,70 @@ def slow_moving_inventory(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
-    cache_key = _cache_key("slow-moving-v7", keyword=keyword, barcode=barcode, warehouses=warehouses, product_types=product_types, page=page, page_size=page_size)
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                turnover_reconciliation = (batch.reconciliation or {}).get(
+                    "product_turnover",
+                    {},
+                )
+                if (
+                    not turnover_reconciliation.get("matches")
+                    or not turnover_reconciliation.get("field_matches", {}).get(
+                        "sales90"
+                    )
+                ):
+                    raise InventoryAdsUnavailable(
+                        "Inventory ADS does not contain reconciled 90-day sales"
+                    )
+                cache_key = _cache_key(
+                    "slow-moving-v8",
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_slow_moving_inventory_from_ads(
+                    ads_db,
+                    batch,
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
+    cache_key = _cache_key(
+        "slow-moving-v8",
+        keyword=keyword,
+        barcode=barcode,
+        warehouses=warehouses,
+        product_types=product_types,
+        page=page,
+        page_size=page_size,
+        query_mode="ods",
+    )
     cached = _get_cache(cache_key)
     if cached is not None:
         return ok(cached)
@@ -1434,7 +1818,14 @@ def slow_moving_inventory(
               {warehouse_sql}
               {product_type_sql}
             GROUP BY `货品编号`, `货品名称`, COALESCE(NULLIF(`品牌`, ''), '未归类'), COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类')
-            ORDER BY sales90 ASC, sales30 ASC, stock_amount DESC
+            ORDER BY
+              sales90 ASC,
+              sales30 ASC,
+              stock_amount DESC,
+              product_code,
+              product,
+              brand,
+              product_type
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -1470,6 +1861,7 @@ def slow_moving_inventory(
 
 @router.get("/brand-monthly-arrivals")
 def brand_monthly_arrivals(
+    response: Response,
     start_date: date | None = Query(None),
     end_date: date | None = Query(None),
     brand: list[str] | None = Query(None),
@@ -1494,9 +1886,62 @@ def brand_monthly_arrivals(
     selected_end = end_date or date(today.year, 12, 31)
     if selected_end < selected_start:
         selected_start, selected_end = selected_end, selected_start
+    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_inventory_batch(ads_db)
+                arrival_reconciliation = (batch.reconciliation or {}).get(
+                    "brand_monthly_arrivals",
+                    {},
+                )
+                if not arrival_reconciliation.get("matches"):
+                    raise InventoryAdsUnavailable(
+                        "Inventory ADS does not contain reconciled arrival details"
+                    )
+                cache_key = _cache_key(
+                    "brand-monthly-arrivals-v4",
+                    start_date=selected_start.isoformat(),
+                    end_date=selected_end.isoformat(),
+                    brands=brands,
+                    product_types=product_types,
+                    warehouses=warehouses,
+                    detail_product_type=detail_product_type,
+                    page=page,
+                    page_size=page_size,
+                    query_mode="ads",
+                    data_version=batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Response-Source"] = "ads"
+                    return ok(cached)
+                data = load_brand_monthly_arrivals_from_ads(
+                    ads_db,
+                    batch,
+                    selected_start=selected_start,
+                    selected_end=selected_end,
+                    brands=brands,
+                    product_types=product_types,
+                    warehouses=warehouses,
+                    detail_product_type=detail_product_type,
+                    page=page,
+                    page_size=page_size,
+                )
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, data)
+        except InventoryAdsUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Inventory ADS database is temporarily unavailable",
+            ) from exc
+
+    response.headers["X-BI-Response-Source"] = "ods"
     end_exclusive = selected_end + timedelta(days=1)
     cache_key = _cache_key(
-        "brand-monthly-arrivals-v3",
+        "brand-monthly-arrivals-v4",
         start_date=selected_start.isoformat(),
         end_date=selected_end.isoformat(),
         brands=brands,
@@ -1505,6 +1950,7 @@ def brand_monthly_arrivals(
         detail_product_type=detail_product_type,
         page=page,
         page_size=page_size,
+        query_mode="ods",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -1641,7 +2087,13 @@ def brand_monthly_arrivals(
             WHERE {common_filter}
             GROUP BY d.`货品编号`, d.`货品名称`, d.`品牌`, COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')
             HAVING net_quantity <> 0 OR net_cost_amount <> 0
-            ORDER BY net_quantity DESC, net_cost_amount DESC
+            ORDER BY
+              net_quantity DESC,
+              net_cost_amount DESC,
+              product_code,
+              product,
+              brand,
+              product_type
             LIMIT 15
             """
         ),
@@ -1664,7 +2116,7 @@ def brand_monthly_arrivals(
             INNER JOIN `入库查询` h ON h.`docId` = d.`docId`
             WHERE {common_filter}
             GROUP BY COALESCE(NULLIF(d.`品牌`, ''), '未归类')
-            ORDER BY net_cost_amount DESC, net_quantity DESC
+            ORDER BY net_cost_amount DESC, net_quantity DESC, brand
             """
         ),
         params,

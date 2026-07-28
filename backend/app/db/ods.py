@@ -2,23 +2,31 @@ from collections.abc import Generator
 
 from fastapi import HTTPException, status
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
+from app.core.performance import register_engine_performance
 
 
-if settings.ODS_DATABASE_URL:
-    ods_engine = create_engine(
-        settings.ODS_DATABASE_URL,
+def create_ods_engine(database_url: str, read_timeout: int = 30) -> Engine:
+    engine = create_engine(
+        database_url,
         connect_args={
             "charset": "utf8mb4",
             "connect_timeout": 10,
-            "read_timeout": 30,
-            "write_timeout": 30,
+            "read_timeout": read_timeout,
+            "write_timeout": read_timeout,
         },
         pool_pre_ping=True,
         pool_recycle=1800,
     )
+    register_engine_performance(engine, "ods")
+    return engine
+
+
+if settings.ODS_DATABASE_URL:
+    ods_engine = create_ods_engine(settings.ODS_DATABASE_URL)
     OdsSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ods_engine)
 else:
     ods_engine = None

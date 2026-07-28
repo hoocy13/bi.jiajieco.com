@@ -15,6 +15,16 @@ export const useRequestStatusStore = defineStore('requestStatus', {
     lastMethod: '',
     lastStatus: '',
     lastFinishedAt: '',
+    lastServerDurationMs: 0,
+    lastDbDurationMs: 0,
+    lastDbQueryCount: 0,
+    lastOdsDurationMs: 0,
+    lastOdsQueryCount: 0,
+    lastAdsDurationMs: 0,
+    lastAdsQueryCount: 0,
+    lastQueryMode: '',
+    lastResponseSource: '',
+    lastDualStatus: '',
     history: [],
   }),
   getters: {
@@ -35,9 +45,9 @@ export const useRequestStatusStore = defineStore('requestStatus', {
       }
       this.activeCount = Object.keys(this.activeRequests).length
     },
-    finish(requestId, status = 'success') {
+    finish(requestId, status = 'success', diagnostics = {}) {
       const request = this.activeRequests[requestId]
-      if (!request) return
+      if (!request) return undefined
       const durationMs = Math.max(0, performance.now() - request.startAt)
       delete this.activeRequests[requestId]
       this.activeCount = Object.keys(this.activeRequests).length
@@ -46,14 +56,27 @@ export const useRequestStatusStore = defineStore('requestStatus', {
       this.lastMethod = request.method
       this.lastStatus = status
       this.lastFinishedAt = new Date().toISOString()
-      this.history.unshift({
+      this.lastServerDurationMs = diagnostics.serverDurationMs || 0
+      this.lastDbDurationMs = diagnostics.dbDurationMs || 0
+      this.lastDbQueryCount = diagnostics.dbQueryCount || 0
+      this.lastOdsDurationMs = diagnostics.odsDurationMs || 0
+      this.lastOdsQueryCount = diagnostics.odsQueryCount || 0
+      this.lastAdsDurationMs = diagnostics.adsDurationMs || 0
+      this.lastAdsQueryCount = diagnostics.adsQueryCount || 0
+      this.lastQueryMode = diagnostics.queryMode || ''
+      this.lastResponseSource = diagnostics.responseSource || ''
+      this.lastDualStatus = diagnostics.dualStatus || ''
+      const record = {
         url: request.url,
         method: request.method,
         status,
         durationMs,
+        ...diagnostics,
         finishedAt: this.lastFinishedAt,
-      })
+      }
+      this.history.unshift(record)
       this.history = this.history.slice(0, 20)
+      return record
     },
   },
 })

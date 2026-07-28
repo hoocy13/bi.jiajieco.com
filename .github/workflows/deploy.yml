@@ -2,12 +2,27 @@ name: Deploy BI
 
 on:
   workflow_dispatch:
+    inputs:
+      rebuild_sales_ads:
+        description: Rebuild sales ADS before switching the application release
+        required: false
+        type: boolean
+        default: false
+      rebuild_inventory_ads:
+        description: Rebuild inventory ADS before switching the application release
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: bi-production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     name: Deploy to Tencent Cloud
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
@@ -38,24 +53,60 @@ jobs:
 
       - name: Upload archive
         env:
+          ADS_BUILD_DATABASE_URL: ${{ secrets.ADS_BUILD_DATABASE_URL }}
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
         run: |
+          if [ -z "$ADS_BUILD_DATABASE_URL" ]; then
+            echo "Missing ADS_BUILD_DATABASE_URL repository secret"
+            exit 1
+          fi
+          umask 077
+          printf '%s' "$ADS_BUILD_DATABASE_URL" > "$RUNNER_TEMP/ads-build-url"
           scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/bi-deploy.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-deploy.tar.gz"
+          scp -i ~/.ssh/deploy_key "$RUNNER_TEMP/ads-build-url" "$DEPLOY_USER@$DEPLOY_HOST:/root/bi-ads-build-url"
 
       - name: Deploy on server
         env:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+          REBUILD_SALES_ADS: ${{ inputs.rebuild_sales_ads }}
+          REBUILD_INVENTORY_ADS: ${{ inputs.rebuild_inventory_ads }}
         run: |
-          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 \
+            -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "REBUILD_SALES_ADS='$REBUILD_SALES_ADS' REBUILD_INVENTORY_ADS='$REBUILD_INVENTORY_ADS' bash -s" <<'REMOTE'
           set -e
 
           APP_DIR="/www/wwwroot/bi.jiajieco.com"
           ARCHIVE="/root/bi-deploy.tar.gz"
+          ADS_BUILD_SECRET_FILE="/root/bi-ads-build-url"
           TS=$(date +%Y%m%d%H%M%S)
           RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
           BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
+          FAILED="/www/wwwroot/bi.jiajieco.com.failed.$TS"
+          CANDIDATE_IMAGE="jjc-bi-backend-candidate:$TS"
+
+          rollback() {
+            exit_code=$?
+            rm -f "$ADS_BUILD_SECRET_FILE"
+            docker image rm "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
+            if [ "$exit_code" -ne 0 ] && [ -d "$BACKUP" ]; then
+              echo "Deploy failed; restoring previous release."
+              if [ -d "$APP_DIR" ]; then
+                cd "$APP_DIR"
+                docker compose down || true
+                cd /www/wwwroot
+                mv "$APP_DIR" "$FAILED"
+              fi
+              mv "$BACKUP" "$APP_DIR"
+              cd "$APP_DIR"
+              docker compose up -d --build || true
+              echo "Rollback finished."
+            fi
+            exit "$exit_code"
+          }
+          trap rollback ERR
 
           mkdir -p "$RELEASE"
           tar -xzf "$ARCHIVE" -C "$RELEASE"
@@ -63,6 +114,67 @@ jobs:
           if [ -f "$APP_DIR/backend/.env" ]; then
             mkdir -p "$RELEASE/backend"
             cp "$APP_DIR/backend/.env" "$RELEASE/backend/.env"
+          fi
+
+          ENV_FILE="$RELEASE/backend/.env"
+          if [ ! -f "$ENV_FILE" ]; then
+            echo "Missing production backend/.env"
+            exit 1
+          fi
+          if [ ! -s "$ADS_BUILD_SECRET_FILE" ]; then
+            echo "Missing uploaded ADS build credential"
+            exit 1
+          fi
+
+          ods_line=$(grep '^ODS_DATABASE_URL=' "$ENV_FILE" | tail -n 1 || true)
+          if [ -z "$ods_line" ]; then
+            echo "Missing ODS_DATABASE_URL in production backend/.env"
+            exit 1
+          fi
+          ods_value=${ods_line#*=}
+          ads_value=$(printf '%s' "$ods_value" | sed 's#/ods?#/ads?#')
+          if [ "$ads_value" = "$ods_value" ]; then
+            echo "Could not derive ADS_DATABASE_URL from ODS_DATABASE_URL"
+            exit 1
+          fi
+          ads_build_value=$(cat "$ADS_BUILD_SECRET_FILE")
+          rm -f "$ADS_BUILD_SECRET_FILE"
+
+          sed -i '/^ADS_DATABASE_URL=/d; /^ADS_BUILD_DATABASE_URL=/d; /^BI_QUERY_SOURCE=/d' "$ENV_FILE"
+          {
+            printf '\nADS_DATABASE_URL=%s\n' "$ads_value"
+            printf 'ADS_BUILD_DATABASE_URL=%s\n' "$ads_build_value"
+            printf 'BI_QUERY_SOURCE=ads\n'
+          } >> "$ENV_FILE"
+          chmod 600 "$ENV_FILE"
+
+          run_ads_build() {
+            label=$1
+            shift
+            if "$@" < /dev/null; then
+              return 0
+            fi
+            echo "$label failed."
+            return 1
+          }
+
+          if [ "$REBUILD_SALES_ADS" = "true" ] || [ "$REBUILD_INVENTORY_ADS" = "true" ]; then
+            echo "Building candidate backend image for ADS jobs."
+            docker build -t "$CANDIDATE_IMAGE" "$RELEASE/backend"
+          fi
+          if [ "$REBUILD_SALES_ADS" = "true" ]; then
+            run_ads_build "Sales ADS build" \
+              docker run --rm --env-file "$ENV_FILE" "$CANDIDATE_IMAGE" \
+                python -m app.jobs.build_sales_ads
+          else
+            echo "Skipping sales ADS rebuild."
+          fi
+          if [ "$REBUILD_INVENTORY_ADS" = "true" ]; then
+            run_ads_build "Inventory ADS build" \
+              docker run --rm --env-file "$ENV_FILE" "$CANDIDATE_IMAGE" \
+                python -m app.jobs.build_inventory_ads
+          else
+            echo "Skipping inventory ADS rebuild."
           fi
 
           if [ -d "$APP_DIR" ]; then
@@ -76,13 +188,15 @@ jobs:
           docker compose ps
 
           for i in $(seq 1 15); do
-            if curl -fsSI http://127.0.0.1:18080 >/dev/null; then
-              echo "Frontend health check passed."
+            if curl -fsSI http://127.0.0.1:18080 >/dev/null \
+              && curl -fsS http://127.0.0.1:18080/api/v1/openapi.json >/dev/null; then
+              echo "Frontend and API health checks passed."
               break
             fi
 
             if [ "$i" -eq 15 ]; then
-              echo "Frontend health check failed after retries."
+              echo "Frontend or API health check failed after retries."
+              docker compose logs --tail=80 backend
               docker compose logs --tail=80 frontend
               exit 1
             fi
@@ -90,6 +204,76 @@ jobs:
             sleep 2
           done
 
+          docker compose exec -T backend python - <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+
+          from app.core.security import create_access_token
+          from app.db.session import SessionLocal
+          from app.models.user import User
+
+          with SessionLocal() as db:
+              user = db.query(User).filter(User.is_active.is_(True)).first()
+          if user is None:
+              raise SystemExit("No active user available for authenticated health check")
+
+          token = create_access_token(subject=user.username)
+
+          def check_ads_endpoint(path: str, label: str) -> None:
+              request = urllib.request.Request(
+                  f"http://127.0.0.1:8000{path}",
+                  headers={"Authorization": f"Bearer {token}"},
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  query_mode = response.headers.get("X-BI-Query-Mode")
+                  response_source = response.headers.get("X-BI-Response-Source")
+                  server_timing = response.headers.get("Server-Timing")
+                  payload = json.load(response)
+
+              if query_mode != "ads" or response_source != "ads":
+                  raise SystemExit(
+                      f"{label} ADS health check failed: "
+                      f"mode={query_mode} source={response_source}"
+                  )
+              print(
+                  f"{label} ADS health check passed: "
+                  f"mode=ads source=ads server_timing={server_timing or 'unknown'}"
+              )
+              return payload
+
+          check_ads_endpoint("/api/v1/sales/overview?range=last_30", "sales_overview")
+          check_ads_endpoint("/api/v1/sales/product-rank?range=last_30&limit=30", "sales_product_rank")
+          brand_payload = check_ads_endpoint("/api/v1/sales/brand-analysis?range=this_year&limit=30", "sales_brand_analysis")
+          channel_payload = check_ads_endpoint("/api/v1/sales/channel-analysis?range=this_year", "sales_channel_analysis")
+          check_ads_endpoint("/api/v1/sales/detail?range=last_30&page=1&page_size=20", "sales_detail")
+          brand = brand_payload["data"]["rows"][0]["brand"]
+          channel = channel_payload["data"]["rows"][0]["channel_name"]
+          check_ads_endpoint(
+              "/api/v1/sales/brand-channel-analysis?"
+              + urllib.parse.urlencode({"brand": brand, "range": "last_30"}),
+              "sales_brand_channel_analysis",
+          )
+          check_ads_endpoint(
+              "/api/v1/sales/channel-customer-analysis?"
+              + urllib.parse.urlencode({"channel_name": channel, "range": "this_year"}),
+              "sales_channel_customer_analysis",
+          )
+          check_ads_endpoint("/api/v1/dashboard/overview", "dashboard_overview")
+          check_ads_endpoint("/api/v1/inventory/warehouses", "inventory_warehouses")
+          check_ads_endpoint("/api/v1/inventory/overview", "inventory_overview")
+          check_ads_endpoint("/api/v1/inventory/health", "inventory_health")
+          check_ads_endpoint("/api/v1/inventory/batch-expiry", "inventory_batch_expiry")
+          check_ads_endpoint("/api/v1/inventory/turnover", "inventory_product_turnover")
+          check_ads_endpoint("/api/v1/inventory/brand-turnover", "inventory_brand_turnover")
+          check_ads_endpoint("/api/v1/inventory/slow-moving", "inventory_slow_moving")
+          check_ads_endpoint("/api/v1/inventory/brand-monthly-arrivals", "inventory_brand_monthly_arrivals")
+          PY
+
+          install -m 0644 ops/bi-sales-ads.cron /etc/cron.d/bi-sales-ads
+          docker image rm "$CANDIDATE_IMAGE" >/dev/null 2>&1 || true
+
+          trap - ERR
           echo "Deploy finished."
           echo "Backup: $BACKUP"
           REMOTE
