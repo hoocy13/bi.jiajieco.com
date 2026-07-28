@@ -2,4 +2,4 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 CRON_TZ=Asia/Shanghai
 
-30 6 * * * root /usr/bin/flock -n /var/lock/bi-sales-ads.lock /bin/bash /www/wwwroot/bi.jiajieco.com/ops/refresh_sales_ads.sh >> /var/log/bi-sales-ads.log 2>&1
+30 11 * * * root /usr/bin/flock -n /var/lock/bi-sales-ads.lock /bin/bash /www/wwwroot/bi.jiajieco.com/ops/refresh_sales_ads.sh >> /var/log/bi-sales-ads.log 2>&1
