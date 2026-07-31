@@ -793,3 +793,534 @@ updatetime
 5. API Key 在后台管理库中加密保存；查询接口只返回掩码，不返回完整密钥。
 6. AI库存决策缓存时间为5分钟，“重新生成决策”会绕过缓存并重新调用模型。
 7. AI决策证据包含销售与库存两个维度：销售侧来自 `销售单查询`，按 `下单时间` 取近30天并过滤取消订单；库存侧来自 `分仓库查询` 和 `批次货品库存查询`。
+
+## 企业知识与数据问答 MVP V1
+
+### 项目定位
+
+本版本由一名业务负责人和一名开发人员共同完成，目标是在现有 BI 中建设一个
+可实际使用、可用于学习企业级 RAG 工程链路的最小版本。
+
+MVP 不是通用聊天机器人，也不把订单、库存等实时事实数据向量化。系统统一处理：
+
+1. 业务知识问题：指标定义、数据口径、页面说明和分析方法。
+2. 经营指标问题：调用现有销售、库存和到货接口获得可信结果。
+3. 探索式数据问题：复用现有 Text-to-SQL，通过只读 MySQL 查询回答。
+
+回答中的业务结论必须能够追溯到知识来源、BI 指标或实际执行的 SQL。模型只负责
+理解问题、选择工具和组织表达，不作为销售、库存、金额等事实数字的来源。
+
+### V1 成功标准
+
+V1 完成时必须满足：
+
+1. 用户可以在一个新的“智能分析助手”页面连续提问并看到流式回答。
+2. 系统能够正确处理知识、指标、Text-to-SQL 三类问题。
+3. 知识回答展示文档标题、章节和版本；数据回答展示统计时间和数据更新时间。
+4. Text-to-SQL 继续执行现有只读校验、表限制、超时和最大返回行数限制。
+5. 会话、消息、运行状态和引用在服务重启后仍可查询。
+6. 文档修改后可以重新入库，新版本验证成功后再替换旧版本。
+7. 至少准备 50 个真实问题作为验收集，其中知识、指标、SQL 问题均有覆盖。
+8. 权限过滤和 SQL 安全测试必须全部通过，不允许因 RAG 绕过现有数据权限。
+9. 当前销售、库存、到货页面和接口不得因本功能发生口径或性能回退。
+
+### V1 技术选型
+
+```text
+前端：Vue 3 + Element Plus
+API：FastAPI
+RAG 组件：LangChain
+工作流：LangGraph
+业务事实数据：现有 MySQL ODS/ADS，只读
+AI 控制面数据：PostgreSQL
+向量检索：Qdrant
+缓存与任务队列：Redis
+异步任务：Celery
+流式返回：SSE
+模型：现有 OpenAI Compatible 配置
+部署：Docker Compose
+```
+
+存储边界：
+
+```text
+MySQL
+  - ODS 业务事实
+  - ADS 在线分析结果
+  - 不迁移到 PostgreSQL
+
+PostgreSQL
+  - 知识库、文档和版本
+  - 入库任务
+  - 会话、消息、Run 和引用
+  - 用户反馈和审计
+  - LangGraph Checkpoint
+
+Qdrant
+  - 文档 Chunk
+  - 向量和检索 Payload
+
+Redis
+  - Celery Broker
+  - 短期缓存
+  - 限流和分布式锁
+```
+
+首版 Chat Model、Embedding Model 和后续可选的 Reranker 使用外部模型接口，不在
+当前生产服务器本地运行模型。
+
+### 服务器资源约束
+
+当前服务器约 15 GB 内存，已有 MySQL、DataEase、DolphinScheduler、APISIX 和 BI
+容器。V1 只部署核心组件，不在同一服务器部署本地大模型、完整 Langfuse、
+Prometheus、Grafana、MinIO 或 OCR 服务。
+
+初始资源上限建议：
+
+```text
+PostgreSQL：512 MB 至 1 GB
+Qdrant：1 GB 至 1.5 GB
+Redis：256 MB 至 384 MB
+Celery Worker：512 MB 至 768 MB，并发数为 1
+RAG API 增量：不超过 512 MB
+```
+
+知识批量入库和离线评测安排在业务低峰期。部署前必须检查 CPU 核数、磁盘剩余空间、
+Docker 数据目录和最近 7 天内存峰值。PostgreSQL、Redis 和 Qdrant 只允许通过
+Docker 内部网络访问，不向公网暴露端口。
+
+### V1 功能范围
+
+#### 包含
+
+1. Git 管理的 Markdown 和 YAML 知识。
+2. 文档哈希去重、解析、切分、Embedding、索引和版本切换。
+3. Qdrant Dense 向量检索和元数据过滤。
+4. 基于用户角色和知识库的检索权限过滤。
+5. LangGraph 问题路由和工具调用。
+6. 知识检索、现有 BI 指标接口、Text-to-SQL 三类工具。
+7. FastAPI SSE 流式输出。
+8. 会话历史、引用来源、SQL 和表格结果展示。
+9. PostgreSQL 中的运行记录、错误信息和用户反馈。
+10. 基于 pytest 的固定问题回归测试。
+11. 结构化日志，记录 Run、节点、检索数量、模型耗时、Token 和错误类型。
+
+#### 不包含
+
+1. PDF、DOCX、图片、扫描件和 OCR 入库。
+2. 面向业务人员的完整知识库上传和审批后台。
+3. 本地 LLM、Embedding 或 Reranker 模型。
+4. Graph RAG、知识图谱和多 Agent 协作。
+5. 自动执行补货、调价、删除或修改业务数据。
+6. 自动采集互联网内容。
+7. Kubernetes、微服务拆分和多节点 Qdrant。
+8. 完整 Langfuse、Prometheus、Grafana 监控平台。
+9. 将订单、库存明细等高频变化的业务事实写入向量数据库。
+
+以上能力根据真实使用反馈进入 V1.1 或 V2，不得阻塞 V1 上线。
+
+### 首版知识范围
+
+项目新增以下目录：
+
+```text
+docs/knowledge/
+  metrics/          指标定义
+  tables/           表和字段语义
+  pages/            BI 页面说明
+  sql-examples/     已审核 SQL 示例
+  playbooks/        经营分析流程
+  faq/              标准问答
+  evaluation/       黄金问题与期望结果
+```
+
+首版知识目标：
+
+```text
+核心指标定义：20 条
+关键数据表说明：15 条
+已验证 SQL 示例：20 条
+BI 页面说明：15 条
+经营分析手册：10 条
+标准 FAQ：20 条
+黄金验收问题：50 条
+```
+
+可以从现有 `AGENT.md`、`AGENTS.md`、`docs/`、Text-to-SQL 元数据、后端测试和
+前端页面中生成知识草稿，但必须由业务负责人审核后才能进入 active 知识版本。
+不得直接把整个源码目录切块写入 Qdrant。
+
+#### 指标知识模板
+
+```yaml
+id: inventory_turnover_days
+name: 品牌估算周转天数
+definition: 使用季度净销售数量和当前可用库存估算库存可维持天数
+formula: 季度天数 × 当前可用库存 / 季度净销售数量
+data_source:
+  - ads 库品牌周转数据
+dimensions:
+  - 品牌
+  - 货品分类
+  - 仓库
+default_filters:
+  - 货品分类为正装、小样
+  - 当前库存不少于100件
+caveats:
+  - 当前没有历史平均库存，因此不是标准平均库存周转率
+  - 周转天数越长表示周转越慢
+owner: 业务负责人
+status: active
+updated_at: YYYY-MM-DD
+```
+
+#### 数据表知识模板
+
+```yaml
+id: ods_sales_order_detail
+table: ods.销售单明细账
+purpose: 商品、品牌和渠道维度的销售明细分析
+date_field: 下单时间
+business_keys:
+  order: 订单编号
+  sku: 货品编号
+rules:
+  - 负数量和负金额参与净额计算
+  - 订单数使用订单编号去重
+  - 页面日期筛选使用下单时间
+forbidden_usage:
+  - 不使用统计时间代替下单时间
+owner: 业务负责人
+status: active
+updated_at: YYYY-MM-DD
+```
+
+### LangGraph V1 工作流
+
+V1 使用单个状态图，不拆成多个 Agent：
+
+```text
+接收问题
+  → 校验用户和权限
+  → 规范化问题与会话上下文
+  → 识别 knowledge / metric / sql / mixed
+  → 按路由执行知识检索或业务工具
+  → 检查证据和执行结果
+  → 生成带引用的回答
+  → 保存消息、Run、引用和 Trace
+```
+
+节点建议：
+
+```text
+authorize
+normalize_question
+route_intent
+retrieve_knowledge
+call_metric_tool
+generate_sql
+validate_sql
+execute_sql
+check_evidence
+compose_answer
+persist_result
+```
+
+`mixed` 问题允许同时执行知识检索和一个数据工具，但 V1 不允许模型无上限循环调用
+工具。单次 Run 的工具调用次数、模型调用次数和总超时必须配置上限。
+
+### 检索与引用约定
+
+1. V1 先实现 Dense 检索，候选 Top K 和最终上下文数量必须可配置。
+2. 检索前必须加入知识库、状态和角色过滤。
+3. Chunk Payload 至少包含：
+
+```text
+knowledge_base_id
+document_id
+document_version
+chunk_id
+title
+section_path
+source_path
+allowed_roles
+content_hash
+updated_at
+```
+
+4. 回答引用至少返回文档标题、章节、版本和源文件路径。
+5. 检索不到足够证据时明确说明，不使用模型常识补写内部业务口径。
+6. V1.1 再根据 50 个黄金问题的检索结果决定是否增加 Sparse 检索和 Reranker，
+   不为技术栈展示而提前增加复杂度。
+
+### API 范围
+
+新增接口统一使用 `/api/v1/rag`：
+
+```text
+POST   /api/v1/rag/conversations
+GET    /api/v1/rag/conversations
+GET    /api/v1/rag/conversations/{conversation_id}
+
+POST   /api/v1/rag/conversations/{conversation_id}/runs
+GET    /api/v1/rag/runs/{run_id}
+GET    /api/v1/rag/runs/{run_id}/events
+POST   /api/v1/rag/runs/{run_id}/cancel
+
+POST   /api/v1/rag/feedback
+
+POST   /api/v1/rag/admin/reindex
+GET    /api/v1/rag/admin/jobs
+GET    /api/v1/rag/admin/jobs/{job_id}
+```
+
+SSE 事件范围：
+
+```text
+run.started
+node.started
+retrieval.completed
+tool.started
+tool.completed
+answer.delta
+citation
+warning
+run.completed
+run.failed
+```
+
+前端当前通过本地 Token 认证，原生 `EventSource` 不方便设置 Authorization Header。
+V1 使用 `fetch + ReadableStream` 消费 `text/event-stream`，不把长期访问令牌放入 URL。
+
+### 前端范围
+
+新增路由：
+
+```text
+/ai/assistant    智能分析助手
+```
+
+页面包含：
+
+1. 会话列表。
+2. 问题输入和流式答案。
+3. 停止生成和重新提问。
+4. 引用来源。
+5. SQL 折叠面板。
+6. 数据表格结果。
+7. 统计时间和数据更新时间。
+8. 点赞、点踩和文字反馈。
+
+V1 不实现独立知识库管理页面。知识通过 Git 文件维护，由开发执行入库命令；
+V1.1 再增加业务可使用的上传、预览、审核和发布页面。
+
+### 版本实施计划
+
+计划按 4 个阶段实施，每个阶段完成后必须保持系统可运行。
+
+#### M1：基础设施与知识模板
+
+目标：
+
+1. Docker Compose 增加 PostgreSQL、Qdrant 和 Redis。
+2. 后端增加连接配置、健康检查和 Alembic 迁移。
+3. 建立 PostgreSQL 最小数据表。
+4. 建立 `docs/knowledge/` 目录和知识模板。
+5. 业务负责人完成首批 10 个指标和 5 张表的审核。
+
+验收：
+
+```text
+现有 BI 正常运行
+三个新增服务健康检查通过
+服务重启后 PostgreSQL 和 Qdrant 数据仍存在
+外部不能直接访问 5432、6333、6379
+```
+
+#### M2：知识入库与检索
+
+目标：
+
+1. 实现 Markdown/YAML 加载、规范化和结构切分。
+2. 实现文件哈希、文档版本和幂等入库。
+3. 使用 Celery Worker 执行 Embedding 和 Qdrant Upsert。
+4. 实现角色过滤、检索调试接口和引用结构。
+5. 完成首批 20 个指标、15 张表和 20 个 FAQ。
+
+验收：
+
+```text
+重复入库同一文件不会产生重复 active Chunk
+修改文件后生成新版本，旧版本在切换前仍可使用
+不同角色无法检索未授权 Chunk
+30 个知识测试问题中至少 27 个能在 Top 5 命中正确文档
+```
+
+#### M3：LangGraph 与数据工具
+
+目标：
+
+1. 建立 LangGraph 状态和路由。
+2. 接入知识检索工具。
+3. 将现有销售、库存接口封装为只读指标工具。
+4. 将现有 Text-to-SQL 封装为受限工具。
+5. 保存会话、Run、节点状态、引用和错误。
+6. 实现 SSE 流式事件和任务取消。
+
+验收：
+
+```text
+知识、指标、SQL 各 10 个问题能够走到正确路由
+混合问题能够同时返回业务定义和实际数据
+所有数据数字都来自指标工具或 SQL 结果
+SQL 非只读、超时和超行数测试全部被拦截
+后端重启后可以查询已完成会话和 Run
+```
+
+#### M4：前端、评测与上线
+
+目标：
+
+1. 完成 `/ai/assistant` 页面。
+2. 展示流式回答、步骤、引用、SQL 和表格。
+3. 完成 50 个黄金问题。
+4. 增加结构化 Trace 和基础统计。
+5. 在当前服务器完成受限资源部署、备份和回滚说明。
+
+验收：
+
+```text
+50 个黄金问题整体路由准确率不低于 90%
+知识问题 Hit@5 不低于 90%
+引用展示准确率不低于 95%
+权限泄漏和危险 SQL 用例为 0
+普通知识问答首个流式事件 P95 不超过 3 秒
+连续运行 24 小时无容器 OOM 和现有 BI 性能明显回退
+```
+
+### 两人协作分工
+
+业务负责人负责：
+
+1. 确认指标定义、默认筛选、数据限制和经营分析流程。
+2. 审核模型生成的知识草稿，决定是否发布。
+3. 提供真实问题和期望答案。
+4. 验证回答是否符合业务语义，不只检查文字是否通顺。
+5. 对错误回答标注为口径错误、数据错误、检索错误或表达问题。
+
+开发人员负责：
+
+1. 基础设施、数据模型、入库、检索和 LangGraph 工作流。
+2. 指标工具与 Text-to-SQL 安全边界。
+3. SSE、前端页面、任务状态、审计和部署。
+4. 将业务验收问题固化为自动化测试。
+5. 记录检索、模型、工具、SQL 和耗时，定位失败原因。
+
+双方每个里程碑只进行一次集中验收。业务问题和口径修改统一记录到
+`docs/knowledge/`，避免仅通过聊天或口头方式维护。
+
+### 测试与评测
+
+黄金问题文件至少包含：
+
+```yaml
+- id: eval-001
+  question: 品牌周转天数为什么不是标准库存周转率？
+  expected_route: knowledge
+  expected_sources:
+    - metrics/inventory_turnover_days.yaml
+  required_points:
+    - 当前使用期末库存代理
+    - 当前没有历史平均库存
+  forbidden_points:
+    - 表述为标准平均库存周转率
+  role: analyst
+```
+
+V1 自动化测试至少覆盖：
+
+1. 文档哈希与版本切换。
+2. Chunk 元数据和角色过滤。
+3. 检索 Top 5 命中。
+4. 问题路由。
+5. 指标工具参数映射。
+6. Text-to-SQL 只读校验。
+7. Run 状态和错误恢复。
+8. SSE 事件顺序和结束事件。
+9. 引用与最终答案关联。
+10. 模型不可用和数据库超时降级。
+
+后端修改至少执行对应模块 `py_compile` 和单元测试；前端修改至少执行
+`npm.cmd run build`。涉及交互时必须在浏览器中验证流式输出、停止任务、
+引用抽屉、SQL 折叠和错误状态。
+
+### 知识维护流程
+
+V1 使用 Git 审核发布：
+
+```text
+业务提出新增或修改
+  → 在 docs/knowledge 中创建草稿
+  → 业务负责人审核口径
+  → 提交 Git
+  → 执行入库任务
+  → 运行相关黄金问题
+  → 验证通过
+  → 切换 active 版本
+```
+
+知识状态：
+
+```text
+draft → indexing → validating → active → archived
+```
+
+实时业务事实继续通过 MySQL/ADS 查询。以下内容禁止作为普通知识 Chunk 入库：
+
+1. 单笔订单和销售明细。
+2. 每日完整库存快照。
+3. 当前销售额、库存量、排名等动态结果。
+4. API Key、访问令牌、客户联系电话和其他敏感信息。
+
+### V1.1 候选范围
+
+只有 V1 上线并收集真实反馈后才评估：
+
+1. 知识库上传、预览、审核和发布后台。
+2. PDF、DOCX 解析。
+3. Sparse + Dense 混合检索。
+4. Reranker。
+5. Langfuse 或 OpenTelemetry 完整接入。
+6. Redis Cache 与 Celery Broker 拆分。
+7. 模型费用、Token、P95/P99 看板。
+8. 从用户反馈一键生成 FAQ 或评测用例。
+
+V1.1 的优先级由 V1 的错误分布决定：检索召回不足时增加混合检索，排序不准时
+增加 Reranker，业务维护成本高时优先建设知识管理后台。
+
+### 当前实施进度
+
+截至 2026-07-30：
+
+1. M1 代码已完成：RAG Compose、PostgreSQL 控制面、Alembic、Redis、Qdrant、
+   健康检查和知识目录已经建立。
+2. M2 工程链路已完成：Markdown/YAML 加载、LangChain 结构切分、内容哈希、
+   幂等版本、Celery Worker、OpenAI-compatible Embedding 适配、Qdrant 入库、
+   旧版本归档、角色过滤和检索调试接口已经建立。
+3. 品牌估算周转天数和销售单明细账两条知识已由业务确认并标记为 `active`。
+4. M2 本地自动化测试已覆盖加载、切分、批处理、版本切换、失败记录、删除归档和
+   角色过滤。
+5. M2 本地联调已完成：独立 Embedding 服务调用成功，PostgreSQL、Redis、Qdrant
+   和 Celery Worker 已启动，首次迁移与入库成功；2 份 active 知识生成 2 个向量点，
+   重复入库均判定为 unchanged。
+6. 两道黄金问题 Top 5 均命中预期来源，且预期来源均位于第 1 名；后端 39 项自动化
+   测试、Python 编译、Alembic 离线 SQL 和 Compose 配置校验均通过。
+7. 当前尚未部署到远程生产服务器；下一阶段先在本地推进 M3 问题路由、LangGraph
+   工作流、引用和运行记录，达到可演示状态后再安排服务器部署。
+8. M3 第一切片已完成：LangGraph 单图实现问题规范化、knowledge / metric / sql /
+   mixed 路由、知识检索、证据阈值、MiMo 回答和引用过滤；会话、Run、消息及引用已
+   持久化到 PostgreSQL，并通过一次真实知识问答验收。
+9. M3 第二切片已完成：销售概览和品牌周转已封装为 ODS 只读指标工具，支持日期、
+   季度、品牌、正装/小样和最低库存参数；mixed 问题通过代码拆分口径与数据子问题，
+   工具参数和精简结果保存到 Run Trace。默认销售条件、组合周转筛选及一次真实 mixed
+   问答均已通过。受限 SQL、SSE、取消和逐节点耗时 Trace 留在后续 M3 切片。

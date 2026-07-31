@@ -1,0 +1,117 @@
+services:
+  backend:
+    environment:
+      RAG_ENABLED: "true"
+      RAG_DATABASE_URL: postgresql+psycopg://rag_user:${RAG_POSTGRES_PASSWORD:?set RAG_POSTGRES_PASSWORD}@rag-postgres:5432/jjc_bi_rag
+      RAG_REDIS_URL: redis://rag-redis:6379/0
+      RAG_QDRANT_URL: http://rag-qdrant:6333
+      RAG_KNOWLEDGE_PATH: /app/knowledge
+      RAG_CELERY_RESULT_BACKEND: redis://rag-redis:6379/1
+    volumes:
+      - ./docs/knowledge:/app/knowledge:ro
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+      rag-redis:
+        condition: service_healthy
+      rag-qdrant:
+        condition: service_started
+
+  rag-worker:
+    build:
+      context: ./backend
+    container_name: jjc-bi-rag-worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      RAG_ENABLED: "true"
+      RAG_DATABASE_URL: postgresql+psycopg://rag_user:${RAG_POSTGRES_PASSWORD:?set RAG_POSTGRES_PASSWORD}@rag-postgres:5432/jjc_bi_rag
+      RAG_REDIS_URL: redis://rag-redis:6379/0
+      RAG_CELERY_RESULT_BACKEND: redis://rag-redis:6379/1
+      RAG_QDRANT_URL: http://rag-qdrant:6333
+      RAG_KNOWLEDGE_PATH: /app/knowledge
+    command:
+      - celery
+      - -A
+      - app.rag.tasks.celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=1
+    user: "65534:65534"
+    volumes:
+      - ./docs/knowledge:/app/knowledge:ro
+    depends_on:
+      rag-postgres:
+        condition: service_healthy
+      rag-redis:
+        condition: service_healthy
+      rag-qdrant:
+        condition: service_started
+    mem_limit: 768m
+
+  rag-postgres:
+    image: postgres:17-alpine
+    container_name: jjc-bi-rag-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: jjc_bi_rag
+      POSTGRES_USER: rag_user
+      POSTGRES_PASSWORD: ${RAG_POSTGRES_PASSWORD:?set RAG_POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=30
+    volumes:
+      - rag_postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag_user -d jjc_bi_rag"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    mem_limit: 1g
+
+  rag-redis:
+    image: redis:7.4-alpine
+    container_name: jjc-bi-rag-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - rag_redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    mem_limit: 384m
+
+  rag-qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: jjc-bi-rag-qdrant
+    restart: unless-stopped
+    volumes:
+      - rag_qdrant_data:/qdrant/storage
+    expose:
+      - "6333"
+      - "6334"
+    mem_limit: 1536m
+
+volumes:
+  rag_postgres_data:
+  rag_redis_data:
+  rag_qdrant_data:

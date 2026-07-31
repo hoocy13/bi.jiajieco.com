@@ -1,0 +1,17 @@
+id: ods_sales_order_detail
+table: ods.销售单明细账
+purpose: 商品、品牌和渠道维度的销售明细分析
+date_field: 下单时间
+business_keys:
+  order: 订单编号
+  sku: 货品编号
+rules:
+  - 负数量和负金额参与净额计算
+  - 订单数按订单编号去重
+  - 页面日期筛选使用下单时间
+forbidden_usage:
+  - 不使用统计时间代替下单时间
+  - 不使用明细行数代替订单数
+owner: 业务负责人
+status: active
+updated_at: 2026-07-30

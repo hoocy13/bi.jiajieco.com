@@ -32,7 +32,37 @@ class Settings(BaseSettings):
     OPENAI_MODEL_ID: str = ""
     OPENAI_TIMEOUT_SECONDS: int = 120
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    RAG_ENABLED: bool = False
+    RAG_DATABASE_URL: str = ""
+    RAG_REDIS_URL: str = ""
+    RAG_QDRANT_URL: str = ""
+    RAG_QDRANT_API_KEY: str = ""
+    RAG_CONNECT_TIMEOUT_SECONDS: int = 3
+    RAG_KNOWLEDGE_PATH: str = "../docs/knowledge"
+    RAG_KNOWLEDGE_BASE_NAME: str = "bi-core"
+    RAG_QDRANT_COLLECTION: str = "jjc_bi_knowledge_v1"
+    RAG_ADMIN_USERNAMES: list[str] = ["jiajie"]
+    RAG_CHUNK_SIZE: int = 800
+    RAG_CHUNK_OVERLAP: int = 120
+    RAG_SEARCH_TOP_K: int = 5
+    RAG_CONTEXT_TOP_K: int = 4
+    RAG_MIN_RETRIEVAL_SCORE: float = 0.35
+    RAG_CHAT_MAX_TOKENS: int = 1200
+    RAG_SQL_MAX_ROWS: int = 200
+    RAG_SQL_TIMEOUT_MS: int = 15000
+    RAG_SQL_MAX_JOINS: int = 5
+    RAG_EMBEDDING_BASE_URL: str = ""
+    RAG_EMBEDDING_MODEL_ID: str = ""
+    RAG_EMBEDDING_API_KEY: str = ""
+    RAG_EMBEDDING_DIMENSIONS: int = 0
+    RAG_EMBEDDING_BATCH_SIZE: int = 10
+    RAG_CELERY_RESULT_BACKEND: str = ""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     @field_validator("BI_QUERY_SOURCE")
     @classmethod

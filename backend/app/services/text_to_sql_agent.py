@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-import re
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.services.model_client import chat_completion
 from app.services.schema_linker import link_schema
 from app.services.sql_generator import build_repair_prompt, extract_sql, generate_sql, validate_readonly_sql
+from app.services.sql_safety import prepare_safe_sql
 
 
-_LIMIT_RE = re.compile(r"\blimit\s+\d+\b", re.IGNORECASE)
+import re
+
+
 _TRANSIENT_DB_ERROR_RE = re.compile(
     r"timed out|can't connect|lost connection|connection reset|server has gone away",
     re.IGNORECASE,
@@ -29,35 +32,45 @@ def _json_value(value: Any) -> Any:
     return value
 
 
-def _strip_trailing_semicolon(sql: str) -> str:
-    return sql.strip().rstrip(";").strip()
-
-
 def ensure_limit(sql: str, max_rows: int) -> str:
-    clean_sql = _strip_trailing_semicolon(sql)
-    if _LIMIT_RE.search(clean_sql):
-        return clean_sql + ";"
-    return f"{clean_sql}\nLIMIT {max_rows};"
+    return prepare_safe_sql(sql, max_rows).sql
 
 
-def execute_readonly_sql(ods_db: Session, sql: str, max_rows: int) -> dict[str, Any]:
-    limited_sql = ensure_limit(sql, max_rows)
-    safety_errors = validate_readonly_sql(limited_sql)
-    if safety_errors:
-        raise ValueError("；".join(safety_errors))
-
-    ods_db.execute(text("SET SESSION MAX_EXECUTION_TIME=30000"))
-    rows = ods_db.execute(text(limited_sql)).mappings().all()
-    result_rows = [{key: _json_value(value) for key, value in row.items()} for row in rows]
-    columns = list(result_rows[0].keys()) if result_rows else []
-    return {
-        "sql": limited_sql,
-        "columns": columns,
-        "rows": result_rows,
-        "row_count": len(result_rows),
-        "limited": not _LIMIT_RE.search(_strip_trailing_semicolon(sql)),
-        "max_rows": max_rows,
-    }
+def execute_readonly_sql(
+    ods_db: Session,
+    sql: str,
+    max_rows: int,
+    timeout_ms: int | None = None,
+) -> dict[str, Any]:
+    safe = prepare_safe_sql(sql, max_rows)
+    effective_timeout = max(
+        1000,
+        min(timeout_ms or settings.RAG_SQL_TIMEOUT_MS, settings.RAG_SQL_TIMEOUT_MS),
+    )
+    try:
+        if ods_db.bind is not None and ods_db.bind.dialect.name == "mysql":
+            ods_db.execute(text("SET TRANSACTION READ ONLY"))
+            ods_db.execute(
+                text(f"SET SESSION MAX_EXECUTION_TIME={effective_timeout}")
+            )
+        rows = ods_db.execute(text(safe.sql)).mappings().all()
+        result_rows = [
+            {key: _json_value(value) for key, value in row.items()}
+            for row in rows[: safe.max_rows]
+        ]
+        columns = list(result_rows[0].keys()) if result_rows else []
+        return {
+            "sql": safe.sql,
+            "tables": list(safe.tables),
+            "columns": columns,
+            "rows": result_rows,
+            "row_count": len(result_rows),
+            "limited": safe.limit_rewritten,
+            "max_rows": safe.max_rows,
+            "timeout_ms": effective_timeout,
+        }
+    finally:
+        ods_db.rollback()
 
 
 def _repair_sql(
@@ -121,11 +134,13 @@ def ask_text_to_sql(
                 result = {
                     "question": question.strip(),
                     "sql": execution["sql"],
+                    "tables": execution["tables"],
                     "columns": execution["columns"],
                     "rows": execution["rows"],
                     "row_count": execution["row_count"],
                     "limited": execution["limited"],
                     "max_rows": execution["max_rows"],
+                    "timeout_ms": execution["timeout_ms"],
                     "attempts": attempts,
                 }
                 if include_schema_context:

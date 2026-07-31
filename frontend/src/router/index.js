@@ -16,6 +16,7 @@ const SlowMoving = () => import('../views/data/SlowMoving.vue')
 const BatchExpiryAnalysis = () => import('../views/data/BatchExpiryAnalysis.vue')
 const InventoryHealth = () => import('../views/data/InventoryHealth.vue')
 const BrandMonthlyArrivals = () => import('../views/data/BrandMonthlyArrivals.vue')
+const BrandInventoryFlow = () => import('../views/data/BrandInventoryFlow.vue')
 const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
 const TextToSqlAgent = () => import('../views/data/TextToSqlAgent.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
@@ -41,6 +42,7 @@ const routes = [
       { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
+      { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '库存周转' } },
       { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销商品' } },
       { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析' } },

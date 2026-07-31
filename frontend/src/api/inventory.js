@@ -50,3 +50,7 @@ export function getSlowMovingInventory(params = {}) {
 export function getBrandMonthlyArrivals(params = {}) {
   return http.get('/inventory/brand-monthly-arrivals', { params: inventoryParams(params) })
 }
+
+export function getBrandInventoryFlow(params = {}) {
+  return http.get('/inventory/brand-inventory-flow', { params: inventoryParams(params) })
+}

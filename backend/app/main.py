@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import ai_decisions, auth, dashboard, inventory, model_settings, sales, text_to_sql, users
+from app.api.routers import ai_decisions, auth, dashboard, inventory, model_settings, rag, sales, text_to_sql, users
 from app.core.config import settings
 from app.core.performance import performance_middleware
 from app.db.init_db import init_db
@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router, prefix=settings.API_PREFIX)
     app.include_router(model_settings.router, prefix=settings.API_PREFIX)
     app.include_router(ai_decisions.router, prefix=settings.API_PREFIX)
+    app.include_router(rag.router, prefix=settings.API_PREFIX)
     return app
 
 

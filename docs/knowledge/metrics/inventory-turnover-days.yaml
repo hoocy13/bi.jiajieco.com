@@ -1,0 +1,20 @@
+id: inventory_turnover_days
+name: 品牌估算周转天数
+definition: 使用完整季度的净销售数量和当前可用库存估算库存可维持天数
+formula: 季度天数 × 当前可用库存 / 季度净销售数量
+data_source:
+  - ads 品牌周转数据
+dimensions:
+  - 品牌
+  - 货品分类
+  - 仓库
+default_filters:
+  - 货品分类为正装、小样
+  - 当前库存不少于100件
+caveats:
+  - 当前没有历史平均库存，因此该指标不是标准平均库存周转率
+  - 周转天数越长表示周转越慢
+  - 季度净销售数量不大于零时不计算周转天数
+owner: 业务负责人
+status: active
+updated_at: 2026-07-30

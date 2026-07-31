@@ -1,4 +1,4 @@
-from copy import deepcopy
+﻿from copy import deepcopy
 from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
@@ -15,6 +15,10 @@ from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.brand_inventory_flow import (
+    build_brand_inventory_flow,
+    load_brand_inventory_flow_source,
+)
 from app.services.inventory_ads import (
     InventoryAdsUnavailable,
     latest_ready_inventory_batch,
@@ -1681,6 +1685,74 @@ def inventory_brand_turnover(
         "product_turnover_rows": product_turnover_rows,
         "rows": paged_rows,
     }
+    return _cached_ok(cache_key, data)
+
+
+@router.get("/brand-inventory-flow")
+def brand_inventory_flow(
+    response: Response,
+    brand: str = Query("资生堂"),
+    start_date: date = Query(date(2025, 1, 1)),
+    end_date: date = Query(date(2025, 12, 31)),
+    warehouse: list[str] | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="开始月份不能晚于结束月份")
+    normalized_brand = (brand or "资生堂").strip() or "资生堂"
+    warehouses = _normalize_warehouses(warehouse)
+    cache_key = _cache_key(
+        "brand-inventory-flow-v3",
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+        warehouses=warehouses,
+    )
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        response.headers["X-BI-Response-Source"] = "cache"
+        return ok(cached)
+
+    source = load_brand_inventory_flow_source(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+    )
+    data = build_brand_inventory_flow(
+        source,
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+        warehouses=warehouses,
+        product_types=("正装", "小样"),
+    )
+    data["segments"] = [
+        {
+            "key": key,
+            "label": label,
+            "summary": segment["summary"],
+            "months": segment["months"],
+        }
+        for key, label, product_types in (
+            ("combined", "正装 + 小样", ("正装", "小样")),
+            ("full_size", "正装", ("正装",)),
+            ("sample", "小样", ("小样",)),
+        )
+        for segment in (
+            build_brand_inventory_flow(
+                source,
+                start_date=start_date,
+                end_date=end_date,
+                brand=normalized_brand,
+                warehouses=warehouses,
+                product_types=product_types,
+            ),
+        )
+    ]
+    response.headers["X-BI-Query-Mode"] = "ods-monthly-aggregate"
+    response.headers["X-BI-Response-Source"] = "ods"
     return _cached_ok(cache_key, data)
 
 

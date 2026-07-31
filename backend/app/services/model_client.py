@@ -5,6 +5,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from cryptography.fernet import InvalidToken
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -13,9 +14,20 @@ from app.models.model_setting import ModelSetting
 
 
 def get_model_config(db: Session) -> tuple[str, str, str]:
-    setting = db.get(ModelSetting, 1)
+    environment_config = (
+        settings.OPENAI_BASE_URL.rstrip("/"),
+        settings.OPENAI_MODEL_ID,
+        settings.OPENAI_API_KEY,
+    )
+    try:
+        setting = db.get(ModelSetting, 1)
+    except SQLAlchemyError:
+        db.rollback()
+        if all(environment_config):
+            return environment_config
+        raise
     if setting is None:
-        return "", "", ""
+        return environment_config
     try:
         api_key = decrypt_api_key(setting.api_key_encrypted)
     except InvalidToken as exc:

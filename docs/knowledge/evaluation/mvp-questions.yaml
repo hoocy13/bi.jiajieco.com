@@ -1,0 +1,22 @@
+- id: eval-001
+  question: 品牌周转天数为什么不是标准库存周转率？
+  expected_route: knowledge
+  expected_sources:
+    - metrics/inventory-turnover-days.yaml
+  required_points:
+    - 当前使用当前可用库存估算
+    - 当前没有历史平均库存
+  forbidden_points:
+    - 表述为标准平均库存周转率
+  role: analyst
+
+- id: eval-002
+  question: 销售单明细账应该使用哪个日期字段筛选？
+  expected_route: knowledge
+  expected_sources:
+    - tables/ods-sales-order-detail.yaml
+  required_points:
+    - 使用下单时间
+  forbidden_points:
+    - 使用统计时间
+  role: analyst

@@ -8,15 +8,10 @@ from sqlalchemy.orm import Session
 
 from app.services.model_client import chat_completion
 from app.services.schema_linker import link_schema
+from app.services.sql_safety import validate_sql
 
 
 _SQL_BLOCK_RE = re.compile(r"```(?:sql)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
-_DANGEROUS_RE = re.compile(
-    r"\b(insert|update|delete|drop|alter|truncate|create|replace|merge|grant|revoke|call|exec|execute|load|outfile|infile|sleep|benchmark)\b",
-    re.IGNORECASE,
-)
-
-
 def _slim_table(table: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": table.get("name"),
@@ -125,18 +120,7 @@ def extract_sql(model_output: str) -> str:
 
 
 def validate_readonly_sql(sql: str) -> list[str]:
-    errors: list[str] = []
-    compact = sql.strip()
-    lowered = compact.lower()
-    if not lowered.startswith("select"):
-        errors.append("SQL 必须以 SELECT 开头。")
-    if ";" in compact.rstrip(";"):
-        errors.append("SQL 只能包含一条语句。")
-    if _DANGEROUS_RE.search(compact):
-        errors.append("SQL 包含非只读或高风险关键字。")
-    if "ods." not in compact and "dwd." not in compact:
-        errors.append("SQL 表名必须带 ods 或 dwd schema 前缀。")
-    return errors
+    return validate_sql(sql)
 
 
 def generate_sql(db: Session, question: str, top_k_tables: int = 5, top_k_examples: int = 3) -> dict[str, Any]:
