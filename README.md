@@ -1,12 +1,12 @@
-# Jiajieco BI
+﻿# Jiajieco BI
 
-Jiajieco 内部经营分析平台，覆盖销售、渠道、品牌、库存、到货、周转、效期、
+Jiajieco 内部经营分析平台，覆盖销售、渠道、品牌、库存、进销存、到货、周转、效期、
 滞销和库存健康分析，并提供 AI 决策与数据问答入口。
 
 ## 技术架构
 
 - 前端：Vue 3、Vite、Vue Router、Pinia、Element Plus、ECharts
-- 后端：FastAPI、SQLAlchemy
+- 后端：FastAPI、SQLAlchemy、Pydantic
 - 管理数据：SQLite 独立持久化卷
 - 业务源数据：MySQL ODS，只读
 - 在线分析数据：独立 MySQL ADS，只读查询账号与构建账号分离
@@ -69,32 +69,43 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5174
 
 ### 经营与智能
 
-- `/dashboard`：经营总览
-- `/ai/decisions`：AI 决策中心
-- `/ai/text-to-sql`：数据智能问答
+| 路径 | 功能 |
+|------|------|
+| `/dashboard` | 经营总览 |
+| `/ai/decisions` | AI 决策中心 |
+| `/ai/text-to-sql` | 数据智能问答 |
 
 ### 销售分析
 
-- `/sales/overview`：销售概览
-- `/sales/detail`：销售明细
-- `/sales/product-rank`：商品销售排行
-- `/sales/brand-analysis`：品牌销售分析
-- `/sales/brand-analysis/:brand`：品牌经营下钻
-- `/sales/channel-analysis`：渠道分析
+| 路径 | 功能 |
+|------|------|
+| `/sales/overview` | 销售概览 |
+| `/sales/detail` | 销售明细 |
+| `/sales/product-rank` | 商品销售排行 |
+| `/sales/brand-analysis` | 品牌销售分析 |
+| `/sales/brand-analysis/:brand` | 品牌经营下钻 |
+| `/sales/channel-analysis` | 渠道分析 |
+| `/sales/brand-channel` | 品牌渠道分析 |
+| `/sales/channel-customer` | 渠道客户分析 |
 
 ### 库存分析
 
-- `/inventory/overview`：库存总览
-- `/inventory/brand-arrivals`：品牌月度到货
-- `/inventory/turnover`：品牌周转与商品周转
-- `/inventory/slow-moving`：滞销库存
-- `/inventory/batch-expiry`：批次效期与 FEFO
-- `/inventory/health`：库存健康
+| 路径 | 功能 |
+|------|------|
+| `/inventory/overview` | 库存总览 |
+| `/inventory/brand-arrivals` | 品牌月度到货 |
+| `/inventory/brand-inventory-flow` | 品牌进销存看板 |
+| `/inventory/turnover` | 品牌周转与商品周转 |
+| `/inventory/slow-moving` | 滞销库存 |
+| `/inventory/batch-expiry` | 批次效期与 FEFO |
+| `/inventory/health` | 库存健康 |
 
 ### 系统管理
 
-- `/users`：用户管理
-- `/model-settings`：模型设置
+| 路径 | 功能 |
+|------|------|
+| `/users` | 用户管理 |
+| `/model-settings` | 模型设置 |
 
 ## 数据与权限原则
 
@@ -146,6 +157,13 @@ GitHub Actions 工作流 `Deploy BI` 默认执行快速应用发布，不重建 
 
 带 ADS 重建的发布会先构建候选镜像和数据，核对成功后再切换应用；普通代码发布
 跳过数据重建。部署失败会恢复上一版本，生产发布之间不会并发执行。
+
+### 发布步骤
+
+1. 提交代码到 `main` 分支
+2. 在 GitHub Actions 手动触发 `Deploy BI` workflow
+3. 等待部署完成（约 5-10 分钟）
+4. 验证线上功能
 
 ## 下一阶段方向
 
