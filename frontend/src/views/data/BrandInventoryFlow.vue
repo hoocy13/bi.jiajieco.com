@@ -409,7 +409,7 @@ onMounted(() => {
 .flow-page { display: grid; gap: 14px; color: #172033; }
 .flow-toolbar, .flow-hero, .flow-panel, .metric-card { border: 1px solid #e3e9e3; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .03); }
 .flow-toolbar { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 8px; }
-.brand-input { width: 150px; }.month-picker { min-width: 200px; flex: 1; }.warehouse-select { width: 240px; }
+.brand-input { width: 150px; }.flow-toolbar :deep(.month-picker) { width: 260px !important; flex: 0 0 260px !important; }.warehouse-select { width: 240px; }
 .flow-hero { min-height: 118px; padding: 22px 28px; border-top: 3px solid #587f3a; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(105deg, #fff 62%, #f3f7ee); }
 .hero-title { display: flex; align-items: center; gap: 15px; }.hero-title > span { width: 4px; height: 54px; border-radius: 4px; background: #587f3a; }
 .hero-title p, .flow-panel header small { margin: 0 0 4px; color: #587f3a; font-size: 10px; font-weight: 800; letter-spacing: .1em; }
@@ -427,5 +427,5 @@ onMounted(() => {
 .table-panel :deep(.el-table) { --el-table-header-bg-color: #f7faf6; --el-table-row-hover-bg-color: #f3f7ee; }.table-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 12px; font-weight: 700; }
 @media (max-width: 1180px) { .flow-toolbar { flex-wrap: wrap; }.segment-grid { grid-template-columns: 1fr; }.segment-chart { height: 260px; } }
 @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.note-grid { grid-template-columns: 1fr; } }
-@media (max-width: 680px) { .flow-toolbar { align-items: stretch; }.brand-input, .month-picker, .warehouse-select { width: 100% !important; flex: 1 1 100% !important; }.flow-hero { align-items: flex-start; flex-direction: column; gap: 18px; }.hero-meta { justify-items: start; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 680px) { .flow-toolbar { align-items: stretch; }.brand-input, .warehouse-select, .flow-toolbar :deep(.month-picker) { width: 100% !important; flex: 1 1 100% !important; }.flow-hero { align-items: flex-start; flex-direction: column; gap: 18px; }.hero-meta { justify-items: start; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
