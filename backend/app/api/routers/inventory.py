@@ -19,6 +19,10 @@ from app.services.brand_inventory_flow import (
     build_brand_inventory_flow,
     load_brand_inventory_flow_source,
 )
+from app.services.brand_inventory_turnover_analysis import (
+    build_brand_inventory_turnover_analysis,
+    load_brand_inventory_turnover_source,
+)
 from app.services.inventory_ads import (
     InventoryAdsUnavailable,
     latest_ready_inventory_batch,
@@ -283,7 +287,7 @@ def inventory_warehouses(
             FROM (
               SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `分仓库查询`
               UNION
-              SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `销售单明细账`
+              SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `dwd`.`销售单明细账_品牌补全`
             ) inventory_brands
             WHERE brand IS NOT NULL AND brand <> '未归类'
             ORDER BY brand
@@ -594,6 +598,10 @@ def inventory_overview(
             "stock_quantity": _number(total_row["stock_quantity"]),
             "available_stock": _number(total_row["available_stock"]),
             "stock_amount": _number(warehouse_row["stock_amount"]),
+            "stock_amount_available": not (
+                _number(total_row["stock_quantity"]) != 0
+                and _number(warehouse_row["stock_amount"]) == 0
+            ),
             "below_min_count": _int(total_row["below_min_count"]),
             "above_max_count": _int(total_row["above_max_count"]),
             "expiring_batch_count": _int(batch_row["expiring_batch_count"]),
@@ -1468,7 +1476,7 @@ def inventory_brand_turnover(
               COUNT(DISTINCT s.`订单编号`) AS orders,
               SUM(COALESCE(s.`数量`, 0)) AS net_sales_quantity,
               SUM(COALESCE(s.`分摊后金额`, 0)) AS net_sales_amount
-            FROM `销售单明细账` s
+            FROM `dwd`.`销售单明细账_品牌补全` s
             WHERE s.`下单时间` >= :start_date
               AND s.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               {brand_sql}
@@ -1518,7 +1526,7 @@ def inventory_brand_turnover(
                   ) AS product_key,
                   COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类') AS product_type,
                   SUM(COALESCE(s.`数量`, 0)) AS net_sales_quantity
-                FROM `销售单明细账` s
+                FROM `dwd`.`销售单明细账_品牌补全` s
                 WHERE s.`下单时间` >= :start_date
                   AND s.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
                   {brand_sql}
@@ -1695,6 +1703,7 @@ def brand_inventory_flow(
     start_date: date = Query(date(2025, 1, 1)),
     end_date: date = Query(date(2025, 12, 31)),
     warehouse: list[str] | None = Query(None),
+    product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
@@ -1702,12 +1711,14 @@ def brand_inventory_flow(
         raise HTTPException(status_code=422, detail="开始月份不能晚于结束月份")
     normalized_brand = (brand or "资生堂").strip() or "资生堂"
     warehouses = _normalize_warehouses(warehouse)
+    product_types = _normalize_product_types(product_type) or DEFAULT_INVENTORY_PRODUCT_TYPES
     cache_key = _cache_key(
-        "brand-inventory-flow-v3",
+        "brand-inventory-flow-v4",
         start_date=start_date,
         end_date=end_date,
         brand=normalized_brand,
         warehouses=warehouses,
+        product_types=product_types,
     )
     cached = _get_cache(cache_key)
     if cached is not None:
@@ -1726,8 +1737,16 @@ def brand_inventory_flow(
         end_date=end_date,
         brand=normalized_brand,
         warehouses=warehouses,
-        product_types=("正装", "小样"),
+        product_types=product_types,
     )
+    selected_product_types = set(product_types)
+    segment_specs = []
+    if selected_product_types == set(DEFAULT_INVENTORY_PRODUCT_TYPES):
+        segment_specs.append(("combined", "正装 + 小样", DEFAULT_INVENTORY_PRODUCT_TYPES))
+    if "正装" in selected_product_types:
+        segment_specs.append(("full_size", "正装", ("正装",)))
+    if "小样" in selected_product_types:
+        segment_specs.append(("sample", "小样", ("小样",)))
     data["segments"] = [
         {
             "key": key,
@@ -1735,11 +1754,7 @@ def brand_inventory_flow(
             "summary": segment["summary"],
             "months": segment["months"],
         }
-        for key, label, product_types in (
-            ("combined", "正装 + 小样", ("正装", "小样")),
-            ("full_size", "正装", ("正装",)),
-            ("sample", "小样", ("小样",)),
-        )
+        for key, label, segment_product_types in segment_specs
         for segment in (
             build_brand_inventory_flow(
                 source,
@@ -1747,11 +1762,112 @@ def brand_inventory_flow(
                 end_date=end_date,
                 brand=normalized_brand,
                 warehouses=warehouses,
-                product_types=product_types,
+                product_types=segment_product_types,
             ),
         )
     ]
     response.headers["X-BI-Query-Mode"] = "ods-monthly-aggregate"
+    response.headers["X-BI-Response-Source"] = "ods"
+    return _cached_ok(cache_key, data)
+
+
+@router.get("/brand-inventory-turnover-analysis")
+def brand_inventory_turnover_analysis(
+    response: Response,
+    brand: str = Query("资生堂"),
+    start_date: date = Query(date(2025, 1, 1)),
+    end_date: date = Query(date(2025, 12, 31)),
+    warehouse: list[str] | None = Query(None),
+    product_type: list[str] | None = Query(None),
+    ranking_limit: int = Query(10, ge=5, le=30),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="开始月份不能晚于结束月份")
+    normalized_brand = (brand or "资生堂").strip() or "资生堂"
+    warehouses = _normalize_warehouses(warehouse)
+    product_types = _normalize_product_types(product_type) or DEFAULT_INVENTORY_PRODUCT_TYPES
+    if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                sales_batch = latest_ready_sales_batch(ads_db)
+                ensure_batch_covers(sales_batch, start_date, end_date)
+                cache_key = _cache_key(
+                    "brand-inventory-turnover-analysis-v2",
+                    start_date=start_date,
+                    end_date=end_date,
+                    brand=normalized_brand,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    ranking_limit=ranking_limit,
+                    query_mode="ads",
+                    sales_version=sales_batch.data_version,
+                )
+                cached = _get_cache(cache_key)
+                if cached is not None:
+                    response.headers["X-BI-Query-Mode"] = "ads-sales-ods-snapshot"
+                    response.headers["X-BI-Response-Source"] = "cache"
+                    return ok(cached)
+                source = load_brand_inventory_turnover_source(
+                    db,
+                    start_date=start_date,
+                    end_date=end_date,
+                    brand=normalized_brand,
+                    ads_db=ads_db,
+                    sales_data_version=sales_batch.data_version,
+                )
+                data = build_brand_inventory_turnover_analysis(
+                    source,
+                    start_date=start_date,
+                    end_date=end_date,
+                    brand=normalized_brand,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    ranking_limit=ranking_limit,
+                )
+            response.headers["X-BI-Query-Mode"] = "ads-sales-ods-snapshot"
+            response.headers["X-BI-Response-Source"] = "ads+ods"
+            return _cached_ok(cache_key, data)
+        except AdsDataUnavailable:
+            pass
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Turnover ADS data is temporarily unavailable",
+            ) from exc
+
+    cache_key = _cache_key(
+        "brand-inventory-turnover-analysis-v2",
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+        warehouses=warehouses,
+        product_types=product_types,
+        ranking_limit=ranking_limit,
+        query_mode="ods",
+    )
+    cached = _get_cache(cache_key)
+    if cached is not None:
+        response.headers["X-BI-Response-Source"] = "cache"
+        return ok(cached)
+
+    source = load_brand_inventory_turnover_source(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+    )
+    data = build_brand_inventory_turnover_analysis(
+        source,
+        start_date=start_date,
+        end_date=end_date,
+        brand=normalized_brand,
+        warehouses=warehouses,
+        product_types=product_types,
+        ranking_limit=ranking_limit,
+    )
+    response.headers["X-BI-Query-Mode"] = "ods-product-snapshot-aggregate"
     response.headers["X-BI-Response-Source"] = "ods"
     return _cached_ok(cache_key, data)
 
@@ -1955,7 +2071,7 @@ def brand_monthly_arrivals(
 
     today = date.today()
     selected_start = start_date or date(today.year, 1, 1)
-    selected_end = end_date or date(today.year, 12, 31)
+    selected_end = end_date or today
     if selected_end < selected_start:
         selected_start, selected_end = selected_end, selected_start
     response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
