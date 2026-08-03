@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
@@ -8,8 +9,8 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import WarehouseFilter from './WarehouseFilter.vue'
 import ProductTypeFilter from './ProductTypeFilter.vue'
-import { getBrandInventoryTurnover, getInventoryWarehouses } from '../../api/inventory'
-import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
+import { getBrandInventoryTurnover, getBrandInventoryTurnoverAnalysis, getInventoryWarehouses } from '../../api/inventory'
+import { DEFAULT_INVENTORY_PRODUCT_TYPES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
@@ -28,6 +29,7 @@ const completedQuarter = Math.floor(now.getMonth() / 3)
 const defaultYear = completedQuarter > 0 ? now.getFullYear() : now.getFullYear() - 1
 const defaultQuarter = completedQuarter > 0 ? completedQuarter : 4
 const loading = ref(false)
+const contractError = ref('')
 const warehouseLoading = ref(false)
 const warehouseOptions = ref([])
 const brandOptions = ref([])
@@ -77,7 +79,7 @@ const query = reactive({
     ? [routeStartDate, routeEndDate]
     : quarterDateRange(defaultYear, defaultQuarter),
   minStock: Number(route.query.min_stock ?? 100),
-  warehouses: queryArray(route.query.warehouse, DEFAULT_INVENTORY_WAREHOUSES),
+  warehouses: queryArray(route.query.warehouse, []),
   productTypes: route.query.product_type === '__all__' ? [] : queryArray(route.query.product_type, DEFAULT_INVENTORY_PRODUCT_TYPES),
   page: Number(route.query.page || 1),
   pageSize: Number(route.query.page_size || 50),
@@ -94,6 +96,8 @@ const analysis = ref({
   product_turnover_rows: [],
   rows: [],
 })
+
+const isHistoricalBasis = computed(() => analysis.value.basis === 'monthly_average_inventory')
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -123,16 +127,21 @@ const metrics = computed(() => [
     unit: '件', note: `${analysis.value.period} 净销售`, accent: true,
   },
   {
-    label: '当前可用库存', value: formatNumber(analysis.value.summary.available_stock), unit: '件',
-    note: `快照 ${snapshotText(analysis.value.snapshot_at)}`,
+    label: isHistoricalBasis.value ? '期间平均库存' : '当前可用库存',
+    value: formatNumber(isHistoricalBasis.value ? analysis.value.summary.average_inventory : analysis.value.summary.available_stock), unit: '件',
+    note: isHistoricalBasis.value
+      ? `${analysis.value.freshness?.monthly_average_count || 0}个月月初/月末均值`
+      : `快照 ${snapshotText(analysis.value.snapshot_at)}`,
   },
   {
-    label: '估算周转次数', value: turnoverRateText(analysis.value.summary.turnover_rate), unit: '',
-    note: '周期净销售数量 / 当前可用库存',
+    label: isHistoricalBasis.value ? '库存周转次数' : '估算周转次数',
+    value: turnoverRateText(analysis.value.summary.turnover_rate), unit: '',
+    note: isHistoricalBasis.value ? '周期净销售数量 / 期间平均库存' : '周期净销售数量 / 当前可用库存',
   },
   {
-    label: '估算周转天数', value: turnoverText(analysis.value.summary.turnover_days), unit: '',
-    note: `${analysis.value.period_days || 0} 天 / 估算周转次数`,
+    label: isHistoricalBasis.value ? '库存周转天数' : '估算周转天数',
+    value: turnoverText(analysis.value.summary.turnover_days), unit: '',
+    note: `${analysis.value.period_days || 0} 天 / ${isHistoricalBasis.value ? '库存周转次数' : '估算周转次数'}`,
   },
 ])
 
@@ -141,6 +150,11 @@ const availabilityPercent = computed(() => {
   const stock = Number(focusRow.value?.ending_stock || analysis.value.summary.ending_stock || 0)
   const available = Number(focusRow.value?.available_stock || 0)
   return stock > 0 ? available / stock * 100 : 0
+})
+const snapshotCompletenessPercent = computed(() => {
+  const expected = Number(analysis.value.freshness?.snapshot_expected || 0)
+  const actual = Number(analysis.value.freshness?.snapshot_count || 0)
+  return expected > 0 ? actual / expected * 100 : 0
 })
 const periodDateText = computed(() => `${analysis.value.start_date} 至 ${analysis.value.end_date}`)
 
@@ -183,7 +197,7 @@ function productPanelChartOption(panel) {
       textStyle: { color: '#ffffff' },
       formatter: (params) => {
         const row = rows[params[0].dataIndex]
-        return `${row.product}<br/>货品编号：${row.product_code || '暂无'}<br/>估算周转：${turnoverText(row.turnover_days)}`
+        return `${row.product}<br/>货品编号：${row.product_code || '暂无'}<br/>${isHistoricalBasis.value ? '周转天数' : '估算周转'}：${turnoverText(row.turnover_days)}`
       },
     },
     grid: { top: 16, left: 112, right: 64, bottom: 14 },
@@ -197,7 +211,7 @@ function productPanelChartOption(panel) {
       axisLabel: { color: '#5f6879', width: 102, overflow: 'truncate', fontSize: 10 },
     },
     series: [{
-      name: '可用库存', type: 'bar', barWidth: 9,
+      name: isHistoricalBasis.value ? '期间平均库存' : '可用库存', type: 'bar', barWidth: 9,
       itemStyle: {
         borderRadius: [0, 5, 5, 0],
         color: {
@@ -212,7 +226,7 @@ function productPanelChartOption(panel) {
         show: true, position: 'right', color: '#697386', fontSize: 10,
         formatter: ({ dataIndex }) => turnoverText(rows[dataIndex].turnover_days),
       },
-      data: rows.map((row) => row.available_stock),
+      data: rows.map((row) => isHistoricalBasis.value ? row.average_inventory : row.available_stock),
     }],
   }
 }
@@ -224,7 +238,7 @@ const chartOption = computed(() => ({
     textStyle: { color: '#ffffff' },
     formatter: (params) => {
       const row = chartRows.value[params[0].dataIndex]
-      return `${row.brand}<br/>估算周转：${turnoverRateText(row.turnover_rate)}<br/>估算周转天数：${turnoverText(row.turnover_days)}<br/>净销售：${formatNumber(row.net_sales_quantity)} 件<br/>可用库存：${formatNumber(row.available_stock)} 件`
+      return `${row.brand}<br/>${isHistoricalBasis.value ? '库存周转' : '估算周转'}：${turnoverRateText(row.turnover_rate)}<br/>${isHistoricalBasis.value ? '周转天数' : '估算周转天数'}：${turnoverText(row.turnover_days)}<br/>净销售：${formatNumber(row.net_sales_quantity)} 件<br/>${isHistoricalBasis.value ? '期间平均库存' : '可用库存'}：${formatNumber(isHistoricalBasis.value ? row.average_inventory : row.available_stock)} 件`
     },
   },
   grid: { top: 18, left: 120, right: 70, bottom: 24 },
@@ -237,7 +251,7 @@ const chartOption = computed(() => ({
     axisLine: { show: false }, axisLabel: { color: '#6f7480', width: 110, overflow: 'truncate' },
   },
   series: [{
-    name: '估算周转天数', type: 'bar', barWidth: 14,
+    name: isHistoricalBasis.value ? '库存周转天数' : '估算周转天数', type: 'bar', barWidth: 14,
     itemStyle: { borderRadius: [0, 8, 8, 0] },
     label: { show: true, position: 'right', color: '#6f7480', fontSize: 11, formatter: ({ value }) => `${formatNumber(value, 1)}天` },
     data: chartRows.value.map((row) => row.turnover_days),
@@ -261,6 +275,102 @@ function buildParams() {
   return params
 }
 
+function buildHistoricalParams() {
+  const [startDate, endDate] = query.periodMode === 'custom'
+    ? query.dateRange
+    : quarterDateRange(query.year, query.quarter)
+  return {
+    brand: query.keyword.trim(),
+    start_date: startDate,
+    end_date: endDate,
+    warehouse: query.warehouses,
+    product_type: productTypeParam(query.productTypes),
+    ranking_limit: 10,
+  }
+}
+
+function turnoverStatus(turnoverDays, salesQuantity, endingInventory) {
+  if (Number(salesQuantity || 0) <= 0 && Number(endingInventory || 0) > 0) return '无销售'
+  if (turnoverDays === null || turnoverDays === undefined) return '暂不可算'
+  if (turnoverDays > 180) return '滞销'
+  if (turnoverDays > 90) return '偏慢'
+  return '正常'
+}
+
+function normalizeHistoricalAnalysis(data) {
+  if (data.basis !== 'monthly_opening_closing_average_v1') {
+    throw new Error('品牌周转后端仍是旧口径，请完成后端发布并重启服务后重试')
+  }
+  const details = (data.details || []).map((row) => ({
+    product: row.product_name,
+    product_code: row.product_code,
+    product_type: row.product_type,
+    average_inventory: row.average_inventory,
+    available_stock: row.average_inventory,
+    ending_stock: row.ending_inventory,
+    net_sales_quantity: row.sales_quantity,
+    net_sales_amount: row.sales_amount,
+    turnover_rate: row.turnover_rate,
+    turnover_days: row.turnover_days,
+    status: row.status,
+  }))
+  const panelDefinitions = [
+    ['正装 + 小样', ['正装', '小样']],
+    ['正装', ['正装']],
+    ['小样', ['小样']],
+  ]
+  const productPanels = panelDefinitions.map(([label, types]) => {
+    const rows = details
+      .filter((row) => types.includes(row.product_type))
+      .sort((left, right) => Number(right.average_inventory || 0) - Number(left.average_inventory || 0))
+    const totalAverageInventory = rows.reduce((sum, row) => sum + Number(row.average_inventory || 0), 0)
+    const totalSales = rows.reduce((sum, row) => sum + Number(row.net_sales_quantity || 0), 0)
+    const averageTurnoverDays = totalSales > 0
+      ? Number(data.period_days || 0) * totalAverageInventory / totalSales
+      : null
+    return {
+      label,
+      total_available_stock: totalAverageInventory,
+      total_average_inventory: totalAverageInventory,
+      average_turnover_days: averageTurnoverDays,
+      rows: rows.slice(0, 10),
+    }
+  })
+  const summaryStatus = turnoverStatus(data.summary.turnover_days, data.summary.sales_quantity, data.summary.ending_inventory)
+  const summaryRow = {
+    rank: 1,
+    brand: data.brand,
+    ending_stock: data.summary.ending_inventory,
+    average_inventory: data.summary.average_inventory,
+    available_stock: data.summary.average_inventory,
+    net_sales_quantity: data.summary.sales_quantity,
+    net_sales_amount: data.summary.sales_amount,
+    turnover_rate: data.summary.turnover_rate,
+    turnover_days: data.summary.turnover_days,
+    status: summaryStatus,
+  }
+  return {
+    ...data,
+    basis: 'monthly_average_inventory',
+    period: `${data.start_date} 至 ${data.end_date}`,
+    snapshot_at: data.freshness?.snapshot_updated_at,
+    summary: {
+      ...data.summary,
+      ending_stock: data.summary.ending_inventory,
+      available_stock: data.summary.average_inventory,
+      net_sales_quantity: data.summary.sales_quantity,
+      net_sales_amount: data.summary.sales_amount,
+      brand_count: 1,
+      attention_brands: summaryStatus === '正常' ? 0 : 1,
+    },
+    pagination: { page: 1, page_size: 50, total: 1 },
+    chart_rows: [summaryRow],
+    rows: [summaryRow],
+    product_turnover_panels: productPanels,
+    product_turnover_rows: details,
+  }
+}
+
 async function fetchRows(resetPage = false) {
   if (resetPage) {
     query.page = 1
@@ -280,9 +390,18 @@ async function fetchRows(resetPage = false) {
     }),
   })
   loading.value = true
+  contractError.value = ''
   try {
-    const result = await getBrandInventoryTurnover(buildParams())
-    analysis.value = result.data
+    if (query.keyword.trim()) {
+      const result = await getBrandInventoryTurnoverAnalysis(buildHistoricalParams())
+      analysis.value = normalizeHistoricalAnalysis(result.data)
+    } else {
+      const result = await getBrandInventoryTurnover(buildParams())
+      analysis.value = result.data
+    }
+  } catch (error) {
+    contractError.value = error?.message || '品牌周转数据加载失败'
+    ElMessage.error(contractError.value)
   } finally {
     loading.value = false
   }
@@ -297,7 +416,7 @@ function restoreDefaults() {
   Object.assign(query, {
     keyword: '', periodMode: 'quarter', year: defaultYear, quarter: defaultQuarter,
     dateRange: quarterDateRange(defaultYear, defaultQuarter), minStock: 100,
-    warehouses: [...DEFAULT_INVENTORY_WAREHOUSES], productTypes: [...DEFAULT_INVENTORY_PRODUCT_TYPES],
+    warehouses: [], productTypes: [...DEFAULT_INVENTORY_PRODUCT_TYPES],
     page: 1, pageSize: 50,
   })
   fetchRows()
@@ -343,6 +462,13 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
 
 <template>
   <div class="brand-turnover-stack" v-loading="loading">
+    <el-alert
+      v-if="contractError"
+      :title="contractError"
+      type="error"
+      show-icon
+      :closable="false"
+    />
     <section class="toolbar-panel brand-turnover-filter">
       <div class="brand-filter-controls">
         <el-select
@@ -453,7 +579,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <header>
           <div>
             <span class="panel-kicker">周转趋势</span>
-            <h2>品牌估算周转天数<span class="panel-source">（越长表示周转越慢）</span></h2>
+            <h2>{{ isHistoricalBasis ? '品牌库存周转天数' : '品牌估算周转天数' }}<span class="panel-source">（越长表示周转越慢）</span></h2>
           </div>
           <el-button :icon="'Refresh'" circle @click="fetchRows" />
         </header>
@@ -478,8 +604,8 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           </div>
           <div class="insight-stat-list">
             <div>
-              <span>可用库存率</span>
-              <strong>{{ formatNumber(availabilityPercent, 1) }}%</strong>
+              <span>{{ isHistoricalBasis ? '历史快照完整度' : '可用库存率' }}</span>
+              <strong>{{ formatNumber(isHistoricalBasis ? snapshotCompletenessPercent : availabilityPercent, 1) }}%</strong>
             </div>
             <div>
               <span>需关注品牌</span>
@@ -491,9 +617,10 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
             </div>
           </div>
           <div class="turnover-basis-card">
-            <strong>期末库存估算口径</strong>
-              <span>周期净销售数量 / 当前可用库存</span>
-            <p>当前暂无历史库存快照，暂以当前可用库存作为所选期间期末库存代理，仅用于经营观察。</p>
+            <strong>{{ isHistoricalBasis ? '期间平均库存正式口径' : '期末库存估算口径' }}</strong>
+            <span>{{ isHistoricalBasis ? '各月（月初库存 + 月末库存）÷ 2 后求平均' : '周期净销售数量 / 当前可用库存' }}</span>
+            <p v-if="isHistoricalBasis">周转天数 = 期间天数 × 期间平均库存 ÷ 周期净销售数量；历史快照完整时用于正式期间分析。</p>
+            <p v-else>未选择具体品牌时，暂以当前可用库存作为期末库存代理，仅用于全品牌经营观察。</p>
           </div>
         </div>
       </aside>
@@ -503,7 +630,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
       <header>
         <div>
           <span class="panel-kicker">分类周转</span>
-          <h2>{{ query.keyword.trim() || '品牌' }} 货品分类周转<span class="panel-source">（可用库存口径）</span></h2>
+          <h2>{{ query.keyword.trim() || '品牌' }} 货品分类周转<span class="panel-source">（{{ isHistoricalBasis ? '期间平均库存' : '可用库存' }}口径）</span></h2>
         </div>
       </header>
       <div v-if="productTurnoverPanels.length" class="product-type-turnover-grid">
@@ -511,7 +638,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           <div class="product-type-chart-title">
             <strong>{{ panel.label }}</strong>
             <span class="product-type-chart-summary">
-              可用库存汇总 <b>{{ formatNumber(panel.total_available_stock) }} 件</b>
+              {{ isHistoricalBasis ? '期间平均库存' : '可用库存汇总' }} <b>{{ formatNumber(panel.total_available_stock) }} 件</b>
               <i aria-hidden="true"></i>
               平均周转天数 <b>{{ turnoverText(panel.average_turnover_days) }}</b>
             </span>
@@ -533,7 +660,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
       <section class="turnover-guide brand-turnover-guide">
         <div>
           <strong>周转判断标准</strong>
-          <p>基于估算周转天数判断品牌库存效率，数字越小表示当前库存消化越快。</p>
+          <p>基于{{ isHistoricalBasis ? '历史期间平均库存' : '当前可用库存估算' }}判断品牌库存效率，数字越小表示库存消化越快。</p>
         </div>
         <div><span>不超过 90 天</span><strong>正常</strong></div>
         <div><span>90 至 180 天</span><strong>偏慢</strong></div>
@@ -544,7 +671,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <header>
           <div>
             <span class="panel-kicker">品牌对比</span>
-            <h2>品牌估算周转天数<span class="panel-source">（展示当前筛选下的全部品牌）</span></h2>
+            <h2>{{ isHistoricalBasis ? '品牌库存周转天数' : '品牌估算周转天数' }}<span class="panel-source">（展示当前筛选结果）</span></h2>
           </div>
           <el-button :icon="'Refresh'" circle @click="fetchRows" />
         </header>
@@ -560,7 +687,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
       <header>
         <div>
           <span class="panel-kicker">数据明细</span>
-          <h2>品牌周转明细<span class="panel-source">（销售单明细账 + 当前分仓库存）</span></h2>
+          <h2>品牌周转明细<span class="panel-source">（销售单明细账 + {{ isHistoricalBasis ? '历史月末库存快照' : '当前分仓库存' }}）</span></h2>
         </div>
         <el-button :icon="'Refresh'" circle @click="fetchRows" />
       </header>
@@ -572,22 +699,22 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <el-table-column prop="net_sales_quantity" label="期间净销售数量" width="160">
           <template #default="{ row }">{{ formatNumber(row.net_sales_quantity) }}</template>
         </el-table-column>
-        <el-table-column prop="ending_stock" label="当前库存数量" width="150">
+        <el-table-column prop="ending_stock" :label="isHistoricalBasis ? '期末库存数量' : '当前库存数量'" width="150">
           <template #default="{ row }">{{ formatNumber(row.ending_stock) }}</template>
         </el-table-column>
-        <el-table-column prop="available_stock" label="当前可用库存" width="150">
-          <template #default="{ row }">{{ formatNumber(row.available_stock) }}</template>
+        <el-table-column prop="available_stock" :label="isHistoricalBasis ? '期间平均库存' : '当前可用库存'" width="150">
+          <template #default="{ row }">{{ formatNumber(isHistoricalBasis ? row.average_inventory : row.available_stock) }}</template>
         </el-table-column>
-        <el-table-column prop="orders" label="订单数" width="120">
+        <el-table-column v-if="!isHistoricalBasis" prop="orders" label="订单数" width="120">
           <template #default="{ row }">{{ formatNumber(row.orders) }}</template>
         </el-table-column>
         <el-table-column prop="net_sales_amount" label="期间明细分摊销售额" width="190">
           <template #default="{ row }">{{ formatNumber(row.net_sales_amount, 2) }}</template>
         </el-table-column>
-        <el-table-column prop="turnover_rate" label="估算周转次数" width="150">
+        <el-table-column prop="turnover_rate" :label="isHistoricalBasis ? '库存周转次数' : '估算周转次数'" width="150">
           <template #default="{ row }">{{ turnoverRateText(row.turnover_rate) }}</template>
         </el-table-column>
-        <el-table-column prop="turnover_days" label="估算周转天数" width="150">
+        <el-table-column prop="turnover_days" :label="isHistoricalBasis ? '库存周转天数' : '估算周转天数'" width="150">
           <template #default="{ row }">{{ turnoverText(row.turnover_days) }}</template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110">
@@ -607,7 +734,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
       <header>
         <div>
           <span class="panel-kicker">货品分类明细</span>
-          <h2>{{ query.keyword.trim() || '品牌' }} 货品周转明细<span class="panel-source">（可用库存口径）</span></h2>
+          <h2>{{ query.keyword.trim() || '品牌' }} 货品周转明细<span class="panel-source">（{{ isHistoricalBasis ? '期间平均库存' : '可用库存' }}口径）</span></h2>
         </div>
         <el-segmented
           v-model="activeProductDetail"
@@ -619,13 +746,13 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <el-table-column prop="product" label="货品名称" min-width="260" show-overflow-tooltip sortable />
         <el-table-column prop="product_code" label="货品编号" width="190" show-overflow-tooltip sortable />
         <el-table-column prop="product_type" label="货品分类" width="110" sortable />
-        <el-table-column prop="available_stock" label="可用库存" width="130" sortable>
-          <template #default="{ row }">{{ formatNumber(row.available_stock) }}</template>
+        <el-table-column prop="available_stock" :label="isHistoricalBasis ? '期间平均库存' : '可用库存'" width="130" sortable>
+          <template #default="{ row }">{{ formatNumber(isHistoricalBasis ? row.average_inventory : row.available_stock) }}</template>
         </el-table-column>
         <el-table-column prop="net_sales_quantity" label="期间净销售" width="140" sortable>
           <template #default="{ row }">{{ formatNumber(row.net_sales_quantity) }}</template>
         </el-table-column>
-        <el-table-column prop="turnover_days" label="估算周转天数" width="150" sortable>
+        <el-table-column prop="turnover_days" :label="isHistoricalBasis ? '库存周转天数' : '估算周转天数'" width="150" sortable>
           <template #default="{ row }">{{ turnoverText(row.turnover_days) }}</template>
         </el-table-column>
         <el-table-column prop="status" label="状态" width="110" sortable>

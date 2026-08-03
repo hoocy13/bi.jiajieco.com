@@ -8,6 +8,66 @@ from app.services.brand_inventory_turnover_analysis import (
 
 
 class BrandInventoryTurnoverAnalysisTests(unittest.TestCase):
+    def test_uses_monthly_opening_closing_average_for_turnover_days(self) -> None:
+        source = {
+            "sales": [
+                {
+                    "month_key": month_key,
+                    "warehouse": "A仓",
+                    "product_type": "小样",
+                    "product_code": "S",
+                    "product_name": "小样S",
+                    "sales_quantity": Decimal(quantity),
+                }
+                for month_key, quantity in (
+                    ("2026-01", "1273489"),
+                    ("2026-02", "432532"),
+                    ("2026-03", "900166"),
+                )
+            ],
+            "stock": [
+                {
+                    "snapshot_date": snapshot_date,
+                    "warehouse": "A仓",
+                    "product_type": "小样",
+                    "product_code": "S",
+                    "product_name": "小样S",
+                    "stock_quantity": Decimal(quantity),
+                    "stock_amount": 0,
+                }
+                for snapshot_date, quantity in (
+                    (date(2025, 12, 31), "2492095"),
+                    (date(2026, 1, 31), "1210748"),
+                    (date(2026, 2, 28), "1015514"),
+                    (date(2026, 3, 31), "966443"),
+                )
+            ],
+            "batches": [
+                {"snapshot_date": value, "status": "SUCCESS", "completed_at": datetime(2026, 4, 1, 8, 0)}
+                for value in (
+                    date(2025, 12, 31),
+                    date(2026, 1, 31),
+                    date(2026, 2, 28),
+                    date(2026, 3, 31),
+                )
+            ],
+        }
+
+        data = build_brand_inventory_turnover_analysis(
+            source,
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 3, 31),
+            brand="资生堂",
+            warehouses=("A仓",),
+            product_types=("小样",),
+        )
+
+        self.assertAlmostEqual(data["summary"]["average_inventory"], 1318510.3333333333)
+        self.assertEqual(data["summary"]["sales_quantity"], 2606187)
+        self.assertEqual(data["summary"]["turnover_days"], 45.5)
+        self.assertEqual(data["basis"], "monthly_opening_closing_average_v1")
+        self.assertEqual(data["freshness"]["monthly_average_count"], 3)
+
     def test_builds_snapshot_average_turnover_rankings_and_channel_mix(self) -> None:
         source = {
             "sales": [
@@ -99,7 +159,7 @@ class BrandInventoryTurnoverAnalysisTests(unittest.TestCase):
         sample = data["category_summary"][1]
         self.assertEqual(regular["average_inventory"], 60)
         self.assertEqual(regular["turnover_rate"], 1.5)
-        self.assertEqual(sample["average_inventory"], 25)
+        self.assertEqual(sample["average_inventory"], 23.75)
         self.assertEqual(data["waterline"][1]["total_inventory"], 55)
         self.assertEqual(data["slow_products"][0]["product_code"], "C")
         self.assertEqual(data["hot_products"][0]["product_code"], "A")
