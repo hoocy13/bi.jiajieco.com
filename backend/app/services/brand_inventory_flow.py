@@ -75,7 +75,7 @@ def load_brand_inventory_flow_source(
               SUM(COALESCE(`数量`, 0)) AS sales_quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS sales_amount,
               MAX(`updatetime`) AS updated_at
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < :end_exclusive
               AND TRIM(`品牌`) = :brand
