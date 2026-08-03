@@ -301,6 +301,15 @@ def build_brand_inventory_turnover_analysis(
     ]
     if not valid_snapshots:
         valid_snapshots = expected_snapshots
+    valid_snapshot_set = set(valid_snapshots)
+    monthly_snapshot_pairs = [
+        (_month_start(month) - timedelta(days=1), _month_end(month))
+        for month in months
+        if (
+            _month_start(month) - timedelta(days=1) in valid_snapshot_set
+            and _month_end(month) in valid_snapshot_set
+        )
+    ]
 
     products: dict[str, dict] = {}
     channel_sales = {
@@ -392,16 +401,34 @@ def build_brand_inventory_turnover_analysis(
     period_days = (normalized_end - normalized_start).days + 1
     product_rows = []
     for bucket in products.values():
-        stock_quantities = [
-            bucket["stock_by_date"].get(value, {}).get("quantity", Decimal(0))
-            for value in valid_snapshots
+        monthly_average_quantities = [
+            (
+                bucket["stock_by_date"].get(opening, {}).get("quantity", Decimal(0))
+                + bucket["stock_by_date"].get(closing, {}).get("quantity", Decimal(0))
+            )
+            / Decimal(2)
+            for opening, closing in monthly_snapshot_pairs
         ]
-        stock_amounts = [
-            bucket["stock_by_date"].get(value, {}).get("amount", Decimal(0))
-            for value in valid_snapshots
+        monthly_average_amounts = [
+            (
+                bucket["stock_by_date"].get(opening, {}).get("amount", Decimal(0))
+                + bucket["stock_by_date"].get(closing, {}).get("amount", Decimal(0))
+            )
+            / Decimal(2)
+            for opening, closing in monthly_snapshot_pairs
         ]
-        average_inventory = sum(stock_quantities, Decimal(0)) / Decimal(len(valid_snapshots))
-        average_inventory_amount = sum(stock_amounts, Decimal(0)) / Decimal(len(valid_snapshots))
+        average_inventory = (
+            sum(monthly_average_quantities, Decimal(0))
+            / Decimal(len(monthly_average_quantities))
+            if monthly_average_quantities
+            else Decimal(0)
+        )
+        average_inventory_amount = (
+            sum(monthly_average_amounts, Decimal(0))
+            / Decimal(len(monthly_average_amounts))
+            if monthly_average_amounts
+            else Decimal(0)
+        )
         ending = bucket["stock_by_date"].get(
             normalized_end,
             {"quantity": Decimal(0), "amount": Decimal(0)},
@@ -549,6 +576,7 @@ def build_brand_inventory_turnover_analysis(
 
     return {
         "brand": brand,
+        "basis": "monthly_opening_closing_average_v1",
         "start_date": normalized_start.isoformat(),
         "end_date": normalized_end.isoformat(),
         "period": f"{normalized_start.strftime('%Y年%m月')}—{normalized_end.strftime('%Y年%m月')}",
@@ -567,13 +595,15 @@ def build_brand_inventory_turnover_analysis(
         "freshness": {
             "snapshot_count": len(valid_snapshots),
             "snapshot_expected": len(expected_snapshots),
+            "monthly_average_count": len(monthly_snapshot_pairs),
+            "monthly_average_expected": len(months),
             "snapshot_complete": set(expected_snapshots).issubset(completed_dates),
             "snapshot_updated_at": max(completed_updates).isoformat() if completed_updates else None,
             "source_updated_at": max(source_updates).isoformat() if source_updates else None,
         },
         "metric_notes": {
-            "average_inventory": "使用期初及所选期间各月末的库存数量计算平均值，某月未出现的商品按0库存计。",
-            "turnover": "数量周转次数 = 净销售数量 ÷ 月末平均库存数量；周转天数 = 期间天数 ÷ 周转次数。",
+            "average_inventory": "先按月计算（月初库存 + 月末库存）÷ 2，再对所选期间各月的月平均库存求平均；某月未出现的商品按0库存计。",
+            "turnover": "数量周转次数 = 净销售数量 ÷ 期间平均库存数量；周转天数 = 期间天数 ÷ 周转次数。",
             "ranking": "滞销优先展示有期末库存但无销售的商品，再按周转天数和库存金额排序；热销按净销售数量排序。",
         },
     }
