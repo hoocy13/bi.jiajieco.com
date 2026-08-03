@@ -13,6 +13,7 @@ from app.db.ods import get_ods_db
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.core.config import settings
 from app.services.model_client import chat_completion
 from app.services.sales_sources import SALES_ORDER_TABLE_SQL
 
@@ -64,7 +65,7 @@ def inventory_decisions(
     db: Session = Depends(get_db),
 ) -> dict:
     warehouses = _warehouses(warehouse)
-    cache_key = ("inventory-decisions-v3", warehouses)
+    cache_key = ("inventory-decisions-v4", warehouses, settings.BI_QUERY_SOURCE)
     if not refresh:
         cached = _get_cache(cache_key)
         if cached is not None:

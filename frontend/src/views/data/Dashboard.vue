@@ -71,7 +71,7 @@ const trendOption = computed(() => ({
     formatter: (params) => [
       params[0]?.axisValue,
       ...params.map((item) => {
-        const value = item.seriesName === '销售额' ? formatMillion(item.value) : `${formatNumber(item.value)} 单`
+        const value = item.seriesName === '订单实付金额' ? formatMillion(item.value) : `${formatNumber(item.value)} 单`
         return `${item.marker}${item.seriesName}：${value}`
       }),
     ].join('<br/>'),
@@ -92,7 +92,7 @@ const trendOption = computed(() => ({
   yAxis: [
     {
       type: 'value',
-      name: '销售额',
+      name: '订单实付金额',
       splitLine: { lineStyle: { color: '#eceef3' } },
       axisLabel: {
         color: '#6f7480',
@@ -111,7 +111,7 @@ const trendOption = computed(() => ({
   ],
   series: [
     {
-      name: '销售额',
+      name: '订单实付金额',
       type: 'line',
       smooth: false,
       symbolSize: 7,
@@ -164,8 +164,8 @@ function pieOption(title, data) {
   }
 }
 
-const channelOption = computed(() => pieOption('销售额', channelPieData.value))
-const brandOption = computed(() => pieOption('销售额', brandPieData.value))
+const channelOption = computed(() => pieOption('订单实付金额', channelPieData.value))
+const brandOption = computed(() => pieOption('明细分摊销售额', brandPieData.value))
 
 const geoPieOption = computed(() => ({
   color: mapPieColors,
@@ -180,7 +180,7 @@ const geoPieOption = computed(() => ({
       const data = params.data
       if (!data?.segments) return ''
       const lines = data.segments.map((item) => `${item.name}: ${formatMillion(item.value)}`)
-      return [`${data.name}<br/>销售额: ${formatMillion(data.total)}`, ...lines].join('<br/>')
+      return [`${data.name}<br/>订单实付金额: ${formatMillion(data.total)}`, ...lines].join('<br/>')
     },
   },
   geo: {
@@ -266,22 +266,22 @@ const geoPieOption = computed(() => ({
 
     <div class="content-grid">
       <section class="panel wide">
-        <header><h2>近七日销售趋势<span class="panel-source">（销售单查询）</span></h2></header>
+        <header><h2>近七日订单实付趋势<span class="panel-source">（订单头实付金额口径）</span></h2></header>
         <v-chart class="chart" :option="trendOption" autoresize />
       </section>
       <section class="panel">
-        <header><h2>渠道占比<span class="panel-source">（销售单查询）</span></h2></header>
+        <header><h2>渠道订单实付占比<span class="panel-source">（订单头实付金额口径）</span></h2></header>
         <v-chart class="chart" :option="channelOption" autoresize />
       </section>
     </div>
 
     <div class="content-grid">
       <section class="panel">
-        <header><h2>城市渠道构成<span class="panel-source">（销售单查询）</span></h2></header>
+        <header><h2>城市渠道构成<span class="panel-source">（订单头实付金额口径）</span></h2></header>
         <v-chart class="map-chart map-chart-compact" :option="geoPieOption" autoresize />
       </section>
       <section class="panel">
-        <header><h2>品牌占比<span class="panel-source">（销售单明细账）</span></h2></header>
+        <header><h2>品牌占比<span class="panel-source">（商品明细分摊金额口径）</span></h2></header>
         <v-chart class="chart" :option="brandOption" autoresize />
       </section>
     </div>

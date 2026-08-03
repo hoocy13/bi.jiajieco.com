@@ -1,5 +1,7 @@
 SALES_ORDER_TABLE_SQL = "`dwd`.`销售单查询_进口超市上海仓补全`"
 SALES_ORDER_TABLE_REFERENCE = "dwd.`销售单查询_进口超市上海仓补全`"
+SALES_DETAIL_TABLE_SQL = "`dwd`.`销售单明细账_品牌补全`"
+SALES_DETAIL_TABLE_REFERENCE = "dwd.`销售单明细账_品牌补全`"
 ACTIVE_SALES_ORDER_SQL = "COALESCE(`订单状态`, '') NOT LIKE '%取消%'"
 POSITIVE_SALES_ORDER_COUNT_SQL = "COUNT(DISTINCT CASE WHEN COALESCE(`货品数量`, 0) > 0 THEN `订单编号` END)"
 
@@ -24,7 +26,13 @@ BRAND_EXPRESSION_SQL = """
     END
 """
 
-PRODUCT_TYPE_EXPRESSION_SQL = "COALESCE(NULLIF(TRIM(`货品分类`), ''), '未分类')"
+PRODUCT_TYPE_EXPRESSION_SQL = """
+    CASE
+      WHEN NULLIF(TRIM(`货品分类`), '') IS NULL OR TRIM(`货品分类`) = '-1'
+        THEN '未分类'
+      ELSE TRIM(`货品分类`)
+    END
+"""
 
 
 def is_online_sales_channel(

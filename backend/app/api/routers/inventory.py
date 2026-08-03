@@ -1323,6 +1323,8 @@ def inventory_brand_turnover(
     response: Response,
     year: int | None = Query(None, ge=2000, le=2100),
     quarter: int | None = Query(None, ge=1, le=4),
+    start_date: date | None = None,
+    end_date: date | None = None,
     keyword: str | None = Query(None),
     min_stock: int = Query(100, ge=0),
     warehouse: list[str] | None = Query(None),
@@ -1332,22 +1334,33 @@ def inventory_brand_turnover(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
-    """Estimate quarterly brand turnover using current stock as the ending-stock proxy."""
+    """Estimate brand turnover for a quarter or custom date range."""
     today = date.today()
     current_quarter = (today.month - 1) // 3 + 1
     default_year = today.year if current_quarter > 1 else today.year - 1
     default_quarter = current_quarter - 1 if current_quarter > 1 else 4
-    if year is None or quarter is None:
-        year = default_year
-        quarter = default_quarter
+    custom_range = start_date is not None or end_date is not None
+    if custom_range:
+        if start_date is None or end_date is None:
+            raise HTTPException(status_code=422, detail="自定义时间必须同时选择开始和结束日期")
+        if start_date > end_date:
+            raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
+        year = None
+        quarter = None
+        period_label = f"{start_date.isoformat()} 至 {end_date.isoformat()}"
+    else:
+        if year is None or quarter is None:
+            year = default_year
+            quarter = default_quarter
+        start_month = (quarter - 1) * 3 + 1
+        end_month = start_month + 2
+        start_date = date(year, start_month, 1)
+        end_date = date(year, end_month, monthrange(year, end_month)[1])
+        period_label = f"{year} Q{quarter}"
     keyword = keyword.strip() if keyword else ""
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
     page, page_size, offset = _pagination(page, page_size)
-    start_month = (quarter - 1) * 3 + 1
-    end_month = start_month + 2
-    start_date = date(year, start_month, 1)
-    end_date = date(year, end_month, monthrange(year, end_month)[1])
     period_days = (end_date - start_date).days + 1
     response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
     if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
@@ -1372,6 +1385,8 @@ def inventory_brand_turnover(
                     "brand-turnover-v13",
                     year=year,
                     quarter=quarter,
+                    start_date=start_date,
+                    end_date=end_date,
                     keyword=keyword,
                     min_stock=min_stock,
                     warehouses=warehouses,
@@ -1392,6 +1407,8 @@ def inventory_brand_turnover(
                     sales_batch,
                     year=year,
                     quarter=quarter,
+                    start_date=start_date,
+                    end_date=end_date,
                     keyword=keyword,
                     min_stock=min_stock,
                     warehouses=warehouses,
@@ -1414,6 +1431,8 @@ def inventory_brand_turnover(
         "brand-turnover-v13",
         year=year,
         quarter=quarter,
+        start_date=start_date,
+        end_date=end_date,
         keyword=keyword,
         min_stock=min_stock,
         warehouses=warehouses,
@@ -1669,7 +1688,7 @@ def inventory_brand_turnover(
     data = {
         "year": year,
         "quarter": quarter,
-        "period": f"{year} Q{quarter}",
+        "period": period_label,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "period_days": period_days,

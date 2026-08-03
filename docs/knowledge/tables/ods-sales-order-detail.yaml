@@ -1,5 +1,5 @@
 id: ods_sales_order_detail
-table: ods.销售单明细账
+table: dwd.销售单明细账_品牌补全
 purpose: 商品、品牌和渠道维度的销售明细分析
 date_field: 下单时间
 business_keys:

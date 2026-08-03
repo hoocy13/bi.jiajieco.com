@@ -34,6 +34,25 @@ const brandOptions = ref([])
 const productTypeOptions = ref([...DEFAULT_INVENTORY_PRODUCT_TYPES])
 const yearOptions = Array.from({ length: 3 }, (_, index) => defaultYear - index)
 const quarterOptions = [1, 2, 3, 4].map((value) => ({ label: `Q${value}`, value }))
+const periodModeOptions = [
+  { label: '季度', value: 'quarter' },
+  { label: '自定义', value: 'custom' },
+]
+
+function quarterDateRange(year, quarter) {
+  const startMonth = (quarter - 1) * 3
+  const start = new Date(year, startMonth, 1)
+  const end = new Date(year, startMonth + 3, 0)
+  const format = (value) => [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-')
+  return [format(start), format(end)]
+}
+
+const routeStartDate = String(route.query.start_date || '')
+const routeEndDate = String(route.query.end_date || '')
 const stockMinimumOptions = [
   { label: '可用库存不限', value: 0 },
   { label: '可用库存 ≥ 100 件', value: 100 },
@@ -51,8 +70,12 @@ const productDetailPage = ref(1)
 const productDetailPageSize = ref(20)
 const query = reactive({
   keyword: String(route.query.brand_keyword || ''),
+  periodMode: routeStartDate && routeEndDate ? 'custom' : 'quarter',
   year: Number(route.query.year || defaultYear),
   quarter: Number(route.query.quarter || defaultQuarter),
+  dateRange: routeStartDate && routeEndDate
+    ? [routeStartDate, routeEndDate]
+    : quarterDateRange(defaultYear, defaultQuarter),
   minStock: Number(route.query.min_stock ?? 100),
   warehouses: queryArray(route.query.warehouse, DEFAULT_INVENTORY_WAREHOUSES),
   productTypes: route.query.product_type === '__all__' ? [] : queryArray(route.query.product_type, DEFAULT_INVENTORY_PRODUCT_TYPES),
@@ -119,6 +142,7 @@ const availabilityPercent = computed(() => {
   const available = Number(focusRow.value?.available_stock || 0)
   return stock > 0 ? available / stock * 100 : 0
 })
+const periodDateText = computed(() => `${analysis.value.start_date} 至 ${analysis.value.end_date}`)
 
 const chartRows = computed(() => (analysis.value.chart_rows || analysis.value.rows)
   .filter((row) => row.brand !== '未归类')
@@ -222,8 +246,14 @@ const chartOption = computed(() => ({
 
 function buildParams() {
   const params = {
-    year: query.year, quarter: query.quarter, min_stock: query.minStock,
-    page: query.page, page_size: query.pageSize,
+    min_stock: query.minStock, page: query.page, page_size: query.pageSize,
+  }
+  if (query.periodMode === 'custom') {
+    params.start_date = query.dateRange?.[0]
+    params.end_date = query.dateRange?.[1]
+  } else {
+    params.year = query.year
+    params.quarter = query.quarter
   }
   if (query.keyword.trim()) params.keyword = query.keyword.trim()
   if (query.warehouses.length) params.warehouse = query.warehouses
@@ -238,7 +268,11 @@ async function fetchRows(resetPage = false) {
   }
   router.replace({
     query: inventoryQuery({
-      view: 'brand', brand_keyword: query.keyword.trim(), year: query.year, quarter: query.quarter,
+      view: 'brand', brand_keyword: query.keyword.trim(),
+      year: query.periodMode === 'quarter' ? query.year : undefined,
+      quarter: query.periodMode === 'quarter' ? query.quarter : undefined,
+      start_date: query.periodMode === 'custom' ? query.dateRange?.[0] : undefined,
+      end_date: query.periodMode === 'custom' ? query.dateRange?.[1] : undefined,
       min_stock: query.minStock,
       turnover_view: activePage.value,
       warehouse: query.warehouses, product_type: query.productTypes.length ? query.productTypes : '__all__',
@@ -261,7 +295,8 @@ function switchPage(value) {
 
 function restoreDefaults() {
   Object.assign(query, {
-    keyword: '', year: defaultYear, quarter: defaultQuarter, minStock: 100,
+    keyword: '', periodMode: 'quarter', year: defaultYear, quarter: defaultQuarter,
+    dateRange: quarterDateRange(defaultYear, defaultQuarter), minStock: 100,
     warehouses: [...DEFAULT_INVENTORY_WAREHOUSES], productTypes: [...DEFAULT_INVENTORY_PRODUCT_TYPES],
     page: 1, pageSize: 50,
   })
@@ -271,6 +306,13 @@ function restoreDefaults() {
 function clearFilters() {
   Object.assign(query, { keyword: '', minStock: 0, warehouses: [], productTypes: [], page: 1, pageSize: 50 })
   fetchRows()
+}
+
+function changePeriodMode(value) {
+  query.periodMode = value
+  if (value === 'custom' && (!query.dateRange || query.dateRange.length !== 2)) {
+    query.dateRange = quarterDateRange(query.year, query.quarter)
+  }
 }
 
 function changePage(page) {
@@ -312,10 +354,28 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         >
           <el-option v-for="brand in brandOptions" :key="brand" :label="brand" :value="brand" />
         </el-select>
-        <el-select v-model="query.year" class="brand-filter-year">
+        <el-segmented
+          v-model="query.periodMode"
+          class="brand-filter-period-mode"
+          :options="periodModeOptions"
+          @change="changePeriodMode"
+        />
+        <el-select v-if="query.periodMode === 'quarter'" v-model="query.year" class="brand-filter-year">
           <el-option v-for="year in yearOptions" :key="year" :label="`${year}年`" :value="year" />
         </el-select>
-        <el-segmented v-model="query.quarter" class="brand-filter-quarter" :options="quarterOptions" />
+        <el-segmented v-if="query.periodMode === 'quarter'" v-model="query.quarter" class="brand-filter-quarter" :options="quarterOptions" />
+        <el-date-picker
+          v-else
+          v-model="query.dateRange"
+          class="brand-filter-date-range"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          format="YYYY-MM-DD"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          :clearable="false"
+        />
         <el-select v-model="query.minStock" class="brand-filter-stock" placeholder="当前库存门槛">
           <el-option
             v-for="item in stockMinimumOptions"
@@ -354,7 +414,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <div>
           <span class="turnover-eyebrow">INVENTORY PERFORMANCE</span>
           <h1>{{ query.keyword || '全部品牌' }} 品牌周转看板</h1>
-          <p>季度销售、库存水位与周转效率集中查看</p>
+          <p>所选期间销售、库存水位与周转效率集中查看</p>
         </div>
       </div>
       <div class="turnover-hero-actions">
@@ -371,7 +431,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         </nav>
         <div class="turnover-period">
           <span>{{ analysis.period }}</span>
-          <strong>{{ analysis.start_date }} 至 {{ analysis.end_date }}</strong>
+          <strong v-if="analysis.period !== periodDateText">{{ periodDateText }}</strong>
         </div>
       </div>
     </section>
@@ -433,7 +493,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           <div class="turnover-basis-card">
             <strong>期末库存估算口径</strong>
               <span>周期净销售数量 / 当前可用库存</span>
-            <p>当前暂无历史库存快照，暂以当前可用库存作为季度期末库存代理，仅用于经营观察。</p>
+            <p>当前暂无历史库存快照，暂以当前可用库存作为所选期间期末库存代理，仅用于经营观察。</p>
           </div>
         </div>
       </aside>
@@ -509,7 +569,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           <template #default="{ row }"><span class="rank-badge">{{ row.rank }}</span></template>
         </el-table-column>
         <el-table-column prop="brand" label="品牌" min-width="170" />
-        <el-table-column prop="net_sales_quantity" label="季度净销售数量" width="160">
+        <el-table-column prop="net_sales_quantity" label="期间净销售数量" width="160">
           <template #default="{ row }">{{ formatNumber(row.net_sales_quantity) }}</template>
         </el-table-column>
         <el-table-column prop="ending_stock" label="当前库存数量" width="150">
@@ -521,7 +581,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <el-table-column prop="orders" label="订单数" width="120">
           <template #default="{ row }">{{ formatNumber(row.orders) }}</template>
         </el-table-column>
-        <el-table-column prop="net_sales_amount" label="季度净销售额" width="170">
+        <el-table-column prop="net_sales_amount" label="期间明细分摊销售额" width="190">
           <template #default="{ row }">{{ formatNumber(row.net_sales_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="turnover_rate" label="估算周转次数" width="150">
@@ -562,7 +622,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <el-table-column prop="available_stock" label="可用库存" width="130" sortable>
           <template #default="{ row }">{{ formatNumber(row.available_stock) }}</template>
         </el-table-column>
-        <el-table-column prop="net_sales_quantity" label="季度净销售" width="140" sortable>
+        <el-table-column prop="net_sales_quantity" label="期间净销售" width="140" sortable>
           <template #default="{ row }">{{ formatNumber(row.net_sales_quantity) }}</template>
         </el-table-column>
         <el-table-column prop="turnover_days" label="估算周转天数" width="150" sortable>
@@ -606,8 +666,10 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
 .brand-turnover-filter { padding: 10px 12px; }
 .brand-filter-controls { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .brand-filter-brand { flex: 0 1 190px; }
+.brand-filter-period-mode { flex: 0 0 auto; }
 .brand-filter-year { flex: 0 0 112px; }
 .brand-filter-quarter { flex: 0 0 auto; }
+.brand-filter-date-range { flex: 0 0 250px; width: 250px; }
 .brand-filter-stock { flex: 0 0 158px; }
 .brand-filter-warehouse { flex: 1 1 220px; min-width: 180px; }
 .brand-filter-type { flex: 0 1 190px; min-width: 160px; }

@@ -74,8 +74,42 @@ const metrics = computed(() => [
 
 const sizeSummary = computed(() => ['正装', '小样'].map((type) => {
   const row = analysis.value.product_type_summary.find((item) => item.product_type === type)
-  return { product_type: type, net_quantity: Number(row?.net_quantity || 0), document_count: Number(row?.document_count || 0), sku_count: Number(row?.sku_count || 0) }
+  return {
+    product_type: type,
+    net_quantity: Number(row?.net_quantity || 0),
+    net_cost_amount: Number(row?.net_cost_amount || 0),
+    document_count: Number(row?.document_count || 0),
+    sku_count: Number(row?.sku_count || 0),
+  }
 }))
+
+const selectedBrandLabel = computed(() => {
+  if (selectedBrands.value.length === 1) return selectedBrands.value[0]
+  if (selectedBrands.value.length > 1) return '所选品牌'
+  return '全部品牌'
+})
+
+const arrivalTypeMetrics = computed(() => {
+  const quantities = sizeSummary.value.map((item) => ({
+    key: `${item.product_type}-quantity`,
+    label: `${selectedBrandLabel.value}${item.product_type}到货数量`,
+    value: formatNumber(item.net_quantity),
+    unit: '件',
+    note: `${formatNumber(item.sku_count)} 个 SKU · ${formatNumber(item.document_count)} 张入库单`,
+    kind: 'quantity',
+    productType: item.product_type,
+  }))
+  const amounts = sizeSummary.value.map((item) => ({
+    key: `${item.product_type}-amount`,
+    label: `${selectedBrandLabel.value}${item.product_type}到货金额`,
+    value: formatNumber(item.net_cost_amount, 2),
+    unit: '元',
+    note: '按入库明细成本金额汇总',
+    kind: 'amount',
+    productType: item.product_type,
+  }))
+  return [...quantities, ...amounts]
+})
 
 const productRows = computed(() => analysis.value.products.slice(0, 12))
 const productChartOption = computed(() => ({
@@ -259,9 +293,9 @@ onMounted(() => fetchData())
 
       <section class="arrival-panel type-trend-panel">
         <header><div><small>分类趋势</small><h2>正装与小样入库数量趋势</h2></div><span>按实际入库日期统计</span></header>
-        <div class="type-summary-row">
-          <article v-for="item in sizeSummary" :key="item.product_type" :class="`is-${item.product_type === '正装' ? 'full' : 'sample'}`">
-            <span>{{ item.product_type }}净到货</span><strong>{{ formatNumber(item.net_quantity) }} <em>件</em></strong><small>{{ formatNumber(item.sku_count) }} 个 SKU · {{ formatNumber(item.document_count) }} 张入库单</small>
+        <div class="type-metrics-grid">
+          <article v-for="item in arrivalTypeMetrics" :key="item.key" class="type-metric" :class="[`is-${item.kind}`, `is-${item.productType === '正装' ? 'full' : 'sample'}`]">
+            <span>{{ item.label }}</span><strong>{{ item.value }} <em>{{ item.unit }}</em></strong><small>{{ item.note }}</small>
           </article>
         </div>
         <VChart v-if="analysis.trend.length" class="type-trend-chart" :option="typeTrendOption" autoresize />
@@ -290,6 +324,11 @@ onMounted(() => fetchData())
           <button v-for="item in [{label:'全部明细',value:'all'},{label:'正装明细',value:'正装'},{label:'小样明细',value:'小样'}]" :key="item.value" :class="{ active: detailType === item.value }" @click="setDetailType(item.value)">{{ item.label }}</button>
         </div>
       </header>
+      <div class="type-metrics-grid is-detail-summary">
+        <article v-for="item in arrivalTypeMetrics" :key="item.key" class="type-metric" :class="[`is-${item.kind}`, `is-${item.productType === '正装' ? 'full' : 'sample'}`]">
+          <span>{{ item.label }}</span><strong>{{ item.value }} <em>{{ item.unit }}</em></strong><small>{{ item.note }}</small>
+        </article>
+      </div>
       <el-table :data="analysis.details" stripe height="590" empty-text="暂无数据">
         <el-table-column prop="receipt_time" label="入库时间" width="150" sortable><template #default="scope">{{ formatDate(scope.row.receipt_time, true) }}</template></el-table-column>
         <el-table-column prop="receipt_number" label="入库单号" width="175" show-overflow-tooltip />
@@ -298,9 +337,9 @@ onMounted(() => fetchData())
         <el-table-column prop="product_type" label="货品分类" width="100" sortable />
         <el-table-column prop="warehouse" label="入库仓库" width="150" show-overflow-tooltip />
         <el-table-column prop="supplier" label="供应商" width="170" show-overflow-tooltip />
-        <el-table-column prop="quantity" label="数量" width="100" align="right" sortable><template #default="scope">{{ formatNumber(scope.row.quantity) }}</template></el-table-column>
+        <el-table-column prop="quantity" label="到货数量" width="110" align="right" sortable><template #default="scope">{{ formatNumber(scope.row.quantity) }}</template></el-table-column>
         <el-table-column prop="unit_cost" label="成本单价" width="115" align="right" sortable><template #default="scope">{{ formatNumber(scope.row.unit_cost, 2) }}</template></el-table-column>
-        <el-table-column prop="cost_amount" label="成本金额" width="130" align="right" sortable><template #default="scope">{{ formatNumber(scope.row.cost_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="cost_amount" label="到货成本金额" width="140" align="right" sortable><template #default="scope">{{ formatNumber(scope.row.cost_amount, 2) }}</template></el-table-column>
         <el-table-column prop="batch" label="批次" width="130" show-overflow-tooltip />
         <el-table-column prop="expiry_date" label="到期日期" width="115" sortable><template #default="scope">{{ formatDate(scope.row.expiry_date) }}</template></el-table-column>
       </el-table>
@@ -337,8 +376,16 @@ onMounted(() => fetchData())
 .arrival-metric { min-width: 0; min-height: 104px; padding: 17px 20px; border-radius: 8px; display: grid; align-content: center; gap: 7px; }.arrival-metric > span { color: #607086; font-size: 12px; font-weight: 700; }.arrival-metric div { display: flex; align-items: baseline; gap: 7px; min-width: 0; }.arrival-metric strong { font-size: clamp(22px, 1.7vw, 30px); line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }.arrival-metric em { color: #667085; font-size: 12px; font-style: normal; }.arrival-metric small { color: #98a2b3; }.arrival-metric.is-accent { border-color: #4f7f2d; background: #4f7f2d; color: #fff; }.arrival-metric.is-accent > span, .arrival-metric.is-accent em, .arrival-metric.is-accent small { color: rgba(255,255,255,.78); }
 .arrival-panel { min-width: 0; overflow: hidden; border-radius: 8px; }.arrival-panel header { min-height: 62px; padding: 13px 16px; border-bottom: 1px solid #e7ebef; display: flex; align-items: center; justify-content: space-between; gap: 16px; }.arrival-panel header h2 { margin: 0; font-size: 15px; }.arrival-panel header > span { color: #98a2b3; font-size: 11px; white-space: nowrap; }
 .product-chart { height: 430px; }.type-trend-chart { height: 330px; }
-.type-summary-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px 16px 0; }.type-summary-row article { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 4px 14px; padding: 13px 16px; border: 1px solid #e5e9e2; border-left: 3px solid #4f7f2d; border-radius: 7px; background: #fafcf8; }.type-summary-row article.is-sample { border-left-color: #a6c95a; }.type-summary-row span { color: #667085; font-size: 12px; font-weight: 700; }.type-summary-row strong { font-size: 20px; }.type-summary-row em { color: #667085; font-size: 11px; font-style: normal; }.type-summary-row small { grid-column: 1 / -1; color: #98a2b3; }
+.type-metrics-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 16px 0; }
+.type-metrics-grid.is-detail-summary { padding-bottom: 14px; border-bottom: 1px solid #e7ebef; background: #fbfcfb; }
+.type-metric { min-width: 0; display: grid; gap: 7px; padding: 14px 16px; border: 1px solid #e5e9e2; border-top: 3px solid #4f7f2d; border-radius: 7px; background: #fafcf8; }
+.type-metric.is-sample { border-top-color: #a6c95a; }
+.type-metric.is-amount { background: #f6f9ef; }
+.type-metric span { overflow: hidden; color: #667085; font-size: 12px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.type-metric strong { overflow: hidden; font-size: 20px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; }
+.type-metric em { color: #667085; font-size: 11px; font-style: normal; }
+.type-metric small { color: #98a2b3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-panel :deep(.el-table), .detail-panel :deep(.el-table) { --el-table-header-bg-color: #f8faf9; --el-table-row-hover-bg-color: #f6f9ef; }.table-panel :deep(.el-table th.el-table__cell), .detail-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 12px; font-weight: 700; }.share-value { color: #4f7f2d; }.pagination-row { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; color: #98a2b3; font-size: 12px; }
-@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select, .warehouse-select { width: 220px; } }
-@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .brand-select, .type-select, .warehouse-select { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-summary-row { grid-template-columns: 1fr; } }
+@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics, .type-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select, .warehouse-select { width: 220px; } }
+@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .brand-select, .type-select, .warehouse-select { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-metrics-grid { grid-template-columns: 1fr; } }
 </style>

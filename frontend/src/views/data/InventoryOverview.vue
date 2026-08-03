@@ -34,6 +34,7 @@ const overview = ref({
     stock_quantity: 0,
     available_stock: 0,
     stock_amount: 0,
+    stock_amount_available: true,
     below_min_count: 0,
     above_max_count: 0,
     expiring_batch_count: 0,
@@ -55,9 +56,14 @@ function formatDate(value) {
 }
 
 const metrics = computed(() => [
-  { label: '库存商品', value: formatNumber(overview.value.metrics.product_count), unit: '个', trend: '来自分仓库查询' },
+  { label: '库存商品', value: formatNumber(overview.value.metrics.product_count), unit: '个', trend: '按货品编号去重' },
   { label: '可用库存', value: formatNumber(overview.value.metrics.available_stock), unit: '件', trend: `总库存 ${formatNumber(overview.value.metrics.stock_quantity)} 件` },
-  { label: '库存金额', value: formatNumber(overview.value.metrics.stock_amount, 2), unit: '元', trend: '来自分仓库查询' },
+  {
+    label: '库存金额',
+    value: overview.value.metrics.stock_amount_available ? formatNumber(overview.value.metrics.stock_amount, 2) : '暂不可用',
+    unit: overview.value.metrics.stock_amount_available ? '元' : '',
+    trend: overview.value.metrics.stock_amount_available ? '库存快照成本金额' : '源数据成本字段当前为空',
+  },
   { label: '临期批次', value: formatNumber(overview.value.metrics.expiring_batch_count), unit: '批', trend: `更新 ${formatDate(overview.value.updated_at)}` },
 ])
 
@@ -76,7 +82,9 @@ const warehouseBarOption = computed(() => ({
         `${row.warehouse}`,
         `可用库存：${formatNumber(row.available_stock)} 件`,
         `库存数量：${formatNumber(row.stock_quantity)} 件`,
-        `库存金额：${formatNumber(row.stock_amount, 2)} 元`,
+        overview.value.metrics.stock_amount_available
+          ? `库存金额：${formatNumber(row.stock_amount, 2)} 元`
+          : '库存金额：源数据暂不可用',
       ].join('<br/>')
     },
   },
@@ -209,15 +217,15 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchOverview()]))
     </div>
 
     <div class="metric-grid compact-metrics inventory-overview-metrics">
-      <MetricCard label="分仓库存记录" :value="formatNumber(overview.metrics.warehouse_records)" unit="条" trend="来自分仓库查询" />
-      <MetricCard label="批次库存记录" :value="formatNumber(overview.metrics.batch_records)" unit="条" trend="来自批次货品库存查询" />
+      <MetricCard label="分仓库存记录" :value="formatNumber(overview.metrics.warehouse_records)" unit="条" trend="当前库存发布快照" />
+      <MetricCard label="批次库存记录" :value="formatNumber(overview.metrics.batch_records)" unit="条" trend="批次库存发布快照" />
       <MetricCard label="低于下限" :value="formatNumber(overview.metrics.below_min_count)" unit="项" trend="可用库存低于库存下限" />
       <MetricCard label="高于上限" :value="formatNumber(overview.metrics.above_max_count)" unit="项" trend="可用库存高于库存上限" />
     </div>
 
     <section class="panel">
       <header>
-        <h2>仓库可用库存排行<span class="panel-source">（分仓库查询）</span></h2>
+        <h2>仓库可用库存排行<span class="panel-source">（最新库存发布版本）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchOverview" />
       </header>
       <v-chart class="chart chart-compact" :option="warehouseBarOption" autoresize />

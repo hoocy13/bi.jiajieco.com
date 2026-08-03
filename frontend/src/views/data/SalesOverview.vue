@@ -54,7 +54,7 @@ const dateRangeLabel = computed(() => {
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 
 const metrics = computed(() => [
-  { label: '销售额', value: formatNumber(overview.value.metrics.paid_amount), unit: '元', trend: overview.value.period },
+  { label: '订单实付金额', value: formatNumber(overview.value.metrics.paid_amount), unit: '元', trend: overview.value.period },
   { label: '订单数', value: formatNumber(overview.value.metrics.orders), unit: '单', trend: '正向订单去重' },
   { label: '销售数量', value: formatNumber(overview.value.metrics.quantity), unit: '件', trend: '货品数量合计' },
   { label: '客单价', value: formatNumber(overview.value.metrics.avg_order_amount, 2), unit: '元', trend: `截至 ${formatDate(overview.value.as_of)}` },
@@ -88,7 +88,7 @@ const trendOption = computed(() => ({
   },
   series: [
     {
-      name: '销售额',
+      name: '订单实付金额',
       type: 'line',
       smooth: false,
       symbolSize: 6,
@@ -125,7 +125,7 @@ const channelBarOption = computed(() => ({
       const row = overview.value.channels[item.dataIndex]
       return [
         `${row.channel}`,
-        `销售额：${formatNumber(row.paid_amount, 2)} 元`,
+        `订单实付金额：${formatNumber(row.paid_amount, 2)} 元`,
         `销售占比：${formatPercent(row.share)}`,
         `订单数：${formatNumber(row.orders)} 单`,
       ].join('<br/>')
@@ -151,7 +151,7 @@ const channelBarOption = computed(() => ({
   },
   series: [
     {
-      name: '销售额',
+      name: '订单实付金额',
       type: 'bar',
       barWidth: 12,
       itemStyle: {
@@ -241,7 +241,7 @@ onMounted(fetchOverview)
 
     <section class="panel">
       <header>
-        <h2>{{ overview.period }}销售趋势<span class="panel-source">（销售单查询）</span></h2>
+        <h2>{{ overview.period }}订单实付趋势<span class="panel-source">（订单头实付金额口径）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchOverview" />
       </header>
       <v-chart class="chart" :option="trendOption" autoresize />
@@ -249,7 +249,7 @@ onMounted(fetchOverview)
 
     <section class="panel">
       <header>
-        <h2>{{ overview.period }}渠道排行<span class="panel-source">（销售单查询）</span></h2>
+        <h2>{{ overview.period }}渠道排行<span class="panel-source">（订单头实付金额口径）</span></h2>
       </header>
       <v-chart class="chart chart-compact" :option="channelBarOption" autoresize />
       <el-table :data="overview.channels" height="360">
@@ -277,7 +277,7 @@ onMounted(fetchOverview)
         <el-table-column prop="quantity" label="销售数量" width="130">
           <template #default="{ row }">{{ formatNumber(row.quantity) }}</template>
         </el-table-column>
-        <el-table-column prop="paid_amount" label="销售额" width="180">
+        <el-table-column prop="paid_amount" label="订单实付金额" width="180">
           <template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="avg_order_amount" label="客单价" width="150">

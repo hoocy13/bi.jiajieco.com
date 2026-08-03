@@ -16,7 +16,7 @@ from app.services.model_client import get_model_config
 from app.services.text_to_sql_agent import execute_readonly_sql
 
 
-SALES_TABLE = "ods.`销售单明细账`"
+SALES_TABLE = "dwd.`销售单明细账_品牌补全`"
 
 
 class SqlSafetyTest(unittest.TestCase):
@@ -28,7 +28,7 @@ class SqlSafetyTest(unittest.TestCase):
         )
         self.assertIn("LIMIT 200", safe.sql)
         self.assertTrue(safe.limit_rewritten)
-        self.assertEqual(safe.tables, ("ods.销售单明细账",))
+        self.assertEqual(safe.tables, ("dwd.销售单明细账_品牌补全",))
         self.assertIn("`品牌`", safe.sql)
 
     def test_preserves_smaller_limit(self) -> None:
@@ -112,13 +112,13 @@ class SqlExecutionTest(unittest.TestCase):
     def setUp(self) -> None:
         self.engine = create_engine("sqlite+pysqlite:///:memory:")
         connection = self.engine.connect()
-        connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS ods")
+        connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS dwd")
         connection.exec_driver_sql(
-            "CREATE TABLE ods.`销售单明细账` "
+            "CREATE TABLE dwd.`销售单明细账_品牌补全` "
             "(`品牌` TEXT, `分摊后金额` REAL)"
         )
         connection.exec_driver_sql(
-            "INSERT INTO ods.`销售单明细账` VALUES "
+            "INSERT INTO dwd.`销售单明细账_品牌补全` VALUES "
             "('A', 10), ('B', 20), ('C', 30)"
         )
         connection.commit()
@@ -139,7 +139,7 @@ class SqlExecutionTest(unittest.TestCase):
         )
         self.assertEqual(result["row_count"], 2)
         self.assertEqual(result["max_rows"], 2)
-        self.assertEqual(result["tables"], ["ods.销售单明细账"])
+        self.assertEqual(result["tables"], ["dwd.销售单明细账_品牌补全"])
         self.assertTrue(result["limited"])
         self.assertEqual(result["rows"][0]["品牌"], "C")
 

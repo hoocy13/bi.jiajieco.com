@@ -126,7 +126,7 @@ const salesChannelCounts = computed(() => analysis.value.rows.reduce((result, it
 }, { online: 0, offline: 0, onlineAmount: 0, offlineAmount: 0 }))
 const metrics = computed(() => [
   {
-    label: '周期销售额', alias: '(GMV)', value: formatNumber(analysis.value.summary.paid_amount, 2),
+    label: '周期明细分摊销售额', alias: '', value: formatNumber(analysis.value.summary.paid_amount, 2),
     unit: '元', note: analysis.value.period, accent: true,
   },
   {
@@ -182,7 +182,7 @@ const salesContribution = computed(() => {
       offlinePercent: total ? Math.max(offline, 0) / total * 100 : 0,
     }
   }
-  const amount = summarize('paid_amount', '销售额贡献', '元', 2)
+  const amount = summarize('paid_amount', '分摊销售额贡献', '元', 2)
   return {
     hasData: channels.length > 0 && (amount.online !== 0 || amount.offline !== 0),
     metrics: [summarize('quantity', '销售数量贡献', '件', 0), amount],
@@ -225,7 +225,7 @@ const trendOption = computed(() => ({
   ],
   series: [
     {
-      name: '销售额', type: 'line', smooth: false, symbol: 'circle', symbolSize: 5,
+      name: '明细分摊销售额', type: 'line', smooth: false, symbol: 'circle', symbolSize: 5,
       showSymbol: analysis.value.trend.length <= 2, lineStyle: { width: 3 },
       areaStyle: {
         color: {
@@ -409,7 +409,7 @@ onMounted(fetchAnalysis)
     >
       <article class="panel channel-trend-panel">
         <header>
-          <div><p class="section-kicker">月度渠道信息</p><h2>月度销售额与订单趋势</h2></div>
+          <div><p class="section-kicker">月度渠道信息</p><h2>月度明细分摊销售额与订单趋势</h2></div>
           <el-button :icon="'Refresh'" circle title="刷新数据" @click="fetchAnalysis" />
         </header>
         <v-chart v-if="analysis.trend.length" class="channel-trend-chart" :option="trendOption" autoresize />
@@ -449,7 +449,7 @@ onMounted(fetchAnalysis)
     <section v-else-if="activePage === 'channel'" class="channel-efficiency-section" data-testid="channel-efficiency">
       <div class="section-heading">
         <div><p class="section-kicker">渠道表现</p><h2>线上与线下渠道表现</h2></div>
-        <span>按销售额排序</span>
+        <span>按明细分摊销售额排序</span>
       </div>
       <div class="channel-efficiency-grid">
         <article class="panel efficiency-card">
@@ -497,7 +497,7 @@ onMounted(fetchAnalysis)
             <el-table-column prop="channel_kind" label="渠道归属" min-width="150" sortable />
             <el-table-column prop="channels" label="渠道数" width="120" sortable />
             <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
-            <el-table-column prop="paid_amount" label="销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+            <el-table-column prop="paid_amount" label="分摊销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
             <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
           </el-table>
         </section>
@@ -508,7 +508,7 @@ onMounted(fetchAnalysis)
             <el-table-column prop="platform" label="线上平台" min-width="150" sortable />
             <el-table-column prop="channels" label="渠道数" width="120" sortable />
             <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
-            <el-table-column prop="paid_amount" label="销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+            <el-table-column prop="paid_amount" label="分摊销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
             <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
           </el-table>
         </section>
@@ -531,7 +531,7 @@ onMounted(fetchAnalysis)
           </el-table-column>
           <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
           <el-table-column prop="quantity" label="销售数量" width="120" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
-          <el-table-column prop="paid_amount" label="销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+          <el-table-column prop="paid_amount" label="分摊销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
           <el-table-column prop="share" label="销售占比" width="110" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
           <el-table-column prop="avg_order_amount" label="客单价" width="130" sortable><template #default="{ row }">{{ formatNumber(row.avg_order_amount, 2) }}</template></el-table-column>
         </el-table>
@@ -544,7 +544,7 @@ onMounted(fetchAnalysis)
           <el-table-column prop="category" label="渠道分类" width="150" sortable />
           <el-table-column prop="orders" label="订单数" width="130" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
           <el-table-column prop="quantity" label="销售数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
-          <el-table-column prop="paid_amount" label="销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+          <el-table-column prop="paid_amount" label="分摊销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
           <el-table-column prop="share" label="销售占比" width="120" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
           <el-table-column label="客户下钻" width="110" fixed="right" align="center">
             <template #default="{ row }"><el-button link type="primary" @click.stop="openCustomerDrilldown(row)">查看客户</el-button></template>
@@ -577,7 +577,7 @@ onMounted(fetchAnalysis)
           <article><span>客户数</span><strong>{{ formatNumber(customerAnalysis.summary.customers) }} <small>个</small></strong></article>
           <article><span>订单数</span><strong>{{ formatNumber(customerAnalysis.summary.orders) }} <small>单</small></strong></article>
           <article><span>销售数量</span><strong>{{ formatNumber(customerAnalysis.summary.quantity) }} <small>件</small></strong></article>
-          <article class="is-accent"><span>销售金额</span><strong>¥ {{ formatNumber(customerAnalysis.summary.paid_amount, 2) }}</strong></article>
+          <article class="is-accent"><span>明细分摊销售额</span><strong>¥ {{ formatNumber(customerAnalysis.summary.paid_amount, 2) }}</strong></article>
         </div>
 
         <section class="panel customer-sales-table">
@@ -587,7 +587,7 @@ onMounted(fetchAnalysis)
             <el-table-column prop="customer_name" label="客户名称" min-width="220" show-overflow-tooltip sortable />
             <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
             <el-table-column prop="quantity" label="销售数量" width="120" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
-            <el-table-column prop="paid_amount" label="销售金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+            <el-table-column prop="paid_amount" label="分摊销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
             <el-table-column prop="share" label="销售占比" width="110" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
             <el-table-column prop="avg_order_amount" label="客单价" width="130" sortable><template #default="{ row }">{{ formatNumber(row.avg_order_amount, 2) }}</template></el-table-column>
           </el-table>

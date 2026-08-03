@@ -265,7 +265,7 @@ def load_dashboard_overview_from_ads(
         "period": "近30天",
         "cards": [
             {
-                "label": "近30天销售额",
+                "label": "近30天订单实付金额",
                 "value": f"{paid_amount / 1_000_000:,.2f}",
                 "unit": "百万",
                 "trend": f"截至 {as_of.isoformat()}",

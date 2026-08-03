@@ -196,7 +196,9 @@ def _resolve_detail_sales_period(
     start_date: date | None,
     end_date: date | None,
 ) -> tuple[dict, dict] | tuple[None, dict]:
-    max_date = db.execute(text("SELECT MAX(`下单时间`) FROM `销售单明细账`")).scalar()
+    max_date = db.execute(
+        text("SELECT MAX(`下单时间`) FROM `dwd`.`销售单明细账_品牌补全`")
+    ).scalar()
     as_of = _as_date(max_date)
     if as_of is None:
         return None, _empty_sales_payload(range_key, start_date, end_date)
@@ -817,7 +819,7 @@ def sales_product_rank(
                     text(
                         """
                         SELECT COUNT(DISTINCT `订单编号`)
-                        FROM `销售单明细账`
+                        FROM `dwd`.`销售单明细账_品牌补全`
                         WHERE `下单时间` >= :start_date
                           AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
                           AND `货品名称` LIKE :keyword
@@ -859,7 +861,7 @@ def sales_product_rank(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {where_sql}
             """
         ),
@@ -877,7 +879,7 @@ def sales_product_rank(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {where_sql}
             GROUP BY COALESCE(NULLIF(`货品名称`, ''), '未命名商品')
             ORDER BY paid_amount DESC
@@ -894,7 +896,7 @@ def sales_product_rank(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {where_sql}
             GROUP BY COALESCE(NULLIF(`货品名称`, ''), '未命名商品')
             ORDER BY quantity DESC, paid_amount DESC
@@ -1028,7 +1030,7 @@ def sales_brand_analysis(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {where_sql}
             """
         ),
@@ -1055,7 +1057,7 @@ def sales_brand_analysis(
               SUM(COALESCE(`数量`, 0)) AS quantity,
               COUNT(DISTINCT COALESCE(NULLIF(`货品名称`, ''), '未命名商品')) AS product_count,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {where_sql}
             GROUP BY {brand_expr}
             ORDER BY paid_amount DESC, brand
@@ -1203,7 +1205,7 @@ def sales_channel_analysis(
               COUNT(DISTINCT s.`订单编号`) AS orders,
               SUM(COALESCE(s.`分摊后金额`, 0)) AS paid_amount,
               SUM(COALESCE(s.`数量`, 0)) AS quantity
-            FROM `销售单明细账` s
+            FROM `dwd`.`销售单明细账_品牌补全` s
             LEFT JOIN `渠道列表` c
               ON c.`渠道名称` = COALESCE(NULLIF(s.`销售渠道`, ''), '未归类')
             WHERE s.`下单时间` >= :start_date
@@ -1488,7 +1490,7 @@ def sales_channel_customer_analysis(
           COUNT(DISTINCT l.`订单编号`) AS orders,
           SUM(COALESCE(l.`数量`, 0)) AS quantity,
           SUM(COALESCE(l.`分摊后金额`, 0)) AS paid_amount
-        FROM `销售单明细账` l
+        FROM `dwd`.`销售单明细账_品牌补全` l
         LEFT JOIN (
           SELECT
             `订单编号`,
@@ -1757,7 +1759,7 @@ def sales_brand_channel_analysis(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {fact_where}
             """
         ),
@@ -1775,7 +1777,7 @@ def sales_brand_channel_analysis(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {fact_where}
             GROUP BY DATE(`下单时间`)
             ORDER BY day
@@ -1791,7 +1793,7 @@ def sales_brand_channel_analysis(
           COUNT(DISTINCT `订单编号`) AS orders,
           SUM(COALESCE(`数量`, 0)) AS quantity,
           SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-        FROM `销售单明细账`
+        FROM `dwd`.`销售单明细账_品牌补全`
         WHERE {fact_where}
         GROUP BY COALESCE(NULLIF(`销售渠道`, ''), '未归类')
     """
@@ -1868,7 +1870,7 @@ def sales_brand_channel_analysis(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE {fact_where}
             GROUP BY COALESCE(NULLIF(`货品名称`, ''), '未命名商品')
             ORDER BY paid_amount DESC
@@ -1886,7 +1888,7 @@ def sales_brand_channel_analysis(
               COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未分类') AS product_type,
               SUM(COALESCE(s.`数量`, 0)) AS quantity,
               SUM(COALESCE(s.`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账` s
+            FROM `dwd`.`销售单明细账_品牌补全` s
             LEFT JOIN `渠道列表` c
               ON c.`渠道名称` = COALESCE(NULLIF(s.`销售渠道`, ''), '未归类')
             WHERE {fact_where}

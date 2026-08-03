@@ -59,14 +59,20 @@ def _build_prompt(schema_context: dict[str, Any]) -> list[dict[str, str]]:
         "examples": [_slim_example(example) for example in schema_context.get("examples", [])],
         "guardrails": schema_context.get("guardrails", []),
     }
-    system = """你是企业 BI Text-to-SQL 助手，只负责生成 MySQL 8.0 的只读 SQL。
+    metric_rules = """金额口径规则：
+1. 用户只问总销售额、订单金额或实付金额，且未指定商品、品牌、品类、渠道或客户等明细维度时，使用订单头的`实付金额`。
+2. 用户按商品、品牌、品类、渠道或客户等明细维度分析销售额时，使用销售明细的`分摊后金额`。
+3. 订单头实付金额与明细分摊销售额是不同指标，不要强制相等。
+4. 不得将两种金额的差额解释或计算为平台抽成。
+"""
+    system = metric_rules + """你是企业 BI Text-to-SQL 助手，只负责生成 MySQL 8.0 的只读 SQL。
 
 必须遵守：
 1. 只输出一个 SELECT 查询，不要解释，不要 Markdown。
 2. 只能使用提供的表、字段、指标和关系。
 3. 中文表名、中文字段名必须用反引号。
-4. 表名必须带 schema 前缀，例如 ods.`销售单明细账`。
-5. 默认销售额使用 ods.`销售单明细账`.`分摊后金额`。
+4. 表名必须带 schema 前缀，例如 dwd.`销售单明细账_品牌补全`。
+5. 默认销售额使用 dwd.`销售单明细账_品牌补全`.`分摊后金额`。
 6. 售后退货、售后发货进入销售指标，不要默认过滤。
 7. 订单头“销售单查询”使用 dwd.`销售单查询_进口超市上海仓补全`，不要使用 ods 原始订单头表。
 8. 不确定时优先生成保守、可执行的聚合 SQL。
@@ -94,12 +100,13 @@ def build_repair_prompt(
         "guardrails": schema_context.get("guardrails", []),
     }
     system = """你是 MySQL SQL 修复助手。请根据原问题、可用 schema、失败 SQL 和错误信息修复查询。
+金额口径不得在修复时改变：订单级总额使用订单头`实付金额`；商品、品牌、品类、渠道或客户维度使用明细`分摊后金额`；差额不是平台抽成。
 
 必须遵守：
 1. 只输出一个修复后的 SELECT 查询，不要解释，不要 Markdown。
 2. 只能使用提供的表、字段、指标和关系。
 3. 中文表名、中文字段名必须用反引号。
-4. 表名必须带 schema 前缀，例如 ods.`销售单明细账`。
+4. 表名必须带 schema 前缀，例如 dwd.`销售单明细账_品牌补全`。
 5. 不要使用写入、DDL、存储过程、临时表或多语句。
 6. 订单头“销售单查询”使用 dwd.`销售单查询_进口超市上海仓补全`。
 """

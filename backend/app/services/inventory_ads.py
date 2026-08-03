@@ -219,6 +219,10 @@ def load_inventory_overview_from_ads(
             "stock_quantity": _number(total_row["stock_quantity"]),
             "available_stock": _number(total_row["available_stock"]),
             "stock_amount": _number(warehouse_summary["stock_amount"]),
+            "stock_amount_available": not (
+                _number(total_row["stock_quantity"]) != 0
+                and _number(warehouse_summary["stock_amount"]) == 0
+            ),
             "below_min_count": _integer(total_row["below_min_count"]),
             "above_max_count": _integer(total_row["above_max_count"]),
             "expiring_batch_count": _integer(batch_summary["expiring_batch_count"]),
@@ -1023,8 +1027,10 @@ def load_inventory_brand_turnover_from_ads(
     inventory_batch: AdsPublishBatch,
     sales_batch: AdsPublishBatch,
     *,
-    year: int,
-    quarter: int,
+    year: int | None = None,
+    quarter: int | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
     keyword: str,
     min_stock: int,
     warehouses: tuple[str, ...],
@@ -1032,10 +1038,20 @@ def load_inventory_brand_turnover_from_ads(
     page: int,
     page_size: int,
 ) -> dict:
-    start_month = (quarter - 1) * 3 + 1
-    end_month = start_month + 2
-    start_date = date(year, start_month, 1)
-    end_date = date(year, end_month, monthrange(year, end_month)[1])
+    if start_date is None or end_date is None:
+        if year is None or quarter is None:
+            raise InventoryAdsUnavailable("Brand turnover period is incomplete")
+        start_month = (quarter - 1) * 3 + 1
+        end_month = start_month + 2
+        start_date = date(year, start_month, 1)
+        end_date = date(year, end_month, monthrange(year, end_month)[1])
+    if start_date > end_date:
+        raise InventoryAdsUnavailable("Brand turnover start date is after end date")
+    period_label = (
+        f"{year} Q{quarter}"
+        if year is not None and quarter is not None
+        else f"{start_date.isoformat()} 至 {end_date.isoformat()}"
+    )
     period_days = (end_date - start_date).days + 1
     stock_filter, stock_params = _filters(
         warehouses,
@@ -1385,7 +1401,7 @@ def load_inventory_brand_turnover_from_ads(
     return {
         "year": year,
         "quarter": quarter,
-        "period": f"{year} Q{quarter}",
+        "period": period_label,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "period_days": period_days,

@@ -515,6 +515,7 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(data["metrics"]["warehouse_records"], 4)
         self.assertEqual(data["metrics"]["available_stock"], 11)
         self.assertEqual(data["metrics"]["stock_amount"], 150)
+        self.assertTrue(data["metrics"]["stock_amount_available"])
         self.assertEqual(data["metrics"]["below_min_count"], 1)
         self.assertEqual(data["metrics"]["above_max_count"], 1)
         self.assertEqual(data["metrics"]["batch_records"], 6)
@@ -772,6 +773,24 @@ class InventoryAdsTests(unittest.TestCase):
             data["product_turnover_panels"][0]["total_available_stock"],
             180,
         )
+
+        custom = load_inventory_brand_turnover_from_ads(
+            self.db,
+            inventory_batch,
+            sales_batch,
+            start_date=date(2026, 4, 15),
+            end_date=date(2026, 5, 15),
+            keyword="",
+            min_stock=0,
+            warehouses=(),
+            product_types=(),
+            page=1,
+            page_size=50,
+        )
+        self.assertEqual(custom["period"], "2026-04-15 至 2026-05-15")
+        self.assertEqual(custom["start_date"], "2026-04-15")
+        self.assertEqual(custom["end_date"], "2026-05-15")
+        self.assertEqual(custom["period_days"], 31)
 
     def test_loads_slow_moving_filters_and_product_aggregation(self) -> None:
         batch = latest_ready_inventory_batch(self.db)
