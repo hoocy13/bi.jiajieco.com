@@ -197,7 +197,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
 
     <section class="panel">
       <header>
-        <h2>库存异常明细<span class="panel-source">（分仓库查询）</span></h2>
+        <h2>库存异常明细<span class="panel-source">（最新库存发布版本）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchRows" />
       </header>
       <el-table :data="rows" height="560">

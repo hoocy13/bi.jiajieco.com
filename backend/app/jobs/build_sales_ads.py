@@ -232,7 +232,7 @@ def load_detail_source_summary(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             """
@@ -255,7 +255,7 @@ def load_detail_daily_rows(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY DATE(`下单时间`)
@@ -281,7 +281,7 @@ def load_detail_channel_rows(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY
@@ -309,7 +309,7 @@ def load_product_rows(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY
@@ -337,7 +337,7 @@ def load_detail_scope_rows(
               COUNT(DISTINCT d.`订单编号`) AS orders,
               SUM(COALESCE(d.`数量`, 0)) AS quantity,
               SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账` d
+            FROM `dwd`.`销售单明细账_品牌补全` d
             JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
               ON scopes.product_type_scope = 'all'
               OR (
@@ -378,7 +378,7 @@ def load_brand_scope_rows(
               COUNT(DISTINCT d.`订单编号`) AS orders,
               SUM(COALESCE(d.`数量`, 0)) AS quantity,
               SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账` d
+            FROM `dwd`.`销售单明细账_品牌补全` d
             JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
               ON scopes.product_type_scope = 'all'
               OR (
@@ -423,7 +423,7 @@ def load_brand_product_rows(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY
@@ -469,7 +469,7 @@ def load_channel_customer_rows(
                   COUNT(DISTINCT l.`订单编号`) AS orders,
                   SUM(COALESCE(l.`数量`, 0)) AS quantity,
                   SUM(COALESCE(l.`分摊后金额`, 0)) AS paid_amount
-                FROM `销售单明细账` l
+                FROM `dwd`.`销售单明细账_品牌补全` l
                 LEFT JOIN (
                   SELECT
                     `订单编号`,
@@ -517,7 +517,7 @@ def load_offline_customer_source_summary(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
               AND COALESCE(NULLIF(`销售渠道`, ''), '未归类') IN (
@@ -549,7 +549,7 @@ def load_brand_channel_scope_rows(
               COUNT(DISTINCT d.`订单编号`) AS orders,
               SUM(COALESCE(d.`数量`, 0)) AS quantity,
               SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账` d
+            FROM `dwd`.`销售单明细账_品牌补全` d
             JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
               ON scopes.product_type_scope = 'all'
               OR (scopes.product_type_scope = 'full_size' AND {PRODUCT_TYPE_EXPRESSION_SQL} = '正装')
@@ -586,7 +586,7 @@ def load_brand_channel_product_rows(
               COUNT(DISTINCT `订单编号`) AS orders,
               SUM(COALESCE(`数量`, 0)) AS quantity,
               SUM(COALESCE(`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账`
+            FROM `dwd`.`销售单明细账_品牌补全`
             WHERE `下单时间` >= :start_date
               AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY
@@ -833,7 +833,7 @@ def load_brand_turnover_product_rows(
               MAX(d.`货品名称`) AS product,
               SUM(COALESCE(d.`数量`, 0)) AS quantity,
               SUM(COALESCE(d.`分摊后金额`, 0)) AS paid_amount
-            FROM `销售单明细账` d
+            FROM `dwd`.`销售单明细账_品牌补全` d
             WHERE d.`下单时间` >= :start_date
               AND d.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
             GROUP BY
@@ -897,7 +897,7 @@ def load_brand_turnover_order_rows(
               COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS brand,
               scopes.product_type_scope AS product_type,
               COUNT(DISTINCT d.`订单编号`) AS orders
-            FROM `销售单明细账` d
+            FROM `dwd`.`销售单明细账_品牌补全` d
             JOIN ({PRODUCT_TYPE_SCOPES_SQL}) scopes
               ON scopes.product_type_scope = 'all'
               OR (

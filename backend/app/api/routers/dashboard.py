@@ -122,7 +122,7 @@ def overview(
 ) -> dict:
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
-    cache_key = _sales_cache_key("dashboard-overview-v5", query_mode=query_mode)
+    cache_key = _sales_cache_key("dashboard-overview-v6", query_mode=query_mode)
     cached = _get_sales_cache(cache_key)
     if cached is not None:
         response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
@@ -286,7 +286,7 @@ def overview(
         "as_of": as_of.isoformat(),
         "period": "近30天",
         "cards": [
-            {"label": "近30天销售额", "value": _format_million(paid_amount), "unit": "百万", "trend": f"截至 {as_of.isoformat()}"},
+            {"label": "近30天订单实付金额", "value": _format_million(paid_amount), "unit": "百万", "trend": f"截至 {as_of.isoformat()}"},
             {"label": "近30天销售", "value": _format_million(quantity), "unit": "百万", "trend": "净销售数量"},
         ],
         "trend": {

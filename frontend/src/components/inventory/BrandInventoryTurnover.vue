@@ -521,7 +521,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
         <el-table-column prop="orders" label="订单数" width="120">
           <template #default="{ row }">{{ formatNumber(row.orders) }}</template>
         </el-table-column>
-        <el-table-column prop="net_sales_amount" label="季度净销售额" width="170">
+        <el-table-column prop="net_sales_amount" label="季度明细分摊销售额" width="190">
           <template #default="{ row }">{{ formatNumber(row.net_sales_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="turnover_rate" label="估算周转次数" width="150">

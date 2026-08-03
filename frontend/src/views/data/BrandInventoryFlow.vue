@@ -132,7 +132,7 @@ const metricCards = computed(() => [
     label: '净销售',
     value: analysis.value.summary.sales_quantity,
     unit: '件',
-    note: '销售额 ' + formatCompact(analysis.value.summary.sales_amount) + ' 元',
+    note: '明细分摊销售额 ' + formatCompact(analysis.value.summary.sales_amount) + ' 元',
   },
   {
     label: '期末库存',
@@ -177,7 +177,7 @@ const turnoverMetrics = computed(() => [
     label: `${productType}周转次数`, value: turnoverRateText(categoryTurnover.value[productType]?.turnover_rate), unit: '次',
     note: `月末平均库存 ${formatNumber(categoryTurnover.value[productType]?.average_inventory)} 件`,
   })),
-  { label: `${periodYearLabel.value}净销售`, value: formatNumber(turnoverAnalysis.value.summary.sales_quantity), unit: '件', note: `销售额 ${formatCompact(turnoverAnalysis.value.summary.sales_amount)} 元` },
+  { label: `${periodYearLabel.value}净销售`, value: formatNumber(turnoverAnalysis.value.summary.sales_quantity), unit: '件', note: `明细分摊销售额 ${formatCompact(turnoverAnalysis.value.summary.sales_amount)} 元` },
   { label: `${periodYearLabel.value}期末库存`, value: formatNumber(turnoverAnalysis.value.summary.ending_inventory), unit: '件', note: `库存金额 ${formatCompact(turnoverAnalysis.value.summary.ending_inventory_amount)} 元` },
 ])
 
@@ -574,7 +574,7 @@ onMounted(() => {
         <el-table-column prop="inbound_cost" label="采购入库成本" min-width="150" align="right" sortable>
           <template #default="{ row }">{{ formatNumber(row.inbound_cost, 2) }}</template>
         </el-table-column>
-        <el-table-column prop="sales_amount" label="销售额" min-width="145" align="right" sortable>
+        <el-table-column prop="sales_amount" label="分摊销售额" min-width="145" align="right" sortable>
           <template #default="{ row }">{{ formatNumber(row.sales_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="ending_stock_amount" label="期末库存金额" min-width="155" align="right" sortable>
@@ -620,7 +620,7 @@ onMounted(() => {
             <div v-for="item in turnoverAnalysis.channel_mix" :key="item.channel_kind">
               <span>{{ item.channel_kind }}</span><strong>{{ formatNumber(item.sales_quantity) }} 件</strong>
               <div><i :style="{ width: Math.max(0, Math.min(100, item.quantity_share)) + '%' }"></i></div>
-              <small>数量占比 {{ formatNumber(item.quantity_share, 1) }}% · 销售额 {{ formatCompact(item.sales_amount) }} 元</small>
+              <small>数量占比 {{ formatNumber(item.quantity_share, 1) }}% · 分摊销售额 {{ formatCompact(item.sales_amount) }} 元</small>
             </div>
           </div>
           <p class="channel-limit-note">{{ turnoverAnalysis.channel_turnover.reason }}</p>
@@ -679,7 +679,7 @@ onMounted(() => {
           <el-table-column prop="product_name" label="商品名称" min-width="260" fixed show-overflow-tooltip />
           <el-table-column prop="product_type" label="分类" width="80" sortable />
           <el-table-column prop="sales_quantity" label="净销售数量" width="130" align="right" sortable><template #default="{ row }">{{ formatNumber(row.sales_quantity) }}</template></el-table-column>
-          <el-table-column prop="sales_amount" label="销售金额" width="145" align="right" sortable><template #default="{ row }">{{ formatNumber(row.sales_amount, 2) }}</template></el-table-column>
+          <el-table-column prop="sales_amount" label="分摊销售额" width="145" align="right" sortable><template #default="{ row }">{{ formatNumber(row.sales_amount, 2) }}</template></el-table-column>
           <el-table-column prop="average_inventory" label="月末平均库存" width="140" align="right" sortable><template #default="{ row }">{{ formatNumber(row.average_inventory) }}</template></el-table-column>
           <el-table-column prop="ending_inventory" label="期末库存" width="120" align="right" sortable><template #default="{ row }">{{ formatNumber(row.ending_inventory) }}</template></el-table-column>
           <el-table-column prop="ending_inventory_amount" label="期末库存金额" width="150" align="right" sortable><template #default="{ row }">{{ formatNumber(row.ending_inventory_amount, 2) }}</template></el-table-column>

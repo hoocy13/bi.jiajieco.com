@@ -219,6 +219,10 @@ def load_inventory_overview_from_ads(
             "stock_quantity": _number(total_row["stock_quantity"]),
             "available_stock": _number(total_row["available_stock"]),
             "stock_amount": _number(warehouse_summary["stock_amount"]),
+            "stock_amount_available": not (
+                _number(total_row["stock_quantity"]) != 0
+                and _number(warehouse_summary["stock_amount"]) == 0
+            ),
             "below_min_count": _integer(total_row["below_min_count"]),
             "above_max_count": _integer(total_row["above_max_count"]),
             "expiring_batch_count": _integer(batch_summary["expiring_batch_count"]),

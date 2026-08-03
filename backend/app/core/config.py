@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     ODS_DATABASE_URL: str = ""
     ADS_DATABASE_URL: str = ""
     ADS_BUILD_DATABASE_URL: str = ""
-    BI_QUERY_SOURCE: str = "ods"
+    BI_QUERY_SOURCE: str = "ads"
     ADS_POOL_SIZE: int = 5
     ADS_MAX_OVERFLOW: int = 5
     ODS_BUILD_READ_TIMEOUT_SECONDS: int = 300

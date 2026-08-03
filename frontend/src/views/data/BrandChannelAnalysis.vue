@@ -109,8 +109,8 @@ const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.v
 
 const metrics = computed(() => [
   {
-    label: '周期净销售额',
-    alias: '(GMV)',
+    label: '周期明细分摊销售额',
+    alias: '',
     value: formatNumber(analysis.value.summary.paid_amount, 2),
     unit: '元',
     note: '含退货 / 冲销',
@@ -132,7 +132,7 @@ const metrics = computed(() => [
     label: '客单价',
     value: formatNumber(analysis.value.summary.avg_order_amount, 2),
     unit: '元',
-    note: '净销售额 / 订单数',
+    note: '明细分摊销售额 / 订单数',
   },
 ])
 
@@ -199,7 +199,7 @@ const salesContribution = computed(() => {
       offlinePercent: comparableTotal ? Math.max(offline, 0) / comparableTotal * 100 : 0,
     }
   }
-  const amount = summarize('paid_amount', '净销售额贡献', '元', 2)
+  const amount = summarize('paid_amount', '分摊销售额贡献', '元', 2)
   return {
     hasData: channels.length > 0 && (amount.online !== 0 || amount.offline !== 0),
     metrics: [
@@ -279,7 +279,7 @@ const trendOption = computed(() => ({
   ],
   series: [
     {
-      name: '净销售额',
+      name: '明细分摊销售额',
       type: 'line',
       smooth: false,
       symbol: 'circle',
@@ -459,7 +459,7 @@ function returnToBrands() {
         <header>
           <div>
             <p class="section-kicker">经营走势</p>
-            <h2>月度销售额波动趋势</h2>
+            <h2>月度明细分摊销售额趋势</h2>
           </div>
           <el-button :icon="'Refresh'" circle title="刷新数据" @click="fetchAnalysis" />
         </header>
@@ -513,7 +513,7 @@ function returnToBrands() {
           <p class="section-kicker">渠道效率</p>
           <h2>线上与线下渠道表现</h2>
         </div>
-        <span>按净销售额排序</span>
+        <span>按明细分摊销售额排序</span>
       </div>
       <div class="channel-efficiency-grid">
         <article class="panel efficiency-card">
@@ -581,7 +581,7 @@ function returnToBrands() {
           <el-table-column prop="channel_type" label="渠道分类" min-width="150" sortable />
           <el-table-column prop="active_channels" label="有销售渠道" width="132" sortable />
           <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
-          <el-table-column prop="paid_amount" label="净销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+          <el-table-column prop="paid_amount" label="分摊销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
           <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
         </el-table>
       </section>
@@ -592,7 +592,7 @@ function returnToBrands() {
           <el-table-column prop="platform" label="线上平台" min-width="150" sortable />
           <el-table-column prop="active_channels" label="有销售渠道" width="132" sortable />
           <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
-          <el-table-column prop="paid_amount" label="净销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+          <el-table-column prop="paid_amount" label="分摊销售额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
           <el-table-column prop="share" label="占比" width="90" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
         </el-table>
       </section>
@@ -610,7 +610,7 @@ function returnToBrands() {
         <el-table-column prop="detail_rows" label="明细行数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.detail_rows) }}</template></el-table-column>
         <el-table-column prop="orders" label="订单数" width="110" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
         <el-table-column prop="quantity" label="销售数量" width="120" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
-        <el-table-column prop="paid_amount" label="净销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="paid_amount" label="分摊销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
         <el-table-column prop="share" label="占比" width="100" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
         <el-table-column prop="avg_order_amount" label="客单价" width="130" sortable><template #default="{ row }">{{ formatNumber(row.avg_order_amount, 2) }}</template></el-table-column>
       </el-table>
@@ -621,11 +621,11 @@ function returnToBrands() {
       <el-table :data="analysis.salesperson_product_types" height="420">
         <el-table-column prop="salesperson" label="销售人员" min-width="140" sortable />
         <el-table-column prop="regular_quantity" label="正装数量" width="125" sortable><template #default="{ row }">{{ formatNumber(row.regular_quantity) }}</template></el-table-column>
-        <el-table-column prop="regular_paid_amount" label="正装金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.regular_paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="regular_paid_amount" label="正装分摊金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.regular_paid_amount, 2) }}</template></el-table-column>
         <el-table-column prop="sample_quantity" label="小样数量" width="125" sortable><template #default="{ row }">{{ formatNumber(row.sample_quantity) }}</template></el-table-column>
-        <el-table-column prop="sample_paid_amount" label="小样金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.sample_paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="sample_paid_amount" label="小样分摊金额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.sample_paid_amount, 2) }}</template></el-table-column>
         <el-table-column prop="total_quantity" label="合计数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.total_quantity) }}</template></el-table-column>
-        <el-table-column prop="total_paid_amount" label="合计金额" width="170" sortable><template #default="{ row }">{{ formatNumber(row.total_paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="total_paid_amount" label="分摊金额合计" width="170" sortable><template #default="{ row }">{{ formatNumber(row.total_paid_amount, 2) }}</template></el-table-column>
       </el-table>
       </section>
 
@@ -636,7 +636,7 @@ function returnToBrands() {
         <el-table-column prop="product" label="商品名称" min-width="300" show-overflow-tooltip sortable />
         <el-table-column prop="orders" label="订单数" width="120" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
         <el-table-column prop="quantity" label="销售数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.quantity) }}</template></el-table-column>
-        <el-table-column prop="paid_amount" label="净销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
+        <el-table-column prop="paid_amount" label="分摊销售额" width="160" sortable><template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template></el-table-column>
         <el-table-column prop="share" label="占比" width="110" sortable><template #default="{ row }">{{ formatPercent(row.share) }}</template></el-table-column>
       </el-table>
       </section>

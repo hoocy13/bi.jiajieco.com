@@ -64,7 +64,7 @@ const dateRangeLabel = computed(() => {
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 
 const metrics = computed(() => [
-  { label: '销售额', value: formatNumber(rank.value.summary.paid_amount), unit: '元', trend: rank.value.period },
+  { label: '明细分摊销售额', value: formatNumber(rank.value.summary.paid_amount), unit: '元', trend: rank.value.period },
   { label: '订单数', value: formatNumber(rank.value.summary.orders), unit: '单', trend: '正向订单去重' },
   { label: '销售数量', value: formatNumber(rank.value.summary.quantity), unit: '件', trend: '当前筛选结果' },
 ])
@@ -102,7 +102,7 @@ function buildBarOption(rows, valueKey, unit, digits = 0) {
     },
     series: [
       {
-        name: unit === '元' ? '销售额' : '销售数量',
+        name: unit === '元' ? '明细分摊销售额' : '销售数量',
         type: 'bar',
         barWidth: 12,
         itemStyle: {
@@ -197,7 +197,7 @@ onMounted(fetchRank)
 
     <section class="panel">
       <header>
-        <h2>商品销售排行榜<span class="panel-source">（按销售金额）</span></h2>
+        <h2>商品销售排行榜<span class="panel-source">（按明细分摊金额）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchRank" />
       </header>
       <v-chart class="rank-chart" :option="amountChartOption" autoresize />
@@ -217,7 +217,7 @@ onMounted(fetchRank)
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="share" label="销售额占比" width="120">
+        <el-table-column prop="share" label="分摊金额占比" width="120">
           <template #default="{ row }">{{ formatPercent(row.share) }}</template>
         </el-table-column>
         <el-table-column prop="orders" label="订单数" width="120">
@@ -226,7 +226,7 @@ onMounted(fetchRank)
         <el-table-column prop="quantity" label="销售数量" width="130">
           <template #default="{ row }">{{ formatNumber(row.quantity) }}</template>
         </el-table-column>
-        <el-table-column prop="paid_amount" label="销售额" width="160">
+        <el-table-column prop="paid_amount" label="分摊销售额" width="160">
           <template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="avg_unit_price" label="件均价" width="140">
@@ -265,7 +265,7 @@ onMounted(fetchRank)
         <el-table-column prop="orders" label="订单数" width="120">
           <template #default="{ row }">{{ formatNumber(row.orders) }}</template>
         </el-table-column>
-        <el-table-column prop="paid_amount" label="销售额" width="160">
+        <el-table-column prop="paid_amount" label="分摊销售额" width="160">
           <template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="avg_unit_price" label="件均价" width="140">

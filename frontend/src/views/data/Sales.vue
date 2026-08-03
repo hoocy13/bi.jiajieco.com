@@ -53,7 +53,7 @@ const dateRangeLabel = computed(() => {
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 
 const metrics = computed(() => [
-  { label: '销售额', value: formatNumber(detail.value.summary.paid_amount), unit: '元', trend: detail.value.period },
+  { label: '订单实付金额', value: formatNumber(detail.value.summary.paid_amount), unit: '元', trend: detail.value.period },
   { label: '订单数', value: formatNumber(detail.value.summary.orders), unit: '单', trend: '正向订单去重' },
   { label: '销售数量', value: formatNumber(detail.value.summary.quantity), unit: '件', trend: '当前筛选结果' },
 ])
@@ -138,7 +138,7 @@ onMounted(() => fetchDetail())
 
     <section class="panel">
       <header>
-        <h2>销售明细<span class="panel-source">（销售单查询）</span></h2>
+        <h2>销售订单明细<span class="panel-source">（订单头实付金额口径）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchDetail()" />
       </header>
       <el-table :data="detail.rows" height="520">

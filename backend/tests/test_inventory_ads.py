@@ -515,6 +515,7 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(data["metrics"]["warehouse_records"], 4)
         self.assertEqual(data["metrics"]["available_stock"], 11)
         self.assertEqual(data["metrics"]["stock_amount"], 150)
+        self.assertTrue(data["metrics"]["stock_amount_available"])
         self.assertEqual(data["metrics"]["below_min_count"], 1)
         self.assertEqual(data["metrics"]["above_max_count"], 1)
         self.assertEqual(data["metrics"]["batch_records"], 6)

@@ -8,13 +8,16 @@ source:
   inspected_at: 2026-07-11
   notes:
     - 仅基于 information_schema 与聚合画像整理，未抽取业务明细样本。
-    - 销售单查询更像订单头快照，销售单明细账更适合商品、品牌、渠道、城市等明细分析。
-    - 销售额默认使用 销售单明细账.分摊后金额。
+    - 订单头使用 dwd.销售单查询_进口超市上海仓补全；销售明细使用 dwd.销售单明细账_品牌补全。
+    - ods.销售单查询和 ods.销售单明细账仅作为原始数据保留。
+    - 未指定明细维度的总销售额使用销售单查询.实付金额；商品、品牌、品类、渠道或客户维度使用销售单明细账.分摊后金额。
+    - 订单实付金额与明细分摊销售额不强制相等，差额不代表平台抽成。
     - 有效订单默认只排除已取消、已取消-被合并、已取消-被拆分，其他订单状态均计入。
     - 售后退货、售后发货进入销售指标，不单独排除。
 
 tables:
   - name: 销售单查询
+    physical_table: dwd.`销售单查询_进口超市上海仓补全`
     description: 销售订单头表，每行代表一笔销售单，用于订单数、实付金额、应收金额、订单状态、渠道等分析。
     row_count_observed: 463235
     grain: 一行一笔销售单
@@ -81,6 +84,7 @@ tables:
         description: ODS 数据更新时间。
 
   - name: 销售单明细账
+    physical_table: dwd.`销售单明细账_品牌补全`
     description: 销售订单商品明细表，每行代表一个销售单中的一个货品明细，适合商品、品牌、品类、毛利、销量分析。
     row_count_observed: 2045054
     grain: 一行一个订单货品明细
@@ -386,7 +390,7 @@ metrics:
 
   - name: 订单头实付金额
     aliases: [实付销售额, 实付金额, 成交金额]
-    description: 订单头表中有效订单的实付金额合计。仅在明确询问订单头、实付金额时使用；默认销售额使用销售单明细账.分摊后金额。
+    description: 订单头表中有效订单的实付金额合计。用于未指定商品、品牌、品类、渠道或客户等明细维度的总销售额和订单实付分析。
     formula: sum(销售单查询.实付金额)
     filters:
       - 销售单查询.订单状态 not in ('已取消', '已取消-被合并', '已取消-被拆分')
@@ -402,7 +406,7 @@ metrics:
 
   - name: 销售额
     aliases: [商品销售额, 明细销售额, 分摊后销售额, 成交金额]
-    description: 默认销售额口径，使用销售单明细账中的分摊后金额合计；售后退货、售后发货进入销售指标。
+    description: 明细分摊销售额口径，用于商品、品牌、品类、渠道或客户维度；售后退货、售后发货进入销售指标。
     formula: sum(销售单明细账.分摊后金额)
     filters: []
     default_time_field: 销售单明细账.下单时间
@@ -456,7 +460,7 @@ business_terms:
   - term: 销售额
     type: metric_alias
     maps_to: 销售额
-    description: 默认使用 销售单明细账.分摊后金额；只有用户明确询问订单头实付金额时才使用 销售单查询.实付金额。
+    description: 未指定明细维度时映射到订单头实付金额；按商品、品牌、品类、渠道或客户分析时映射到明细分摊销售额。
   - term: 售后
     type: filter_rule
     description: 售后退货、售后发货进入销售指标，不从默认销售额、销量、毛利等指标中排除。
@@ -483,7 +487,7 @@ query_examples:
         date_format(`下单时间`, '%Y-%m') as month,
         sum(`分摊后金额`) as sales_amount,
         sum(`数量`) as quantity
-      from ods.`销售单明细账`
+      from dwd.`销售单明细账_品牌补全`
       where `下单时间` >= '2026-01-01'
         and `下单时间` < '2027-01-01'
       group by date_format(`下单时间`, '%Y-%m')
@@ -495,7 +499,7 @@ query_examples:
         `品牌`,
         sum(`分摊后金额`) as sales_amount,
         sum(`数量`) as quantity
-      from ods.`销售单明细账`
+      from dwd.`销售单明细账_品牌补全`
       where `下单时间` >= current_date - interval 30 day
       group by `品牌`
       order by sales_amount desc
@@ -507,7 +511,7 @@ query_examples:
         `渠道分类`,
         sum(`实付金额`) as paid_amount,
         count(distinct `订单编号`) as order_count
-      from ods.`销售单查询`
+      from dwd.`销售单查询_进口超市上海仓补全`
       where `订单状态` not in ('已取消', '已取消-被合并', '已取消-被拆分')
         and `下单时间` >= current_date - interval 1 day
         and `下单时间` < current_date

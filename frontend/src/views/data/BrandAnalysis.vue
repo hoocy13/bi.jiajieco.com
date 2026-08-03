@@ -73,7 +73,7 @@ const dateRangeLabel = computed(() => {
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 
 const metrics = computed(() => [
-  { label: '销售额', value: formatNumber(analysis.value.summary.paid_amount), unit: '元', trend: analysis.value.period },
+  { label: '明细分摊销售额', value: formatNumber(analysis.value.summary.paid_amount), unit: '元', trend: analysis.value.period },
   { label: '订单数', value: formatNumber(analysis.value.summary.orders), unit: '单', trend: '正向订单去重' },
   { label: '销售数量', value: formatNumber(analysis.value.summary.quantity), unit: '件', trend: '当前筛选结果' },
 ])
@@ -187,7 +187,7 @@ onMounted(fetchAnalysis)
 
     <section class="panel">
       <header>
-        <h2>品牌销售分析<span class="panel-source">（销售单明细账）</span></h2>
+        <h2>品牌销售分析<span class="panel-source">（商品明细分摊金额口径）</span></h2>
         <el-button :icon="'Refresh'" circle @click="fetchAnalysis" />
       </header>
       <el-table :data="analysis.rows" height="560">
@@ -206,7 +206,7 @@ onMounted(fetchAnalysis)
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="share" label="销售占比" width="120">
+        <el-table-column prop="share" label="分摊金额占比" width="120">
           <template #default="{ row }">{{ formatPercent(row.share) }}</template>
         </el-table-column>
         <el-table-column prop="orders" label="订单数" width="120">
@@ -218,7 +218,7 @@ onMounted(fetchAnalysis)
         <el-table-column prop="product_count" label="商品数" width="110">
           <template #default="{ row }">{{ formatNumber(row.product_count) }}</template>
         </el-table-column>
-        <el-table-column prop="paid_amount" label="销售额" width="160">
+        <el-table-column prop="paid_amount" label="分摊销售额" width="160">
           <template #default="{ row }">{{ formatNumber(row.paid_amount, 2) }}</template>
         </el-table-column>
         <el-table-column prop="avg_unit_price" label="件均价" width="140">

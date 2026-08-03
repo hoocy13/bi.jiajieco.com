@@ -143,7 +143,7 @@ def load_filter_option_rows(ods_db: Session) -> list[dict]:
             FROM (
               SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `分仓库查询`
               UNION
-              SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `销售单明细账`
+              SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `dwd`.`销售单明细账_品牌补全`
             ) brands
             WHERE brand IS NOT NULL AND brand <> '未归类'
             """

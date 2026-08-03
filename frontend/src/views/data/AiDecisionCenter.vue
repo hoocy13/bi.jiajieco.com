@@ -60,7 +60,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchDecisions()]))
 
     <section class="panel ai-summary-panel">
       <header>
-        <h2>AI运营信息<span class="panel-source">（销售单查询 + 分仓库查询 + 批次货品库存查询）</span></h2>
+        <h2>AI运营信息<span class="panel-source">（销售与库存标准口径）</span></h2>
         <el-tag :type="result.ai_status === 'ready' ? 'success' : 'warning'" effect="plain">
           {{ summaryLoading ? '生成中' : result.ai_status === 'ready' ? 'AI已分析' : '规则模式' }}
         </el-tag>
