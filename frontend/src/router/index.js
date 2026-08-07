@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router'
+﻿import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import DashboardLayout from '../layout/DashboardLayout.vue'
 
@@ -10,6 +10,7 @@ const ProductRank = () => import('../views/data/ProductRank.vue')
 const BrandAnalysis = () => import('../views/data/BrandAnalysis.vue')
 const BrandChannelAnalysis = () => import('../views/data/BrandChannelAnalysis.vue')
 const ChannelAnalysis = () => import('../views/data/ChannelAnalysis.vue')
+const CustomerAnalysis = () => import('../views/data/CustomerAnalysis.vue')
 const InventoryOverview = () => import('../views/data/InventoryOverview.vue')
 const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
 const SlowMoving = () => import('../views/data/SlowMoving.vue')
@@ -20,6 +21,7 @@ const BrandInventoryFlow = () => import('../views/data/BrandInventoryFlow.vue')
 const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
 const TextToSqlAgent = () => import('../views/data/TextToSqlAgent.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
+const AiAssistant = () => import('../views/data/AiAssistant.vue')
 const Users = () => import('../views/data/Users.vue')
 
 const routes = [
@@ -32,6 +34,7 @@ const routes = [
       { path: 'dashboard', component: Dashboard, meta: { title: '经营总览' } },
       { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: 'AI 决策中心' } },
       { path: 'ai/text-to-sql', component: TextToSqlAgent, meta: { title: '数据智能问答' } },
+      { path: 'ai/assistant', component: AiAssistant, meta: { title: 'AI 数据助手' } },
       { path: 'sales', redirect: '/sales/overview' },
       { path: 'sales/overview', component: SalesOverview, meta: { title: '销售概览' } },
       { path: 'sales/detail', component: Sales, meta: { title: '销售明细' } },
@@ -39,7 +42,8 @@ const routes = [
       { path: 'sales/brand-analysis', component: BrandAnalysis, meta: { title: '品牌销售分析' } },
       { path: 'sales/brand-analysis/:brand', component: BrandChannelAnalysis, meta: { title: '品牌销售分析' } },
       { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析' } },
-      { path: 'inventory', redirect: '/inventory/overview' },
+      { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析' } },
+              { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存' } },
@@ -70,3 +74,6 @@ router.beforeEach((to) => {
 })
 
 export default router
+
+
+

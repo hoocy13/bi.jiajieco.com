@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
@@ -25,6 +25,7 @@ const menuGroups = [
       { path: '/dashboard', label: '经营总览' },
       { path: '/ai/decisions', label: 'AI 决策中心' },
       { path: '/ai/text-to-sql', label: '数据智能问答' },
+      { path: '/ai/assistant', label: 'AI 数据助手' },
     ],
   },
   {
@@ -147,3 +148,5 @@ function logout() {
     var(--bg);
 }
 </style>
+
+
