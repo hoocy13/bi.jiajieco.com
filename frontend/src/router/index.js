@@ -10,7 +10,6 @@ const ProductRank = () => import('../views/data/ProductRank.vue')
 const BrandAnalysis = () => import('../views/data/BrandAnalysis.vue')
 const BrandChannelAnalysis = () => import('../views/data/BrandChannelAnalysis.vue')
 const ChannelAnalysis = () => import('../views/data/ChannelAnalysis.vue')
-const CustomerAnalysis = () => import('../views/data/CustomerAnalysis.vue')
 const InventoryOverview = () => import('../views/data/InventoryOverview.vue')
 const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
 const SlowMoving = () => import('../views/data/SlowMoving.vue')
@@ -42,8 +41,7 @@ const routes = [
       { path: 'sales/brand-analysis', component: BrandAnalysis, meta: { title: '品牌销售分析' } },
       { path: 'sales/brand-analysis/:brand', component: BrandChannelAnalysis, meta: { title: '品牌销售分析' } },
       { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析' } },
-      { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析' } },
-              { path: 'inventory', redirect: '/inventory/overview' },
+                    { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存' } },
@@ -74,6 +72,7 @@ router.beforeEach((to) => {
 })
 
 export default router
+
 
 
 
