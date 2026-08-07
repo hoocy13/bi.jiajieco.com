@@ -13,8 +13,11 @@ import ProductInventoryDrawer from '../../components/inventory/ProductInventoryD
 import { getBatchExpiryAnalysis, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -164,7 +167,7 @@ const fefoChartOption = computed(() => ({
 }))
 
 const longExpiryChartOption = computed(() => ({
-  color: ['#5e6ad2'],
+  color: [chartTheme.primary],
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'shadow' },

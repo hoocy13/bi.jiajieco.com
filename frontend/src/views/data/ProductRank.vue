@@ -7,8 +7,11 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import { getSalesProductRank } from '../../api/sales'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const loading = ref(false)
 const selectedRange = ref('last_30')
@@ -74,7 +77,7 @@ const quantityChartRows = computed(() => rank.value.quantity_rows.slice(0, 10).t
 
 function buildBarOption(rows, valueKey, unit, digits = 0) {
   return {
-    color: ['#5e6ad2'],
+    color: [chartTheme.primary],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },

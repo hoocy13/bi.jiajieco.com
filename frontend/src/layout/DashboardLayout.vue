@@ -3,11 +3,14 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useRequestStatusStore } from '../stores/requestStatus'
+import { useThemeStore } from '../stores/theme'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const requestStatus = useRequestStatusStore()
+const theme = useThemeStore()
+theme.initialize()
 
 const title = computed(() => route.meta.title || '经营总览')
 const activeMenuPath = computed(() => (
@@ -69,6 +72,10 @@ function logout() {
   auth.logout()
   router.push('/login')
 }
+
+function selectTheme(name) {
+  theme.apply(name)
+}
 </script>
 
 <template>
@@ -108,6 +115,22 @@ function logout() {
             <el-icon v-else><Timer /></el-icon>
             <span>{{ requestStatus.statusText }}</span>
           </div>
+          <el-dropdown trigger="click" @command="selectTheme">
+            <button class="theme-button" aria-label="选择网页色调">
+              <span class="theme-swatch" :style="{ background: theme.current.primary }"></span>
+              <span>{{ theme.current.label }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="option in theme.options" :key="option.name" :command="option.name" :class="{ 'is-selected-theme': option.name === theme.name }">
+                  <span class="theme-option-swatch" :style="{ background: option.primary }"></span>
+                  {{ option.label }}
+                  <el-icon v-if="option.name === theme.name"><Check /></el-icon>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button :icon="'Refresh'" circle />
           <el-dropdown>
             <button class="user-button">
@@ -125,28 +148,18 @@ function logout() {
       </el-header>
 
       <el-main class="main-content">
-        <router-view />
+        <router-view :key="`${$route.fullPath}-${theme.name}`" />
       </el-main>
     </el-container>
   </el-container>
 </template>
 
 <style scoped>
-.app-shell.is-brand-analysis {
-  --accent: #e61d4f;
-  --accent-strong: #c8103f;
-  --accent-soft: #fff0f4;
-  --nav-active: #fff0f4;
-  --el-color-primary: #e61d4f;
-  --el-color-primary-light-3: #ed5f82;
-  --el-color-primary-light-5: #f38ea7;
-  --el-color-primary-light-7: #f9bdcc;
-  --el-color-primary-light-9: #fff0f4;
-  --el-color-primary-dark-2: #c8103f;
-  background:
-    radial-gradient(circle at 46% -180px, rgb(230 29 79 / 0.08), transparent 360px),
-    var(--bg);
-}
+.theme-button { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; color: var(--text-soft); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.theme-button:hover { color: var(--accent-strong); border-color: var(--theme-soft-strong); background: var(--accent-soft); }
+.theme-swatch, .theme-option-swatch { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: 0 0 0 1px rgb(23 24 28 / 12%); }
+.theme-option-swatch { margin-right: 8px; }
+:global(.el-dropdown-menu__item.is-selected-theme) { color: var(--accent-strong); font-weight: 700; background: var(--accent-soft); }
 </style>
 
 

@@ -13,8 +13,11 @@ import BrandInventoryTurnover from '../../components/inventory/BrandInventoryTur
 import { getInventoryTurnover, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -101,7 +104,7 @@ const turnoverChartOption = computed(() => {
   const unit = isNoSalesMode ? '件' : '天'
 
   return {
-    color: [isNoSalesMode ? '#d94a4a' : '#5e6ad2'],
+    color: [isNoSalesMode ? '#d94a4a' : chartTheme.primary],
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -384,15 +387,15 @@ onMounted(() => {
 
 <style scoped>
 .page-stack.is-brand-turnover {
-  --accent: #e61d4f;
-  --accent-strong: #c7103e;
-  --accent-soft: #fff0f4;
-  --el-color-primary: #e61d4f;
-  --el-color-primary-light-3: #ed5f82;
-  --el-color-primary-light-5: #f38eaa;
-  --el-color-primary-light-7: #f9becd;
-  --el-color-primary-light-9: #fff0f4;
-  --el-color-primary-dark-2: #b8173f;
+  --accent: var(--theme-primary);
+  --accent-strong: var(--theme-strong);
+  --accent-soft: var(--theme-soft);
+  --el-color-primary: var(--theme-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--theme-primary) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--theme-primary) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--theme-primary) 30%, white);
+  --el-color-primary-light-9: var(--theme-soft);
+  --el-color-primary-dark-2: var(--theme-strong);
 }
 .inventory-turnover-tabs {
   display: flex;

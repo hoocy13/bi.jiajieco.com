@@ -9,12 +9,14 @@ import MetricCard from '../../components/dashboard/MetricCard.vue'
 import chinaGeoJson from '../../assets/china.json'
 import { getDashboardSummary } from '../../api/dashboard'
 import { getSalesBrandAnalysis } from '../../api/sales'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, CustomChart, LineChart, PieChart, GeoComponent, GridComponent, LegendComponent, TooltipComponent])
 registerMap('china', chinaGeoJson)
 
-const palette = ['#5e6ad2', '#2f9e73', '#64748b', '#d8a23a', '#8b5cf6', '#14b8a6', '#f97316']
-const mapPieColors = ['#5e6ad2', '#2f9e73', '#d8a23a', '#64748b']
+const chartTheme = getSavedTheme()
+const palette = [chartTheme.primary, chartTheme.secondary, '#64748b', '#d8a23a', chartTheme.pale, '#14b8a6', '#f97316']
+const mapPieColors = [chartTheme.primary, chartTheme.secondary, '#d8a23a', '#64748b']
 
 const summary = ref({
   cards: [],
@@ -62,7 +64,7 @@ const channelPieData = computed(() => topWithOther(summary.value.channels, 'name
 const brandPieData = computed(() => topWithOther(brandRows.value, 'brand', 'paid_amount', 7))
 
 const trendOption = computed(() => ({
-  color: ['#5e6ad2', '#2f9e73'],
+  color: [chartTheme.primary, chartTheme.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#111217',

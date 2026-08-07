@@ -7,8 +7,11 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import { getSalesOverview } from '../../api/sales'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const loading = ref(false)
 const selectedRange = ref('last_30')
@@ -61,7 +64,7 @@ const metrics = computed(() => [
 ])
 
 const trendOption = computed(() => ({
-  color: ['#2563eb', '#139966'],
+  color: [chartTheme.primary, chartTheme.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#111827',
@@ -113,7 +116,7 @@ const trendOption = computed(() => ({
 }))
 
 const channelBarOption = computed(() => ({
-  color: ['#2563eb'],
+  color: [chartTheme.primary],
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'shadow' },
@@ -163,8 +166,8 @@ const channelBarOption = computed(() => ({
           x2: 1,
           y2: 0,
           colorStops: [
-            { offset: 0, color: '#2563eb' },
-            { offset: 1, color: '#139966' },
+            { offset: 0, color: chartTheme.primary },
+            { offset: 1, color: chartTheme.secondary },
           ],
         },
       },

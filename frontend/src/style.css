@@ -17,6 +17,18 @@
   --success: #2f9e73;
   --warning: #b7791f;
   --danger: #d94a4a;
+  --theme-primary: #5e6ad2;
+  --theme-strong: #4f5bc4;
+  --theme-soft: #eef0ff;
+  --theme-soft-strong: #d8dbfb;
+  --theme-secondary: #8b93e8;
+  --theme-pale: #cdd1ff;
+  --el-color-primary: var(--theme-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--theme-primary) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--theme-primary) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--theme-primary) 30%, white);
+  --el-color-primary-light-9: var(--theme-soft);
+  --el-color-primary-dark-2: var(--theme-strong);
   --shadow: 0 1px 2px rgb(17 24 39 / 0.05);
   --radius: 8px;
   font-family: "Inter", sans-serif;
@@ -26,6 +38,17 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+:root[data-theme='indigo'] { --theme-primary: #5e6ad2; --theme-strong: #4f5bc4; --theme-soft: #eef0ff; --theme-soft-strong: #d8dbfb; --theme-secondary: #8b93e8; --theme-pale: #cdd1ff; }
+:root[data-theme='rose'] { --theme-primary: #e61d4f; --theme-strong: #c8103f; --theme-soft: #fff0f4; --theme-soft-strong: #ffe2ea; --theme-secondary: #f07a96; --theme-pale: #fecdd3; }
+:root[data-theme='green'] { --theme-primary: #4f7f2d; --theme-strong: #315e1b; --theme-soft: #f0f5ec; --theme-soft-strong: #dce8d3; --theme-secondary: #9fbd55; --theme-pale: #c7d6a4; }
+
+:root[data-theme] {
+  --accent: var(--theme-primary);
+  --accent-strong: var(--theme-strong);
+  --accent-soft: var(--theme-soft);
+  --nav-active: var(--theme-soft);
 }
 
 * {
@@ -55,7 +78,7 @@ select {
 
 .app-shell {
   background:
-    radial-gradient(circle at 46% -180px, rgb(94 106 210 / 0.10), transparent 360px),
+    radial-gradient(circle at 46% -180px, color-mix(in srgb, var(--theme-primary) 10%, transparent), transparent 360px),
     var(--bg);
 }
 
@@ -80,7 +103,7 @@ select {
   width: 34px;
   height: 34px;
   place-items: center;
-  border: 1px solid #cdd1ff;
+  border: 1px solid var(--theme-pale);
   border-radius: 10px;
   background: var(--accent-soft);
   color: var(--accent-strong);
@@ -203,7 +226,7 @@ select {
 }
 
 .request-status.is-loading {
-  border-color: #c9cdf7;
+  border-color: var(--theme-soft-strong);
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -223,7 +246,7 @@ select {
 }
 
 .user-button:hover {
-  border-color: #c9cdf7;
+  border-color: var(--theme-soft-strong);
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -292,7 +315,7 @@ select {
 }
 
 .metric-card:hover {
-  border-color: #d8dbfb;
+  border-color: var(--theme-soft-strong);
   box-shadow: 0 6px 18px rgb(17 24 39 / 0.06);
   transform: translateY(-1px);
 }
@@ -630,11 +653,11 @@ select {
 }
 
 .ai-summary-panel {
-  border-color: #dfe1fb;
+  border-color: var(--theme-soft-strong);
 }
 
 .ai-summary-panel header {
-  background: #fbfbff;
+  background: color-mix(in srgb, var(--theme-soft) 35%, white);
 }
 
 .inventory-filter-field {
@@ -744,7 +767,7 @@ select {
   --el-table-tr-bg-color: var(--surface);
   --el-table-header-bg-color: var(--surface-soft);
   --el-table-header-text-color: var(--muted);
-  --el-table-row-hover-bg-color: #f7f8ff;
+  --el-table-row-hover-bg-color: var(--theme-soft);
   --el-table-border-color: var(--border);
   color: var(--text-soft);
   font-size: 13px;
@@ -781,8 +804,8 @@ select {
   --el-button-border-color: var(--accent);
   --el-button-hover-bg-color: var(--accent-strong);
   --el-button-hover-border-color: var(--accent-strong);
-  --el-button-active-bg-color: #4752b8;
-  --el-button-active-border-color: #4752b8;
+  --el-button-active-bg-color: var(--theme-strong);
+  --el-button-active-border-color: var(--theme-strong);
 }
 
 .el-input__wrapper,
@@ -801,7 +824,7 @@ select {
 .el-input__wrapper.is-focus,
 .el-select__wrapper.is-focused,
 .el-textarea__inner:focus {
-  box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px rgb(94 106 210 / 0.14);
+  box-shadow: 0 0 0 1px var(--accent) inset, 0 0 0 3px color-mix(in srgb, var(--theme-primary) 14%, transparent);
 }
 
 .el-segmented {

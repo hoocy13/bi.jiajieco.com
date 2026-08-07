@@ -7,8 +7,11 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getBrandInventoryFlow, getBrandInventoryTurnoverAnalysis, getInventoryWarehouses } from '../../api/inventory'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -182,7 +185,7 @@ const turnoverMetrics = computed(() => [
 ])
 
 const waterlineChartOption = computed(() => ({
-  color: ['#e61d4f', '#f472b6', '#334155', '#fecdd3'],
+  color: [chartTheme.primary, chartTheme.secondary, '#334155', chartTheme.pale],
   tooltip: {
     trigger: 'axis', backgroundColor: '#172033', borderWidth: 0, textStyle: { color: '#fff' },
     formatter: (params) => {
@@ -198,10 +201,10 @@ const waterlineChartOption = computed(() => ({
     { type: 'value', axisLabel: { color: '#94a3b8', formatter: formatCompact }, splitLine: { show: false } },
   ],
   series: [
-    ...(effectiveProductTypes.value.length === 2 ? [{ name: '总库存', type: 'line', smooth: false, symbol: 'circle', symbolSize: 6, lineStyle: { width: 3, color: '#e61d4f' }, itemStyle: { color: '#e61d4f' }, data: turnoverAnalysis.value.waterline.map((item) => item.total_inventory) }] : []),
-    ...(effectiveProductTypes.value.includes('正装') ? [{ name: '正装库存', type: 'line', smooth: false, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2.5, color: '#f472b6' }, itemStyle: { color: '#f472b6' }, data: turnoverAnalysis.value.waterline.map((item) => item.full_size_inventory) }] : []),
+    ...(effectiveProductTypes.value.length === 2 ? [{ name: '总库存', type: 'line', smooth: false, symbol: 'circle', symbolSize: 6, lineStyle: { width: 3, color: chartTheme.primary }, itemStyle: { color: chartTheme.primary }, data: turnoverAnalysis.value.waterline.map((item) => item.total_inventory) }] : []),
+    ...(effectiveProductTypes.value.includes('正装') ? [{ name: '正装库存', type: 'line', smooth: false, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2.5, color: chartTheme.secondary }, itemStyle: { color: chartTheme.secondary }, data: turnoverAnalysis.value.waterline.map((item) => item.full_size_inventory) }] : []),
     ...(effectiveProductTypes.value.includes('小样') ? [{ name: '小样库存', type: 'line', smooth: false, symbol: 'circle', symbolSize: 5, lineStyle: { width: 2.5, color: '#334155' }, itemStyle: { color: '#334155' }, data: turnoverAnalysis.value.waterline.map((item) => item.sample_inventory) }] : []),
-    { name: '月度净销售', type: 'bar', yAxisIndex: 1, barMaxWidth: 18, itemStyle: { color: '#fecdd3', opacity: .45, borderRadius: [4, 4, 0, 0] }, data: turnoverAnalysis.value.waterline.map((item) => item.sales_quantity) },
+    { name: '月度净销售', type: 'bar', yAxisIndex: 1, barMaxWidth: 18, itemStyle: { color: chartTheme.pale, opacity: .45, borderRadius: [4, 4, 0, 0] }, data: turnoverAnalysis.value.waterline.map((item) => item.sales_quantity) },
   ],
 }))
 
@@ -216,7 +219,7 @@ const pagedDetailRows = computed(() => {
 })
 
 const quantityChartOption = computed(() => ({
-  color: ['#e61d4f', '#334155', '#f472b6'],
+  color: [chartTheme.primary, '#334155', chartTheme.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#172033',
@@ -272,7 +275,7 @@ const quantityChartOption = computed(() => ({
 
 function segmentChartOption(segment) {
   return {
-    color: ['#e61d4f', '#344054', '#f472b6'],
+    color: [chartTheme.primary, '#344054', chartTheme.secondary],
     tooltip: {
       trigger: 'axis',
       backgroundColor: '#172033',
@@ -698,11 +701,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.flow-page { --flow-primary: #e61d4f; --flow-dark: #c7103e; --flow-soft: #fff0f4; --flow-soft-strong: #ffe2ea; display: grid; gap: 14px; color: #172033; }
+.flow-page { --flow-primary: var(--theme-primary); --flow-dark: var(--theme-strong); --flow-soft: var(--theme-soft); --flow-soft-strong: var(--theme-soft-strong); display: grid; gap: 14px; color: #172033; }
 .flow-toolbar, .flow-hero, .flow-panel, .metric-card { border: 1px solid #f0dfe4; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .03); }
 .flow-toolbar { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 8px; }
 .brand-input { width: 170px; }.flow-toolbar :deep(.month-picker) { width: 260px !important; flex: 0 0 260px !important; }.product-type-select { width: 175px; }.warehouse-select { width: 220px; }
-.flow-hero { min-height: 118px; padding: 22px 28px; border-top: 3px solid var(--flow-primary); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(105deg, #fff 62%, #fff5f7); }
+.flow-hero { min-height: 118px; padding: 22px 28px; border-top: 3px solid var(--flow-primary); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(105deg, #fff 62%, var(--flow-soft)); }
 .hero-title { display: flex; align-items: center; gap: 15px; }.hero-title > span { width: 4px; height: 54px; border-radius: 4px; background: var(--flow-primary); }
 .hero-title p, .flow-panel header small { margin: 0 0 4px; color: var(--flow-primary); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
 .hero-title h1 { margin: 0 0 4px; font-size: 26px; letter-spacing: -.02em; }.hero-title small { color: #7a8699; font-size: 12px; }
@@ -724,7 +727,7 @@ onMounted(() => {
 .category-turnover-list > div > strong { font-size: 15px; }.category-turnover-list > div > span { color: #667085; font-size: 11px; }.category-turnover-list b { color: #263449; font-size: 18px; }.category-turnover-list small { grid-column: 1 / -1; color: #8b96a5; }
 .channel-mix-list { display: grid; gap: 14px; padding: 15px 16px 10px; }
 .channel-mix-list > div { display: grid; grid-template-columns: 1fr auto; gap: 7px 14px; align-items: center; }.channel-mix-list > div > span { color: #667085; font-size: 12px; font-weight: 700; }.channel-mix-list > div > strong { font-size: 17px; }
-.channel-mix-list div div { grid-column: 1 / -1; height: 7px; overflow: hidden; border-radius: 999px; background: var(--flow-soft); }.channel-mix-list i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--flow-dark), #f08aa2); }.channel-mix-list small { grid-column: 1 / -1; color: #8b96a5; }
+.channel-mix-list div div { grid-column: 1 / -1; height: 7px; overflow: hidden; border-radius: 999px; background: var(--flow-soft); }.channel-mix-list i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--flow-dark), var(--theme-secondary)); }.channel-mix-list small { grid-column: 1 / -1; color: #8b96a5; }
 .channel-limit-note { margin: 0 16px 15px; padding: 10px 12px; border-radius: 7px; background: #fff7e8; color: #946200; font-size: 11px; line-height: 1.5; }
 .ranking-panel :deep(.el-table) { --el-table-header-bg-color: #fffafb; --el-table-row-hover-bg-color: var(--flow-soft); }.ranking-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 11px; }.slow-ranking { border-top: 3px solid #c68a3a; }.hot-ranking { border-top: 3px solid var(--flow-primary); }
 .detail-controls { display: flex; align-items: center; gap: 9px; }.detail-search { width: 220px; }.detail-pagination { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; color: #8a96a5; font-size: 12px; }

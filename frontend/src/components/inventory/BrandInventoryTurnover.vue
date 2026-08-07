@@ -12,8 +12,11 @@ import ProductTypeFilter from './ProductTypeFilter.vue'
 import { getBrandInventoryTurnover, getBrandInventoryTurnoverAnalysis, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -217,8 +220,8 @@ function productPanelChartOption(panel) {
         color: {
           type: 'linear', x: 0, y: 0, x2: 1, y2: 0,
           colorStops: [
-            { offset: 0, color: '#e93661' },
-            { offset: 1, color: '#f08aa2' },
+            { offset: 0, color: chartTheme.primary },
+            { offset: 1, color: chartTheme.secondary },
           ],
         },
       },
@@ -232,7 +235,7 @@ function productPanelChartOption(panel) {
 }
 
 const chartOption = computed(() => ({
-  color: ['#e61d4f'],
+  color: [chartTheme.primary],
   tooltip: {
     trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#111217', borderWidth: 0,
     textStyle: { color: '#ffffff' },
@@ -779,10 +782,10 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
 
 <style scoped>
 .brand-turnover-stack {
-  --turnover-primary: #e61d4f;
-  --turnover-dark: #c7103e;
-  --turnover-soft: #fff0f4;
-  --turnover-soft-strong: #ffe2ea;
+  --turnover-primary: var(--theme-primary);
+  --turnover-dark: var(--theme-strong);
+  --turnover-soft: var(--theme-soft);
+  --turnover-soft-strong: var(--theme-soft-strong);
   --turnover-ink: #172033;
   --turnover-muted: #8993a6;
   display: grid;
@@ -809,7 +812,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
   gap: 28px;
   min-height: 122px;
   padding: 22px 24px;
-  background: linear-gradient(108deg, #ffffff 0%, #ffffff 68%, #fff5f7 100%);
+  background: linear-gradient(108deg, #ffffff 0%, #ffffff 68%, var(--turnover-soft) 100%);
   border: 1px solid var(--border);
   border-top: 4px solid var(--turnover-primary);
   border-radius: 9px;

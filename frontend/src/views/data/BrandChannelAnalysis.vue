@@ -7,8 +7,11 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getSalesBrandChannelAnalysis } from '../../api/sales'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -229,7 +232,7 @@ const monthlyTrend = computed(() => {
 })
 
 const trendOption = computed(() => ({
-  color: ['#e61d4f', '#f07a96'],
+  color: [chartTheme.primary, chartTheme.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#172033',
@@ -646,19 +649,19 @@ function returnToBrands() {
 
 <style scoped>
 .brand-dashboard-shell {
-  --brand-primary: #e61d4f;
-  --brand-primary-dark: #c8103f;
-  --brand-secondary: #f07a96;
-  --brand-soft: #fff0f4;
+  --brand-primary: var(--theme-primary);
+  --brand-primary-dark: var(--theme-strong);
+  --brand-secondary: var(--theme-secondary);
+  --brand-soft: var(--theme-soft);
   --ink: #172033;
   --muted: #64748b;
   --line: #e7ebf0;
-  --el-color-primary: #e61d4f;
-  --el-color-primary-light-3: #ed5f82;
-  --el-color-primary-light-5: #f38ea7;
-  --el-color-primary-light-7: #f9bdcc;
-  --el-color-primary-light-9: #fff0f4;
-  --el-color-primary-dark-2: #c8103f;
+  --el-color-primary: var(--theme-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--theme-primary) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--theme-primary) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--theme-primary) 30%, white);
+  --el-color-primary-light-9: var(--theme-soft);
+  --el-color-primary-dark-2: var(--theme-strong);
 }
 
 .brand-overview-hero {
@@ -668,7 +671,7 @@ function returnToBrands() {
   gap: 24px;
   min-height: 132px;
   padding: 24px 28px;
-  background: linear-gradient(110deg, #ffffff 0%, #ffffff 64%, #fff4f7 100%);
+  background: linear-gradient(110deg, #ffffff 0%, #ffffff 64%, var(--theme-soft) 100%);
   border: 1px solid var(--line);
   border-top: 4px solid var(--brand-primary);
   border-radius: 8px;
@@ -725,7 +728,7 @@ function returnToBrands() {
 .comparison-percentages span { color: #475569; font-size: 11px; }
 .comparison-percentages strong { margin-left: 2px; font-size: 14px; font-weight: 800; }
 .comparison-percentages .is-online strong { color: var(--brand-primary); }
-.comparison-percentages .is-offline strong { color: #d43c62; }
+.comparison-percentages .is-offline strong { color: var(--theme-secondary); }
 .comparison-bar { display: flex; width: 100%; height: 10px; margin: 13px 0 12px; overflow: hidden; background: #eef1f5; border-radius: 3px; }
 .comparison-bar i { display: block; height: 100%; }
 .comparison-values { display: grid; grid-template-columns: 1fr; gap: 6px; }

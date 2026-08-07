@@ -12,8 +12,11 @@ import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
 import { getInventoryOverview, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -68,7 +71,7 @@ const metrics = computed(() => [
 ])
 
 const warehouseBarOption = computed(() => ({
-  color: ['#139966'],
+  color: [chartTheme.primary],
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'shadow' },
@@ -120,8 +123,8 @@ const warehouseBarOption = computed(() => ({
           x2: 1,
           y2: 0,
           colorStops: [
-            { offset: 0, color: '#139966' },
-            { offset: 1, color: '#2563eb' },
+            { offset: 0, color: chartTheme.primary },
+            { offset: 1, color: chartTheme.secondary },
           ],
         },
       },

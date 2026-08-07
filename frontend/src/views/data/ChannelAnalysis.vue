@@ -7,8 +7,11 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getSalesChannelAnalysis, getSalesChannelCustomerAnalysis } from '../../api/sales'
+import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
+
+const chartTheme = getSavedTheme()
 
 const route = useRoute()
 const router = useRouter()
@@ -190,7 +193,7 @@ const salesContribution = computed(() => {
 })
 
 const trendOption = computed(() => ({
-  color: ['#4f7f2d', '#9fbd55'],
+  color: [chartTheme.primary, chartTheme.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#172033', borderWidth: 0, padding: [10, 12],
@@ -610,19 +613,19 @@ onMounted(fetchAnalysis)
 
 <style scoped>
 .channel-dashboard-shell {
-  --brand-primary: #4f7f2d;
-  --brand-primary-dark: #315e1b;
-  --brand-secondary: #a6cb45;
-  --brand-soft: #f3f7ec;
+  --brand-primary: var(--theme-primary);
+  --brand-primary-dark: var(--theme-strong);
+  --brand-secondary: var(--theme-secondary);
+  --brand-soft: var(--theme-soft);
   --ink: #172033;
   --muted: #64748b;
   --line: #e7ebf0;
-  --el-color-primary: #4f7f2d;
-  --el-color-primary-light-3: #7da360;
-  --el-color-primary-light-5: #a4bd90;
-  --el-color-primary-light-7: #c9d8bc;
-  --el-color-primary-light-9: #f0f5ec;
-  --el-color-primary-dark-2: #315e1b;
+  --el-color-primary: var(--theme-primary);
+  --el-color-primary-light-3: color-mix(in srgb, var(--theme-primary) 70%, white);
+  --el-color-primary-light-5: color-mix(in srgb, var(--theme-primary) 50%, white);
+  --el-color-primary-light-7: color-mix(in srgb, var(--theme-primary) 30%, white);
+  --el-color-primary-light-9: var(--theme-soft);
+  --el-color-primary-dark-2: var(--theme-strong);
   width: 100%;
   min-width: 0;
   grid-template-columns: minmax(0, 1fr);
@@ -653,7 +656,7 @@ onMounted(fetchAnalysis)
 .channel-overview-hero {
   display: flex; align-items: center; justify-content: space-between; gap: 24px;
   min-height: 132px; padding: 24px 28px;
-  background: linear-gradient(110deg, #ffffff 0%, #ffffff 64%, #f3f7ec 100%);
+  background: linear-gradient(110deg, #ffffff 0%, #ffffff 64%, var(--theme-soft) 100%);
   border: 1px solid var(--line); border-top: 4px solid var(--brand-primary); border-radius: 8px;
   box-shadow: 0 4px 16px rgba(23, 32, 51, .04);
 }
@@ -706,7 +709,7 @@ onMounted(fetchAnalysis)
 .comparison-percentages strong { margin-left: 2px; font-size: 14px; font-weight: 800; }
 .comparison-percentages .is-online, .comparison-percentages .is-offline { background: transparent; }
 .comparison-percentages .is-online strong { color: var(--brand-primary); }
-.comparison-percentages .is-offline strong { color: #71972d; }
+.comparison-percentages .is-offline strong { color: var(--theme-secondary); }
 .comparison-bar { display: flex; width: 100%; height: 10px; margin: 13px 0 12px; overflow: hidden; background: #eef1f5; border-radius: 3px; }
 .comparison-bar i { display: block; height: 100%; }
 .comparison-values { display: grid; gap: 6px; }
