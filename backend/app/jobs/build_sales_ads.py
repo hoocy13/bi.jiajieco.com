@@ -172,24 +172,61 @@ def copy_cold_history(
         copied_columns = [column for column in columns if column != "data_version"]
         insert_columns = ", ".join(f"`{column}`" for column in columns)
         select_columns = ", ".join(f"`{column}`" for column in copied_columns)
-        result = ads_db.execute(
-            text(
-                f"""
-                INSERT INTO `{table_name}` ({insert_columns})
-                SELECT :target_version, {select_columns}
-                FROM `{table_name}`
-                WHERE `data_version` = :source_version
-                  AND `sales_date` < :refresh_start
-                """
-            ),
-            {
+        copy_ranges: list[tuple[date | None, date | None]] = [(None, None)]
+        if model in ITEM_ID_MODELS:
+            oldest_date = ads_db.execute(
+                text(
+                    f"""
+                    SELECT MIN(`sales_date`)
+                    FROM `{table_name}`
+                    WHERE `data_version` = :source_version
+                      AND `sales_date` < :refresh_start
+                    """
+                ),
+                {
+                    "source_version": source_version,
+                    "refresh_start": refresh_start,
+                },
+            ).scalar()
+            if isinstance(oldest_date, datetime):
+                oldest_date = oldest_date.date()
+            elif isinstance(oldest_date, str):
+                oldest_date = date.fromisoformat(oldest_date[:10])
+            copy_ranges = (
+                list(month_ranges(oldest_date, refresh_start - timedelta(days=1)))
+                if oldest_date is not None
+                else []
+            )
+
+        copied = 0
+        for slice_start, slice_end in copy_ranges:
+            date_filter = ""
+            params: dict[str, object] = {
                 "source_version": source_version,
                 "target_version": target_version,
                 "refresh_start": refresh_start,
-            },
-        )
-        row_counts[table_name] = max(int(result.rowcount or 0), 0)
-        ads_db.commit()
+            }
+            if slice_start is not None and slice_end is not None:
+                date_filter = "AND `sales_date` BETWEEN :slice_start AND :slice_end"
+                params.update(
+                    {"slice_start": slice_start, "slice_end": slice_end}
+                )
+            result = ads_db.execute(
+                text(
+                    f"""
+                    INSERT INTO `{table_name}` ({insert_columns})
+                    SELECT :target_version, {select_columns}
+                    FROM `{table_name}`
+                    WHERE `data_version` = :source_version
+                      AND `sales_date` < :refresh_start
+                      {date_filter}
+                    """
+                ),
+                params,
+            )
+            copied += max(int(result.rowcount or 0), 0)
+            ads_db.commit()
+        row_counts[table_name] = copied
 
     for model in ITEM_ID_MODELS:
         table_name = model.__table__.name
