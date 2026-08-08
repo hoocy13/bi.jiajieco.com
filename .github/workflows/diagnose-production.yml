@@ -1,0 +1,28 @@
+name: Diagnose BI Production
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sales-ads-log:
+    name: Read sanitized sales ADS diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read sanitized ADS stage and error lines
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "tail -n 1200 /tmp/bi-refresh-ads-dolphin.log | grep -E '^\\[sales-ads\\]|^Traceback|^[[:alnum:]_.]+(Error|Exception):' | tail -n 160"
