@@ -26,3 +26,10 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
             "tail -n 1200 /tmp/bi-refresh-ads-dolphin.log | grep -E '^\\[sales-ads\\]|^Traceback|^[[:alnum:]_.]+(Error|Exception):' | tail -n 160"
+
+      - name: Read latest ready reconciliation flags
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "cd /www/wwwroot/bi.jiajieco.com && docker compose exec -T backend python -c \"from app.db.ads import require_ads_session_factory; from app.models.ads import AdsPublishBatch; f=require_ads_session_factory(); s=f(); b=s.query(AdsPublishBatch).filter(AdsPublishBatch.dataset=='sales_daily', AdsPublishBatch.status=='ready').order_by(AdsPublishBatch.published_at.desc(), AdsPublishBatch.id.desc()).first(); walk=lambda v: ({k:walk(x) for k,x in v.items() if isinstance(x,(dict,bool))} if isinstance(v,dict) else v); print({'batch': b.id, 'flags': walk(b.reconciliation or {})}); s.close()\""
