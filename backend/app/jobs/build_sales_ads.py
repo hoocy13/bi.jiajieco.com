@@ -172,31 +172,29 @@ def copy_cold_history(
         copied_columns = [column for column in columns if column != "data_version"]
         insert_columns = ", ".join(f"`{column}`" for column in columns)
         select_columns = ", ".join(f"`{column}`" for column in copied_columns)
-        copy_ranges: list[tuple[date | None, date | None]] = [(None, None)]
-        if model in ITEM_ID_MODELS:
-            oldest_date = ads_db.execute(
-                text(
-                    f"""
-                    SELECT MIN(`sales_date`)
-                    FROM `{table_name}`
-                    WHERE `data_version` = :source_version
-                      AND `sales_date` < :refresh_start
-                    """
-                ),
-                {
-                    "source_version": source_version,
-                    "refresh_start": refresh_start,
-                },
-            ).scalar()
-            if isinstance(oldest_date, datetime):
-                oldest_date = oldest_date.date()
-            elif isinstance(oldest_date, str):
-                oldest_date = date.fromisoformat(oldest_date[:10])
-            copy_ranges = (
-                list(month_ranges(oldest_date, refresh_start - timedelta(days=1)))
-                if oldest_date is not None
-                else []
-            )
+        oldest_date = ads_db.execute(
+            text(
+                f"""
+                SELECT MIN(`sales_date`)
+                FROM `{table_name}`
+                WHERE `data_version` = :source_version
+                  AND `sales_date` < :refresh_start
+                """
+            ),
+            {
+                "source_version": source_version,
+                "refresh_start": refresh_start,
+            },
+        ).scalar()
+        if isinstance(oldest_date, datetime):
+            oldest_date = oldest_date.date()
+        elif isinstance(oldest_date, str):
+            oldest_date = date.fromisoformat(oldest_date[:10])
+        copy_ranges = (
+            list(month_ranges(oldest_date, refresh_start - timedelta(days=1)))
+            if oldest_date is not None
+            else []
+        )
 
         copied = 0
         for slice_start, slice_end in copy_ranges:
