@@ -16,6 +16,7 @@ from app.jobs.build_sales_ads import (
     SalesSummary,
     add_summaries,
     copy_cold_history,
+    load_ads_customer_quality_total_before,
     new_data_version,
     reconciliation_payload,
     summaries_match,
@@ -254,6 +255,49 @@ class SalesIncrementalCopyTests(unittest.TestCase):
                 self.assertEqual(counts["ads_sales_daily"], 1)
                 self.assertEqual(counts["ads_sales_customer_daily"], 2)
                 self.assertEqual(offsets["ads_sales_customer_daily"], 12)
+        finally:
+            engine.dispose()
+
+    def test_customer_quality_baseline_uses_available_cold_history(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        AdsBase.metadata.create_all(engine)
+        try:
+            with Session(engine) as db:
+                db.add_all(
+                    [
+                        AdsSalesCustomerQualityDaily(
+                            data_version="old",
+                            item_id=1,
+                            sales_date=date(2026, 5, 31),
+                            brand="__all__",
+                            channel="offline",
+                            orders=1,
+                            identified_orders=1,
+                            paid_amount=Decimal("10"),
+                            identified_amount=Decimal("10"),
+                        ),
+                        AdsSalesCustomerQualityDaily(
+                            data_version="old",
+                            item_id=2,
+                            sales_date=date(2026, 6, 1),
+                            brand="__all__",
+                            channel="offline",
+                            orders=1,
+                            identified_orders=1,
+                            paid_amount=Decimal("20"),
+                            identified_amount=Decimal("20"),
+                        ),
+                    ]
+                )
+                db.commit()
+
+                total = load_ads_customer_quality_total_before(
+                    db,
+                    data_version="old",
+                    refresh_start=date(2026, 6, 1),
+                )
+
+                self.assertEqual(total, Decimal("10"))
         finally:
             engine.dispose()
 

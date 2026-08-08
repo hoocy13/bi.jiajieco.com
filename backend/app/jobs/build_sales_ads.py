@@ -93,6 +93,7 @@ ITEM_ID_MODELS = (
 
 ITEM_COPY_CHUNK_ROWS = 25_000
 SUMMARY_COPY_CHUNK_DAYS = 92
+CUSTOMER_REFRESH_CHUNK_DAYS = 7
 
 
 @dataclass(frozen=True)
@@ -362,6 +363,30 @@ def load_ads_brand_turnover_summary_before(
         {"data_version": data_version, "refresh_start": refresh_start},
     ).mappings().one()
     return summary_from_mapping(dict(row))
+
+
+def load_ads_customer_quality_total_before(
+    ads_db: Session,
+    data_version: str,
+    refresh_start: date,
+) -> Decimal:
+    return decimal_value(
+        ads_db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(`paid_amount`), 0)
+                FROM `ads_sales_customer_quality_daily`
+                WHERE `data_version` = :data_version
+                  AND `brand` = '__all__'
+                  AND `sales_date` < :refresh_start
+                """
+            ),
+            {
+                "data_version": data_version,
+                "refresh_start": refresh_start,
+            },
+        ).scalar()
+    )
 
 
 def new_data_version(source_end_date: date) -> str:
@@ -898,7 +923,13 @@ def insert_customer_ads_rows(
     counts = [0, 0, 0]
     next_item_ids = list(item_offsets)
     models = (AdsSalesCustomerDaily, AdsSalesCustomerProductDaily, AdsSalesCustomerQualityDaily)
-    ranges = list(month_ranges(start_date, end_date))
+    ranges = list(
+        fixed_day_ranges(
+            start_date,
+            end_date,
+            CUSTOMER_REFRESH_CHUNK_DAYS,
+        )
+    )
     for index, (slice_start, slice_end) in enumerate(ranges, start=1):
         row_sets = load_customer_ads_rows(ods_db, slice_start, slice_end)
         for position, (model, rows) in enumerate(zip(models, row_sets, strict=True)):
@@ -921,7 +952,7 @@ def insert_customer_ads_rows(
             if payload:
                 ads_db.execute(insert(model), payload)
         ads_db.flush()
-        if index == 1 or index == len(ranges) or index % 6 == 0:
+        if index == 1 or index == len(ranges) or index % 4 == 0:
             report_progress(
                 "customer-slices",
                 progress=f"{index}/{len(ranges)}",
@@ -1764,6 +1795,9 @@ def build_sales_ads(
 
                 source_summary = refresh_source_summary
                 detail_source_summary = refresh_detail_source_summary
+                expected_customer_quality_total = (
+                    refresh_detail_source_summary.paid_amount
+                )
                 offline_customer_source_summary = (
                     refresh_offline_customer_source_summary
                 )
@@ -1785,6 +1819,13 @@ def build_sales_ads(
                             resolved_start,
                         ),
                         refresh_detail_source_summary,
+                    )
+                    expected_customer_quality_total += (
+                        load_ads_customer_quality_total_before(
+                            ads_db,
+                            copy_source_version,
+                            resolved_start,
+                        )
                     )
                     offline_customer_source_summary = add_summaries(
                         load_ads_summary_before(
@@ -2161,8 +2202,19 @@ def build_sales_ads(
                 customer_ads_matches = (
                     decimal_value(customer_ads_totals["customer_amount"]) == decimal_value(customer_ads_totals["product_amount"])
                     and decimal_value(customer_ads_totals["customer_amount"]) == decimal_value(customer_ads_totals["identified_amount"])
-                    and decimal_value(customer_ads_totals["total_amount"]) == detail_source_summary.paid_amount
+                    and decimal_value(customer_ads_totals["total_amount"]) == expected_customer_quality_total
                 )
+                customer_ads_coverage_start = ads_db.execute(
+                    text(
+                        """
+                        SELECT MIN(`sales_date`)
+                        FROM `ads_sales_customer_quality_daily`
+                        WHERE `data_version` = :data_version
+                          AND `brand` = '__all__'
+                        """
+                    ),
+                    {"data_version": version},
+                ).scalar()
                 brand_channel_scope_summary = load_ads_brand_summary(
                     ads_db,
                     "ads_sales_daily_brand_channel_scope",
@@ -2275,6 +2327,15 @@ def build_sales_ads(
                     "brand_channel_product_amount_quantity_matches": brand_channel_product_amount_quantity_matches,
                     "customer_ads_matches": customer_ads_matches,
                 }
+                reconciliation["customer_ads"] = {
+                    "matches": customer_ads_matches,
+                    "coverage_start": (
+                        customer_ads_coverage_start.isoformat()
+                        if customer_ads_coverage_start is not None
+                        else None
+                    ),
+                    "scope": "available_customer_history",
+                }
                 reconciliation["passed"] = (
                     reconciliation["passed"]
                     and detail_scope_matches
@@ -2291,6 +2352,34 @@ def build_sales_ads(
                     and customer_ads_matches
                 )
                 if not reconciliation["passed"]:
+                    checks = {
+                        "core": reconciliation_payload(
+                            source_summary,
+                            daily_summary,
+                            channel_summary,
+                            detail_source_summary,
+                            detail_daily_summary,
+                            product_summary,
+                        )["passed"],
+                        "detail_scope": detail_scope_matches,
+                        "brand_scope": brand_scope_amount_quantity_matches,
+                        "brand_product": brand_product_amount_quantity_matches,
+                        "brand_turnover": brand_turnover_matches,
+                        "detail_channel": detail_channel_amount_quantity_matches,
+                        "city_channel": city_channel_amount_quantity_matches,
+                        "order_detail": order_detail_matches,
+                        "order_filter": order_filter_matches,
+                        "customer_channel": customer_amount_quantity_matches,
+                        "brand_channel_scope": brand_channel_scope_matches,
+                        "brand_channel_product": brand_channel_product_amount_quantity_matches,
+                        "customer_ads": customer_ads_matches,
+                    }
+                    report_progress(
+                        "reconciliation-failed",
+                        checks=",".join(
+                            name for name, passed in checks.items() if not passed
+                        ),
+                    )
                     raise RuntimeError("ADS reconciliation failed")
 
                 finished_at = utc_now()
