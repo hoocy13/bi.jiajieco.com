@@ -39,4 +39,58 @@ jobs:
           DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
           DEPLOY_USER: ${{ secrets.TENCENT_USER }}
         run: |
-          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "cd /www/wwwroot/bi.jiajieco.com && docker compose exec -T backend python -c \"from sqlalchemy import text; from app.db.ads import require_ads_session_factory; from app.models.ads import AdsPublishBatch; f=require_ads_session_factory(); s=f(); b=s.query(AdsPublishBatch).filter(AdsPublishBatch.dataset=='sales_daily', AdsPublishBatch.status=='ready').order_by(AdsPublishBatch.published_at.desc(), AdsPublishBatch.id.desc()).first(); tables=('ads_sales_customer_daily','ads_sales_customer_product_daily','ads_sales_customer_quality_daily'); coverage={t:dict(s.execute(text(f'SELECT COUNT(*) rows_count, MIN(sales_date) min_date, MAX(sales_date) max_date FROM {t} WHERE data_version=:v'),{'v':b.data_version}).mappings().one()) for t in tables}; q=s.execute(text(\\\"SELECT (SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_daily WHERE data_version=:v AND brand='__all__') c,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_product_daily WHERE data_version=:v AND brand='__all__') p,(SELECT COALESCE(SUM(identified_amount),0) FROM ads_sales_customer_quality_daily WHERE data_version=:v AND brand='__all__') i,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_quality_daily WHERE data_version=:v AND brand='__all__') t,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_detail_daily WHERE data_version=:v) d\\\"),{'v':b.data_version}).mappings().one(); print({'batch':b.id,'coverage':coverage,'customer_equals_product':q.c==q.p,'customer_equals_identified':q.c==q.i,'quality_total_equals_detail':q.t==q.d}); s.close()\""
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "cd /www/wwwroot/bi.jiajieco.com && docker compose exec -T backend python -c \"from sqlalchemy import text; from app.db.ads import require_ads_session_factory; from app.models.ads import AdsPublishBatch; f=require_ads_session_factory(); s=f(); b=s.query(AdsPublishBatch).filter(AdsPublishBatch.dataset=='sales_daily', AdsPublishBatch.status=='ready').order_by(AdsPublishBatch.published_at.desc(), AdsPublishBatch.id.desc()).first(); tables=('ads_sales_customer_daily','ads_sales_customer_product_daily','ads_sales_customer_quality_daily'); coverage={t:dict(s.execute(text(f'SELECT COUNT(*) rows_count, MIN(sales_date) min_date, MAX(sales_date) max_date FROM {t} WHERE data_version=:v'),{'v':b.data_version}).mappings().one()) for t in tables}; q=s.execute(text(\\\"SELECT (SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_daily WHERE data_version=:v AND brand='__all__') c,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_product_daily WHERE data_version=:v AND brand='__all__') p,(SELECT COALESCE(SUM(identified_amount),0) FROM ads_sales_customer_quality_daily WHERE data_version=:v AND brand='__all__') i,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_customer_quality_daily WHERE data_version=:v AND brand='__all__') t,(SELECT COALESCE(SUM(paid_amount),0) FROM ads_sales_detail_daily WHERE data_version=:v AND sales_date >= (SELECT MIN(sales_date) FROM ads_sales_customer_quality_daily WHERE data_version=:v AND brand='__all__')) d\\\"),{'v':b.data_version}).mappings().one(); print({'batch':b.id,'coverage':coverage,'customer_equals_product':q.c==q.p,'customer_equals_identified':q.c==q.i,'quality_total_equals_detail':q.t==q.d}); s.close()\""
+
+      - name: Check authenticated customer analysis endpoints
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "cd /www/wwwroot/bi.jiajieco.com && docker compose exec -T backend python -" <<'PY'
+          import json
+          import urllib.parse
+          import urllib.request
+
+          from app.core.security import create_access_token
+          from app.db.session import SessionLocal
+          from app.models.user import User
+
+          with SessionLocal() as db:
+              user = db.query(User).filter(User.is_active.is_(True)).first()
+          if user is None:
+              raise SystemExit("No active user")
+          token = create_access_token(subject=user.username)
+
+          checks = {
+              "brand": {
+                  "direction": "brand",
+                  "range": "last_30",
+                  "brand": "资生堂",
+                  "page": 1,
+                  "page_size": 20,
+              },
+              "channel": {
+                  "direction": "channel",
+                  "range": "last_30",
+                  "page": 1,
+                  "page_size": 20,
+              },
+          }
+          for label, params in checks.items():
+              request = urllib.request.Request(
+                  "http://127.0.0.1:8000/api/v1/sales/customer-analysis?"
+                  + urllib.parse.urlencode(params),
+                  headers={"Authorization": f"Bearer {token}"},
+              )
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  payload = json.load(response)
+                  source = response.headers.get("X-BI-Response-Source")
+              data = payload.get("data") or {}
+              print(
+                  label,
+                  "ok",
+                  "source=" + str(source),
+                  "rows=" + str(len(data.get("rows") or [])),
+                  "total=" + str((data.get("pagination") or {}).get("total")),
+              )
+          PY
