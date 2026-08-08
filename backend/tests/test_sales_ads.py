@@ -2,6 +2,7 @@ import unittest
 from copy import deepcopy
 from datetime import date, datetime
 from decimal import Decimal
+from unittest.mock import patch
 
 from fastapi import Response
 from sqlalchemy import create_engine
@@ -220,23 +221,39 @@ class SalesIncrementalCopyTests(unittest.TestCase):
                             paid_amount=Decimal("10"),
                             quantity=Decimal("2"),
                         ),
+                        AdsSalesCustomerDaily(
+                            data_version="old",
+                            item_id=12,
+                            sales_date=date(2026, 5, 30),
+                            brand="__all__",
+                            channel="offline",
+                            customer_code="C2",
+                            customer_name="Customer 2",
+                            orders=1,
+                            paid_amount=Decimal("5"),
+                            quantity=Decimal("1"),
+                        ),
                     ]
                 )
                 db.commit()
 
-                counts, offsets = copy_cold_history(
-                    db,
-                    source_version="old",
-                    target_version="new",
-                    refresh_start=date(2026, 6, 1),
-                )
+                with patch(
+                    "app.jobs.build_sales_ads.ITEM_COPY_CHUNK_ROWS", 1
+                ):
+                    counts, offsets = copy_cold_history(
+                        db,
+                        source_version="old",
+                        target_version="new",
+                        refresh_start=date(2026, 6, 1),
+                    )
 
                 copied_days = db.query(AdsSalesDaily).filter_by(
                     data_version="new"
                 ).all()
                 self.assertEqual([row.sales_date for row in copied_days], [date(2026, 5, 31)])
                 self.assertEqual(counts["ads_sales_daily"], 1)
-                self.assertEqual(offsets["ads_sales_customer_daily"], 7)
+                self.assertEqual(counts["ads_sales_customer_daily"], 2)
+                self.assertEqual(offsets["ads_sales_customer_daily"], 12)
         finally:
             engine.dispose()
 

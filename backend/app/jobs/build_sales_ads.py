@@ -91,6 +91,9 @@ ITEM_ID_MODELS = (
     AdsSalesBrandTurnoverOrder,
 )
 
+ITEM_COPY_CHUNK_ROWS = 25_000
+SUMMARY_COPY_CHUNK_DAYS = 92
+
 
 @dataclass(frozen=True)
 class SalesSummary:
@@ -190,13 +193,71 @@ def copy_cold_history(
             oldest_date = oldest_date.date()
         elif isinstance(oldest_date, str):
             oldest_date = date.fromisoformat(oldest_date[:10])
+        copied = 0
+        if model in ITEM_ID_MODELS:
+            last_item_id = 0
+            while True:
+                upper_item_id = ads_db.execute(
+                    text(
+                        f"""
+                        SELECT MAX(`item_id`)
+                        FROM (
+                            SELECT `item_id`
+                            FROM `{table_name}`
+                            WHERE `data_version` = :source_version
+                              AND `sales_date` < :refresh_start
+                              AND `item_id` > :last_item_id
+                            ORDER BY `item_id`
+                            LIMIT :chunk_rows
+                        ) AS `copy_chunk`
+                        """
+                    ),
+                    {
+                        "source_version": source_version,
+                        "refresh_start": refresh_start,
+                        "last_item_id": last_item_id,
+                        "chunk_rows": ITEM_COPY_CHUNK_ROWS,
+                    },
+                ).scalar()
+                if upper_item_id is None:
+                    break
+                result = ads_db.execute(
+                    text(
+                        f"""
+                        INSERT INTO `{table_name}` ({insert_columns})
+                        SELECT :target_version, {select_columns}
+                        FROM `{table_name}`
+                        WHERE `data_version` = :source_version
+                          AND `sales_date` < :refresh_start
+                          AND `item_id` > :last_item_id
+                          AND `item_id` <= :upper_item_id
+                        """
+                    ),
+                    {
+                        "source_version": source_version,
+                        "target_version": target_version,
+                        "refresh_start": refresh_start,
+                        "last_item_id": last_item_id,
+                        "upper_item_id": upper_item_id,
+                    },
+                )
+                copied += max(int(result.rowcount or 0), 0)
+                ads_db.commit()
+                last_item_id = int(upper_item_id)
+            row_counts[table_name] = copied
+            continue
+
         copy_ranges = (
-            list(month_ranges(oldest_date, refresh_start - timedelta(days=1)))
+            list(
+                fixed_day_ranges(
+                    oldest_date,
+                    refresh_start - timedelta(days=1),
+                    SUMMARY_COPY_CHUNK_DAYS,
+                )
+            )
             if oldest_date is not None
             else []
         )
-
-        copied = 0
         for slice_start, slice_end in copy_ranges:
             date_filter = ""
             params: dict[str, object] = {
@@ -663,6 +724,16 @@ def month_ranges(start_date: date, end_date: date):
         )
         yield cursor, min(end_date, next_month - timedelta(days=1))
         cursor = next_month
+
+
+def fixed_day_ranges(start_date: date, end_date: date, days: int):
+    if days < 1:
+        raise ValueError("days must be positive")
+    cursor = start_date
+    while cursor <= end_date:
+        slice_end = min(end_date, cursor + timedelta(days=days - 1))
+        yield cursor, slice_end
+        cursor = slice_end + timedelta(days=1)
 
 
 def load_channel_customer_rows(
