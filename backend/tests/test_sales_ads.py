@@ -13,6 +13,8 @@ from app.core.config import settings
 from app.db.ads import ensure_separate_ads_database
 from app.jobs.build_sales_ads import (
     SalesSummary,
+    add_summaries,
+    copy_cold_history,
     new_data_version,
     reconciliation_payload,
     summaries_match,
@@ -153,6 +155,15 @@ class SalesReconciliationTests(unittest.TestCase):
         self.assertTrue(version.startswith("sales-2026-07-25-"))
         self.assertLessEqual(len(version), 64)
 
+    def test_add_summaries_combines_cold_and_refresh_ranges(self) -> None:
+        combined = add_summaries(
+            SalesSummary(orders=2, paid_amount=Decimal("10"), quantity=Decimal("3")),
+            SalesSummary(orders=4, paid_amount=Decimal("20"), quantity=Decimal("5")),
+        )
+        self.assertEqual(combined.orders, 6)
+        self.assertEqual(combined.paid_amount, Decimal("30"))
+        self.assertEqual(combined.quantity, Decimal("8"))
+
     def test_product_rank_reconciliation_checks_both_aggregates(self) -> None:
         payload = reconciliation_payload(
             self.summary,
@@ -174,6 +185,60 @@ class SalesReconciliationTests(unittest.TestCase):
         self.assertTrue(payload["product_rank"]["detail_daily_matches"])
         self.assertTrue(payload["product_rank"]["product_amount_quantity_matches"])
 
+
+class SalesIncrementalCopyTests(unittest.TestCase):
+    def test_copies_only_cold_history_and_preserves_item_offsets(self) -> None:
+        engine = create_engine("sqlite+pysqlite:///:memory:")
+        AdsBase.metadata.create_all(engine)
+        try:
+            with Session(engine) as db:
+                db.add_all(
+                    [
+                        AdsSalesDaily(
+                            data_version="old",
+                            sales_date=date(2026, 5, 31),
+                            orders=1,
+                            paid_amount=Decimal("10"),
+                            quantity=Decimal("2"),
+                        ),
+                        AdsSalesDaily(
+                            data_version="old",
+                            sales_date=date(2026, 6, 1),
+                            orders=2,
+                            paid_amount=Decimal("20"),
+                            quantity=Decimal("3"),
+                        ),
+                        AdsSalesCustomerDaily(
+                            data_version="old",
+                            item_id=7,
+                            sales_date=date(2026, 5, 31),
+                            brand="__all__",
+                            channel="offline",
+                            customer_code="C1",
+                            customer_name="Customer 1",
+                            orders=1,
+                            paid_amount=Decimal("10"),
+                            quantity=Decimal("2"),
+                        ),
+                    ]
+                )
+                db.commit()
+
+                counts, offsets = copy_cold_history(
+                    db,
+                    source_version="old",
+                    target_version="new",
+                    refresh_start=date(2026, 6, 1),
+                )
+
+                copied_days = db.query(AdsSalesDaily).filter_by(
+                    data_version="new"
+                ).all()
+                self.assertEqual([row.sales_date for row in copied_days], [date(2026, 5, 31)])
+                self.assertEqual(counts["ads_sales_daily"], 1)
+                self.assertEqual(offsets["ads_sales_customer_daily"], 7)
+        finally:
+            engine.dispose()
 
 class SalesAdsReaderTests(unittest.TestCase):
     def setUp(self) -> None:

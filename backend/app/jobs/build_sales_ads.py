@@ -7,7 +7,7 @@ from decimal import Decimal
 from time import monotonic
 from uuid import uuid4
 
-from sqlalchemy import insert, text
+from sqlalchemy import insert, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,7 @@ from app.services.sales_sources import (
 
 
 DATASET = "sales_daily"
+DEFAULT_REFRESH_DAYS = 60
 _BUILD_STARTED_AT: float | None = None
 BRAND_TURNOVER_DEFAULT_WAREHOUSES = (
     "上海仓库新",
@@ -58,6 +59,37 @@ PRODUCT_TYPE_SCOPES_SQL = """
     UNION ALL SELECT 'sample'
     UNION ALL SELECT 'selected'
 """
+
+SALES_DATE_MODELS = (
+    AdsSalesDaily,
+    AdsSalesDailyChannel,
+    AdsSalesDailyCityChannel,
+    AdsSalesDetailDaily,
+    AdsSalesDetailDailyChannel,
+    AdsSalesDailyProduct,
+    AdsSalesDetailDailyScope,
+    AdsSalesDailyBrandScope,
+    AdsSalesDailyBrandProduct,
+    AdsSalesDailyChannelCustomer,
+    AdsSalesCustomerDaily,
+    AdsSalesCustomerProductDaily,
+    AdsSalesCustomerQualityDaily,
+    AdsSalesDailyBrandChannelScope,
+    AdsSalesDailyBrandChannelProduct,
+    AdsSalesOrderDetail,
+    AdsSalesOrderDailyFilter,
+    AdsSalesBrandTurnoverItem,
+    AdsSalesBrandTurnoverOrder,
+)
+
+ITEM_ID_MODELS = (
+    AdsSalesCustomerDaily,
+    AdsSalesCustomerProductDaily,
+    AdsSalesCustomerQualityDaily,
+    AdsSalesOrderDetail,
+    AdsSalesBrandTurnoverItem,
+    AdsSalesBrandTurnoverOrder,
+)
 
 
 @dataclass(frozen=True)
@@ -103,6 +135,137 @@ def summaries_match(left: SalesSummary, right: SalesSummary) -> bool:
         and left.paid_amount == right.paid_amount
         and left.quantity == right.quantity
     )
+
+
+def add_summaries(left: SalesSummary, right: SalesSummary) -> SalesSummary:
+    return SalesSummary(
+        orders=left.orders + right.orders,
+        paid_amount=left.paid_amount + right.paid_amount,
+        quantity=left.quantity + right.quantity,
+    )
+
+
+def latest_ready_batch(ads_db: Session) -> AdsPublishBatch | None:
+    return ads_db.execute(
+        select(AdsPublishBatch)
+        .where(
+            AdsPublishBatch.dataset == DATASET,
+            AdsPublishBatch.status == "ready",
+        )
+        .order_by(AdsPublishBatch.published_at.desc(), AdsPublishBatch.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
+def copy_cold_history(
+    ads_db: Session,
+    source_version: str,
+    target_version: str,
+    refresh_start: date,
+) -> tuple[dict[str, int], dict[str, int]]:
+    row_counts: dict[str, int] = {}
+    item_offsets: dict[str, int] = {}
+    for model in SALES_DATE_MODELS:
+        table = model.__table__
+        table_name = table.name
+        columns = [column.name for column in table.columns]
+        copied_columns = [column for column in columns if column != "data_version"]
+        insert_columns = ", ".join(f"`{column}`" for column in columns)
+        select_columns = ", ".join(f"`{column}`" for column in copied_columns)
+        result = ads_db.execute(
+            text(
+                f"""
+                INSERT INTO `{table_name}` ({insert_columns})
+                SELECT :target_version, {select_columns}
+                FROM `{table_name}`
+                WHERE `data_version` = :source_version
+                  AND `sales_date` < :refresh_start
+                """
+            ),
+            {
+                "source_version": source_version,
+                "target_version": target_version,
+                "refresh_start": refresh_start,
+            },
+        )
+        row_counts[table_name] = max(int(result.rowcount or 0), 0)
+        ads_db.commit()
+
+    for model in ITEM_ID_MODELS:
+        table_name = model.__table__.name
+        item_offsets[table_name] = int(
+            ads_db.execute(
+                text(
+                    f"""
+                    SELECT COALESCE(MAX(`item_id`), 0)
+                    FROM `{table_name}`
+                    WHERE `data_version` = :target_version
+                    """
+                ),
+                {"target_version": target_version},
+            ).scalar()
+            or 0
+        )
+    return row_counts, item_offsets
+
+
+def load_ads_summary_before(
+    ads_db: Session,
+    table_name: str,
+    data_version: str,
+    refresh_start: date,
+    *,
+    orders_expression: str = "COALESCE(SUM(`orders`), 0)",
+    extra_filter: str = "",
+) -> SalesSummary:
+    allowed_tables = {model.__table__.name for model in SALES_DATE_MODELS}
+    if table_name not in allowed_tables:
+        raise ValueError("Unsupported ADS cold-history table")
+    row = ads_db.execute(
+        text(
+            f"""
+            SELECT
+              {orders_expression} AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `{table_name}`
+            WHERE `data_version` = :data_version
+              AND `sales_date` < :refresh_start
+              {extra_filter}
+            """
+        ),
+        {"data_version": data_version, "refresh_start": refresh_start},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
+
+
+def load_ads_brand_turnover_summary_before(
+    ads_db: Session,
+    data_version: str,
+    refresh_start: date,
+) -> SalesSummary:
+    row = ads_db.execute(
+        text(
+            """
+            SELECT
+              (
+                SELECT COALESCE(SUM(o.`orders`), 0)
+                FROM `ads_sales_brand_turnover_order` o
+                WHERE o.`data_version` = :data_version
+                  AND o.`sales_date` < :refresh_start
+                  AND o.`warehouse` = '__all__'
+                  AND o.`product_type` = 'all'
+              ) AS orders,
+              COALESCE(SUM(i.`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(i.`quantity`), 0) AS quantity
+            FROM `ads_sales_brand_turnover_item` i
+            WHERE i.`data_version` = :data_version
+              AND i.`sales_date` < :refresh_start
+            """
+        ),
+        {"data_version": data_version, "refresh_start": refresh_start},
+    ).mappings().one()
+    return summary_from_mapping(dict(row))
 
 
 def new_data_version(source_end_date: date) -> str:
@@ -624,8 +787,10 @@ def insert_customer_ads_rows(
     data_version: str,
     start_date: date,
     end_date: date,
+    item_offsets: tuple[int, int, int] = (0, 0, 0),
 ) -> tuple[int, int, int]:
     counts = [0, 0, 0]
+    next_item_ids = list(item_offsets)
     models = (AdsSalesCustomerDaily, AdsSalesCustomerProductDaily, AdsSalesCustomerQualityDaily)
     ranges = list(month_ranges(start_date, end_date))
     for index, (slice_start, slice_end) in enumerate(ranges, start=1):
@@ -634,7 +799,12 @@ def insert_customer_ads_rows(
             payload = []
             for row in rows:
                 counts[position] += 1
-                item = {"data_version": data_version, "item_id": counts[position], **row}
+                next_item_ids[position] += 1
+                item = {
+                    "data_version": data_version,
+                    "item_id": next_item_ids[position],
+                    **row,
+                }
                 for field in ("orders", "identified_orders"):
                     if field in item:
                         item[field] = int(item[field] or 0)
@@ -733,6 +903,7 @@ def insert_order_detail_rows_streaming(
     start_date: date,
     end_date: date,
     chunk_size: int = 5000,
+    item_offset: int = 0,
 ) -> int:
     result = ods_db.execute(
         text(
@@ -758,7 +929,8 @@ def insert_order_detail_rows_streaming(
         {"start_date": start_date, "end_date": end_date},
         execution_options={"stream_results": True},
     ).mappings()
-    item_id = 0
+    item_id = item_offset
+    inserted_rows = 0
     while True:
         chunk = result.fetchmany(chunk_size)
         if not chunk:
@@ -766,6 +938,7 @@ def insert_order_detail_rows_streaming(
         payload = []
         for row in chunk:
             item_id += 1
+            inserted_rows += 1
             sales_time = row["sales_time"]
             payload.append(
                 {
@@ -785,12 +958,12 @@ def insert_order_detail_rows_streaming(
                 }
             )
         ads_db.execute(insert(AdsSalesOrderDetail), payload)
-        if item_id % 50000 == 0:
+        if inserted_rows % 50000 == 0:
             ads_db.commit()
-        if item_id % 500000 == 0:
-            report_progress("order-detail", rows=item_id)
+        if inserted_rows % 500000 == 0:
+            report_progress("order-detail", rows=inserted_rows)
     ads_db.commit()
-    return item_id
+    return inserted_rows
 
 
 def ads_can_read_sales_source_directly() -> bool:
@@ -811,8 +984,10 @@ def insert_order_detail_rows_server_side(
     data_version: str,
     start_date: date,
     end_date: date,
+    item_offset: int = 0,
 ) -> int:
-    item_offset = 0
+    next_item_id = item_offset
+    inserted_total = 0
     ranges = list(month_ranges(start_date, end_date))
     for index, (slice_start, slice_end) in enumerate(ranges, start=1):
         result = ads_db.execute(
@@ -847,7 +1022,7 @@ def insert_order_detail_rows_server_side(
             ),
             {
                 "data_version": data_version,
-                "item_offset": item_offset,
+                "item_offset": next_item_id,
                 "start_date": slice_start,
                 "end_date": slice_end,
             },
@@ -866,17 +1041,18 @@ def insert_order_detail_rows_server_side(
                     {"data_version": data_version},
                 ).scalar()
                 or 0
-            ) - item_offset
-        item_offset += inserted
+            ) - inserted_total - item_offset
+        next_item_id += inserted
+        inserted_total += inserted
         ads_db.commit()
         if index == 1 or index == len(ranges) or index % 6 == 0:
             report_progress(
                 "order-detail-slices",
                 progress=f"{index}/{len(ranges)}",
                 through=slice_end,
-                rows=item_offset,
+                rows=inserted_total,
             )
-    return item_offset
+    return inserted_total
 
 
 def insert_order_detail_rows(
@@ -885,6 +1061,7 @@ def insert_order_detail_rows(
     data_version: str,
     start_date: date,
     end_date: date,
+    item_offset: int = 0,
 ) -> int:
     if ads_can_read_sales_source_directly():
         return insert_order_detail_rows_server_side(
@@ -892,6 +1069,7 @@ def insert_order_detail_rows(
             data_version,
             start_date,
             end_date,
+            item_offset,
         )
     return insert_order_detail_rows_streaming(
         ods_db,
@@ -899,16 +1077,24 @@ def insert_order_detail_rows(
         data_version,
         start_date,
         end_date,
+        item_offset=item_offset,
     )
 
 
 def insert_order_daily_filter_rows(
     ads_db: Session,
     data_version: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> int:
+    date_filter = ""
+    params: dict[str, object] = {"data_version": data_version}
+    if start_date is not None and end_date is not None:
+        date_filter = "AND `sales_date` BETWEEN :start_date AND :end_date"
+        params.update({"start_date": start_date, "end_date": end_date})
     result = ads_db.execute(
         text(
-            """
+            f"""
             INSERT INTO `ads_sales_order_daily_filter` (
               `data_version`, `sales_date`, `channel`, `status`,
               `detail_rows`, `orders`, `paid_amount`, `quantity`
@@ -921,10 +1107,11 @@ def insert_order_daily_filter_rows(
               SUM(`quantity`) AS quantity
             FROM `ads_sales_order_detail`
             WHERE `data_version` = :data_version
+              {date_filter}
             GROUP BY `data_version`, `sales_date`, `channel`, `status`
             """
         ),
-        {"data_version": data_version},
+        params,
     )
     row_count = int(result.rowcount or 0)
     ads_db.commit()
@@ -1283,6 +1470,7 @@ def build_sales_ads(
     start_date: date | None = None,
     end_date: date | None = None,
     data_version: str | None = None,
+    refresh_days: int | None = DEFAULT_REFRESH_DAYS,
 ) -> dict:
     global _BUILD_STARTED_AT
     _BUILD_STARTED_AT = monotonic()
@@ -1299,15 +1487,39 @@ def build_sales_ads(
     ods_db = Session(bind=ods_build_engine)
 
     try:
-        resolved_start, resolved_end = resolve_source_range(ods_db, start_date, end_date)
+        full_start, resolved_end = resolve_source_range(ods_db, start_date, end_date)
+        if refresh_days is not None and refresh_days < 1:
+            raise ValueError("refresh_days must be at least 1")
         version = data_version or new_data_version(resolved_end)
 
         with ads_session_factory() as ads_db:
+            previous_batch = latest_ready_batch(ads_db)
+            incremental_requested = (
+                refresh_days is not None
+                and start_date is None
+                and end_date is None
+                and previous_batch is not None
+            )
+            resolved_start = full_start
+            copy_source_version: str | None = None
+            if incremental_requested:
+                refresh_start = max(
+                    full_start,
+                    resolved_end - timedelta(days=refresh_days - 1),
+                )
+                previous_covers_history = (
+                    previous_batch.source_start_date <= full_start
+                    and previous_batch.source_end_date >= refresh_start - timedelta(days=1)
+                )
+                if previous_covers_history and refresh_start > full_start:
+                    resolved_start = refresh_start
+                    copy_source_version = previous_batch.data_version
+
             batch = AdsPublishBatch(
                 data_version=version,
                 dataset=DATASET,
                 status="building",
-                source_start_date=resolved_start,
+                source_start_date=full_start,
                 source_end_date=resolved_end,
                 created_at=utc_now(),
             )
@@ -1318,12 +1530,30 @@ def build_sales_ads(
                 "batch-created",
                 batch=batch_id,
                 version=version,
-                range=f"{resolved_start}..{resolved_end}",
+                mode="incremental" if copy_source_version else "full",
+                range=f"{full_start}..{resolved_end}",
+                refresh=f"{resolved_start}..{resolved_end}",
             )
 
             try:
+                item_offsets: dict[str, int] = {}
+                if copy_source_version is not None:
+                    copied_rows, item_offsets = copy_cold_history(
+                        ads_db,
+                        copy_source_version,
+                        version,
+                        resolved_start,
+                    )
+                    report_progress(
+                        "cold-history-copied",
+                        tables=len(copied_rows),
+                        rows=sum(copied_rows.values()),
+                        through=resolved_start - timedelta(days=1),
+                    )
                 report_progress("load-core-aggregates")
-                source_summary = load_source_summary(ods_db, resolved_start, resolved_end)
+                refresh_source_summary = load_source_summary(
+                    ods_db, resolved_start, resolved_end
+                )
                 daily_rows = load_daily_rows(ods_db, resolved_start, resolved_end)
                 channel_rows = load_channel_rows(ods_db, resolved_start, resolved_end)
                 city_channel_rows = load_city_channel_rows(
@@ -1331,7 +1561,7 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
-                detail_source_summary = load_detail_source_summary(
+                refresh_detail_source_summary = load_detail_source_summary(
                     ods_db,
                     resolved_start,
                     resolved_end,
@@ -1377,7 +1607,7 @@ def build_sales_ads(
                     product_rows=len(product_rows),
                     customer_rows=len(channel_customer_rows),
                 )
-                offline_customer_source_summary = load_offline_customer_source_summary(
+                refresh_offline_customer_source_summary = load_offline_customer_source_summary(
                     ods_db,
                     resolved_start,
                     resolved_end,
@@ -1425,6 +1655,40 @@ def build_sales_ads(
                     or not brand_turnover_order_rows
                 ):
                     raise RuntimeError("No sales rows found for the requested range")
+
+                source_summary = refresh_source_summary
+                detail_source_summary = refresh_detail_source_summary
+                offline_customer_source_summary = (
+                    refresh_offline_customer_source_summary
+                )
+                if copy_source_version is not None:
+                    source_summary = add_summaries(
+                        load_ads_summary_before(
+                            ads_db,
+                            "ads_sales_daily",
+                            copy_source_version,
+                            resolved_start,
+                        ),
+                        refresh_source_summary,
+                    )
+                    detail_source_summary = add_summaries(
+                        load_ads_summary_before(
+                            ads_db,
+                            "ads_sales_detail_daily",
+                            copy_source_version,
+                            resolved_start,
+                        ),
+                        refresh_detail_source_summary,
+                    )
+                    offline_customer_source_summary = add_summaries(
+                        load_ads_summary_before(
+                            ads_db,
+                            "ads_sales_daily_channel_customer",
+                            copy_source_version,
+                            resolved_start,
+                        ),
+                        refresh_offline_customer_source_summary,
+                    )
 
                 ads_db.execute(
                     insert(AdsSalesDaily),
@@ -1573,6 +1837,11 @@ def build_sales_ads(
                 report_progress("base-aggregates-written")
                 customer_daily_row_count, customer_product_row_count, customer_quality_row_count = insert_customer_ads_rows(
                     ods_db, ads_db, version, resolved_start, resolved_end,
+                    item_offsets=(
+                        item_offsets.get("ads_sales_customer_daily", 0),
+                        item_offsets.get("ads_sales_customer_product_daily", 0),
+                        item_offsets.get("ads_sales_customer_quality_daily", 0),
+                    ),
                 )
                 if not customer_daily_row_count or not customer_product_row_count or not customer_quality_row_count:
                     raise RuntimeError("No customer ADS rows found for the requested range")
@@ -1622,10 +1891,13 @@ def build_sales_ads(
                     version,
                     resolved_start,
                     resolved_end,
+                    item_offset=item_offsets.get("ads_sales_order_detail", 0),
                 )
                 order_daily_filter_row_count = insert_order_daily_filter_rows(
                     ads_db,
                     version,
+                    resolved_start,
+                    resolved_end,
                 )
                 report_progress(
                     "order-detail-written",
@@ -1651,7 +1923,10 @@ def build_sales_ads(
                         }
                         for index, row in enumerate(
                             brand_turnover_product_rows,
-                            start=1,
+                            start=item_offsets.get(
+                                "ads_sales_brand_turnover_item", 0
+                            )
+                            + 1,
                         )
                     ],
                 )
@@ -1670,7 +1945,10 @@ def build_sales_ads(
                         }
                         for index, row in enumerate(
                             brand_turnover_order_rows,
-                            start=1,
+                            start=item_offsets.get(
+                                "ads_sales_brand_turnover_order", 0
+                            )
+                            + 1,
                         )
                     ],
                 )
@@ -1715,6 +1993,15 @@ def build_sales_ads(
                     brand_turnover_product_rows,
                     brand_turnover_order_rows,
                 )
+                if copy_source_version is not None:
+                    source_brand_turnover_summary = add_summaries(
+                        load_ads_brand_turnover_summary_before(
+                            ads_db,
+                            copy_source_version,
+                            resolved_start,
+                        ),
+                        source_brand_turnover_summary,
+                    )
                 ads_brand_turnover_summary = load_ads_brand_turnover_summary(
                     ads_db,
                     version,
@@ -1795,6 +2082,19 @@ def build_sales_ads(
                 ).mappings().one()
                 order_detail_summary = summary_from_mapping(dict(order_detail_row))
                 order_detail_matches = summaries_match(source_summary, order_detail_summary)
+                order_detail_total_count = int(
+                    ads_db.execute(
+                        text(
+                            """
+                            SELECT COUNT(*)
+                            FROM `ads_sales_order_detail`
+                            WHERE `data_version` = :data_version
+                            """
+                        ),
+                        {"data_version": version},
+                    ).scalar()
+                    or 0
+                )
                 order_filter_summary = load_ads_table_summary(
                     ads_db,
                     "ads_sales_order_daily_filter",
@@ -1816,7 +2116,7 @@ def build_sales_ads(
                 order_filter_matches = (
                     source_summary.paid_amount == order_filter_summary.paid_amount
                     and source_summary.quantity == order_filter_summary.quantity
-                    and order_detail_row_count == order_filter_row_total
+                    and order_detail_total_count == order_filter_row_total
                 )
                 customer_amount_quantity_matches = summaries_match(
                     offline_customer_source_summary,
@@ -1892,8 +2192,24 @@ def build_sales_ads(
                 if batch is None:
                     raise RuntimeError("ADS publish batch disappeared during build")
                 batch.status = "ready"
-                batch.daily_row_count = len(daily_rows)
-                batch.channel_row_count = len(channel_rows)
+                batch.daily_row_count = int(
+                    ads_db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM `ads_sales_daily` WHERE `data_version` = :data_version"
+                        ),
+                        {"data_version": version},
+                    ).scalar()
+                    or 0
+                )
+                batch.channel_row_count = int(
+                    ads_db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM `ads_sales_daily_channel` WHERE `data_version` = :data_version"
+                        ),
+                        {"data_version": version},
+                    ).scalar()
+                    or 0
+                )
                 batch.reconciliation = reconciliation
                 batch.finished_at = finished_at
                 batch.published_at = finished_at
@@ -1902,10 +2218,10 @@ def build_sales_ads(
                 return {
                     "data_version": version,
                     "status": "ready",
-                    "source_start_date": resolved_start.isoformat(),
+                    "source_start_date": full_start.isoformat(),
                     "source_end_date": resolved_end.isoformat(),
-                    "daily_row_count": len(daily_rows),
-                    "channel_row_count": len(channel_rows),
+                    "daily_row_count": batch.daily_row_count,
+                    "channel_row_count": batch.channel_row_count,
                     "city_channel_row_count": len(city_channel_rows),
                     "detail_daily_row_count": len(detail_daily_rows),
                     "detail_channel_row_count": len(detail_channel_rows),
@@ -1913,7 +2229,7 @@ def build_sales_ads(
                     "detail_scope_row_count": len(detail_scope_rows),
                     "brand_scope_row_count": len(brand_scope_rows),
                     "brand_product_row_count": len(brand_product_rows),
-                    "order_detail_row_count": order_detail_row_count,
+                    "order_detail_row_count": order_detail_total_count,
                     "order_daily_filter_row_count": order_daily_filter_row_count,
                     "channel_customer_row_count": len(channel_customer_rows),
                     "customer_daily_row_count": customer_daily_row_count,
@@ -1954,6 +2270,20 @@ def main() -> None:
     parser.add_argument("--end-date", help="Inclusive source end date in YYYY-MM-DD format")
     parser.add_argument("--data-version", help="Optional caller-provided immutable data version")
     parser.add_argument(
+        "--refresh-days",
+        type=int,
+        default=DEFAULT_REFRESH_DAYS,
+        help=(
+            "Rebuild this many latest sales days and copy older rows from the "
+            f"latest ready version (default: {DEFAULT_REFRESH_DAYS})"
+        ),
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Rebuild the complete sales history from ODS",
+    )
+    parser.add_argument(
         "--initialize-only",
         action="store_true",
         help="Create ADS tables without reading ODS or publishing data",
@@ -1969,6 +2299,7 @@ def main() -> None:
         start_date=parse_date(args.start_date),
         end_date=parse_date(args.end_date),
         data_version=args.data_version,
+        refresh_days=None if args.full else args.refresh_days,
     )
     print(
         "sales ADS published "
