@@ -114,6 +114,8 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 docker compose exec -T backend python -m app.jobs.build_sales_ads
 ```
 
+销售与库存 ADS 聚合统一由 DolphinScheduler 调度。GitHub Actions 仅发布应用代码，不触发 ADS 构建；服务器也不再安装独立的销售 ADS cron，避免与海豚任务重复执行。
+
 该节点成功后才发布新的 `ready` 数据版本；客户汇总对账失败会使整个销售 ADS 批次失败，线上继续读取上一版数据。发布本版本后需要完整重跑一次销售 ADS。
 
 渠道主数据仍从 ODS 小表实时读取，事实统计全部从 ADS 读取。
