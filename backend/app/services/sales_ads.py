@@ -1022,6 +1022,134 @@ def load_sales_channel_customer_from_ads(
     }
 
 
+def load_sales_customer_analysis_from_ads(
+    ads_db: Session,
+    batch: AdsPublishBatch,
+    meta: dict,
+    brand: str | None,
+    channels: list[str] | None,
+    keyword: str | None,
+    frequency: str,
+    page: int,
+    page_size: int,
+) -> dict:
+    start_date = date.fromisoformat(meta["start_date"])
+    end_date = date.fromisoformat(meta["end_date"])
+    ensure_batch_covers(batch, start_date, end_date)
+    params: dict = {
+        "data_version": batch.data_version,
+        "start_date": start_date,
+        "end_date": end_date,
+        "brand": brand.strip() if brand else "__all__",
+    }
+    channel_filter = ""
+    if channels:
+        params["channels"] = tuple(dict.fromkeys(channels))
+        channel_filter = "AND `channel` IN :channels"
+    customer_sql = f"""
+        SELECT `customer_code`, MAX(`customer_name`) AS customer_name,
+               SUM(`orders`) AS orders, COUNT(DISTINCT `sales_date`) AS active_days,
+               MIN(`sales_date`) AS first_order_date, MAX(`sales_date`) AS last_order_date,
+               SUM(`quantity`) AS quantity, SUM(`paid_amount`) AS paid_amount
+        FROM `ads_sales_customer_daily`
+        WHERE `data_version` = :data_version
+          AND `sales_date` BETWEEN :start_date AND :end_date
+          AND `brand` = :brand
+          {channel_filter}
+        GROUP BY `customer_code`
+    """
+    keyword_filter = ""
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        keyword_filter = "WHERE customer_code LIKE :keyword OR customer_name LIKE :keyword"
+    summary = ads_db.execute(text(f"""
+        SELECT COUNT(*) AS customers,
+               COALESCE(SUM(CASE WHEN orders >= 2 THEN 1 ELSE 0 END), 0) AS repeat_customers,
+               COALESCE(SUM(orders), 0) AS orders,
+               COALESCE(SUM(quantity), 0) AS quantity,
+               COALESCE(SUM(paid_amount), 0) AS paid_amount
+        FROM ({customer_sql}) customers {keyword_filter}
+    """).bindparams(bindparam("channels", expanding=True)) if channels else text(f"""
+        SELECT COUNT(*) AS customers,
+               COALESCE(SUM(CASE WHEN orders >= 2 THEN 1 ELSE 0 END), 0) AS repeat_customers,
+               COALESCE(SUM(orders), 0) AS orders,
+               COALESCE(SUM(quantity), 0) AS quantity,
+               COALESCE(SUM(paid_amount), 0) AS paid_amount
+        FROM ({customer_sql}) customers {keyword_filter}
+    """), params).mappings().one()
+    frequency_query = text(f"""
+        SELECT CASE WHEN orders = 1 THEN 'first' WHEN orders BETWEEN 2 AND 3 THEN 'stable' ELSE 'high' END AS bucket,
+               COUNT(*) AS customers, COALESCE(SUM(paid_amount), 0) AS paid_amount
+        FROM ({customer_sql}) customers {keyword_filter}
+        GROUP BY bucket ORDER BY MIN(orders)
+    """)
+    if channels:
+        frequency_query = frequency_query.bindparams(bindparam("channels", expanding=True))
+    frequency_rows = ads_db.execute(frequency_query, params).mappings().all()
+    row_filters = []
+    if keyword_filter:
+        row_filters.append("(customer_code LIKE :keyword OR customer_name LIKE :keyword)")
+    bucket_filters = {"first": "orders = 1", "stable": "orders BETWEEN 2 AND 3", "high": "orders >= 4"}
+    if frequency in bucket_filters:
+        row_filters.append(bucket_filters[frequency])
+    row_filter = "WHERE " + " AND ".join(row_filters) if row_filters else ""
+    rows_query = text(f"""
+        SELECT * FROM ({customer_sql}) customers {row_filter}
+        ORDER BY paid_amount DESC, orders DESC, customer_code
+        LIMIT :limit OFFSET :offset
+    """)
+    if channels:
+        rows_query = rows_query.bindparams(bindparam("channels", expanding=True))
+    rows = ads_db.execute(rows_query, {**params, "limit": page_size, "offset": (page - 1) * page_size}).mappings().all()
+    quality_query = text(f"""
+        SELECT COALESCE(SUM(`orders`), 0) AS orders,
+               COALESCE(SUM(`identified_orders`), 0) AS identified_orders,
+               COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+               COALESCE(SUM(`identified_amount`), 0) AS identified_amount
+        FROM `ads_sales_customer_quality_daily`
+        WHERE `data_version` = :data_version AND `sales_date` BETWEEN :start_date AND :end_date
+          AND `brand` = :brand {channel_filter}
+    """)
+    product_query = text(f"""
+        SELECT `product_code`, MAX(`product_name`) AS product_name,
+               COUNT(DISTINCT `customer_code`) AS customers,
+               SUM(`orders`) AS orders, SUM(`quantity`) AS quantity, SUM(`paid_amount`) AS paid_amount
+        FROM `ads_sales_customer_product_daily`
+        WHERE `data_version` = :data_version AND `sales_date` BETWEEN :start_date AND :end_date
+          AND `brand` = :brand {channel_filter}
+        GROUP BY `product_code` ORDER BY paid_amount DESC, quantity DESC LIMIT 15
+    """)
+    if channels:
+        quality_query = quality_query.bindparams(bindparam("channels", expanding=True))
+        product_query = product_query.bindparams(bindparam("channels", expanding=True))
+    quality = ads_db.execute(quality_query, params).mappings().one()
+    products = ads_db.execute(product_query, params).mappings().all()
+    customers = integer(summary["customers"])
+    repeats = integer(summary["repeat_customers"])
+    total_orders = integer(quality["orders"])
+    identified_orders = integer(quality["identified_orders"])
+    total_amount = number(quality["paid_amount"])
+    identified_amount = number(quality["identified_amount"])
+    labels = {"first": "首购客户", "stable": "稳定客户", "high": "高频客户"}
+    filtered_total = customers if frequency == "all" else next((integer(row["customers"]) for row in frequency_rows if row["bucket"] == frequency), 0)
+    return {
+        **meta, "scope_required": False,
+        "summary": {"customers": customers, "repeat_customers": repeats, "repeat_rate": repeats / customers * 100 if customers else 0,
+                    "orders": integer(summary["orders"]), "quantity": integer(summary["quantity"]), "paid_amount": number(summary["paid_amount"]),
+                    "identified_amount": identified_amount, "identified_amount_rate": identified_amount / total_amount * 100 if total_amount else 0},
+        "quality": {"identified_orders": identified_orders, "unidentified_orders": max(0, total_orders - identified_orders),
+                    "identified_order_rate": identified_orders / total_orders * 100 if total_orders else 0,
+                    "grade": "A" if total_orders and identified_orders / total_orders >= .9 else "B" if total_orders and identified_orders / total_orders >= .6 else "C"},
+        "frequency": [{"bucket": row["bucket"], "label": labels[row["bucket"]], "customers": integer(row["customers"]), "paid_amount": number(row["paid_amount"])} for row in frequency_rows],
+        "top_products": [{"product_code": row["product_code"], "product_name": row["product_name"], "customers": integer(row["customers"]), "orders": integer(row["orders"]), "quantity": integer(row["quantity"]), "paid_amount": number(row["paid_amount"])} for row in products],
+        "pagination": {"page": page, "page_size": page_size, "total": filtered_total},
+        "rows": [{"customer_code": row["customer_code"], "customer_name": row["customer_name"], "orders": integer(row["orders"]), "active_days": integer(row["active_days"]),
+                  "first_order_date": date_text(row["first_order_date"]), "last_order_date": date_text(row["last_order_date"]),
+                  "avg_interval_days": max(0, (date_value(row["last_order_date"]) - date_value(row["first_order_date"])).days / (integer(row["orders"]) - 1)) if integer(row["orders"]) > 1 else None,
+                  "quantity": integer(row["quantity"]), "paid_amount": number(row["paid_amount"])} for row in rows],
+    }
+
+
 def load_sales_brand_channel_from_ads(
     ads_db: Session,
     batch: AdsPublishBatch,

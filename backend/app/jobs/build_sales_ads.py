@@ -21,6 +21,9 @@ from app.models.ads import (
     AdsSalesDailyBrandProduct,
     AdsSalesDailyBrandScope,
     AdsSalesDailyChannelCustomer,
+    AdsSalesCustomerDaily,
+    AdsSalesCustomerProductDaily,
+    AdsSalesCustomerQualityDaily,
     AdsSalesBrandTurnoverItem,
     AdsSalesBrandTurnoverOrder,
     AdsSalesDailyChannel,
@@ -37,6 +40,7 @@ from app.services.sales_sources import (
     BRAND_EXPRESSION_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
     PRODUCT_TYPE_EXPRESSION_SQL,
+    SALES_DETAIL_TABLE_SQL,
     SALES_ORDER_TABLE_SQL,
 )
 
@@ -530,6 +534,105 @@ def load_offline_customer_source_summary(
         {"start_date": start_date, "end_date": end_date},
     ).mappings().one()
     return summary_from_mapping(dict(row))
+
+
+def load_customer_ads_rows(
+    ods_db: Session,
+    start_date: date,
+    end_date: date,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    customer_rows: list[dict] = []
+    product_rows: list[dict] = []
+    quality_rows: list[dict] = []
+    order_customer_sql = f"""
+        SELECT `订单编号`,
+               MAX(NULLIF(TRIM(`客户编号`), '')) AS customer_code,
+               MAX(NULLIF(TRIM(`客户名称`), '')) AS customer_name
+        FROM {SALES_ORDER_TABLE_SQL}
+        WHERE `下单时间` >= :start_date
+          AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+          AND {ACTIVE_SALES_ORDER_SQL}
+        GROUP BY `订单编号`
+    """
+    for slice_start, slice_end in month_ranges(start_date, end_date):
+        common_from = f"""
+            FROM {SALES_DETAIL_TABLE_SQL} l
+            LEFT JOIN ({order_customer_sql}) o ON o.`订单编号` = l.`订单编号`
+            CROSS JOIN (SELECT 0 AS all_brand UNION ALL SELECT 1) brand_scopes
+            WHERE l.`下单时间` >= :start_date
+              AND l.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+        """
+        params = {"start_date": slice_start, "end_date": slice_end}
+        detail_sql = f"""
+            SELECT DATE(l.`下单时间`) AS sales_date,
+                   CASE WHEN brand_scopes.all_brand = 0 THEN '__all__' ELSE ({BRAND_EXPRESSION_SQL}) END AS brand,
+                   COALESCE(NULLIF(TRIM(l.`销售渠道`), ''), '未归类') AS channel,
+                   COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code) AS customer_code,
+                   COALESCE(o.customer_name, '未命名客户') AS customer_name,
+                   l.`订单编号` AS order_id,
+                   COALESCE(NULLIF(TRIM(l.`货品编号`), ''), '-') AS product_code,
+                   COALESCE(NULLIF(TRIM(l.`货品名称`), ''), '未命名货品') AS product_name,
+                   COALESCE(l.`数量`, 0) AS quantity,
+                   COALESCE(l.`分摊后金额`, 0) AS paid_amount
+            {common_from}
+        """
+        customer_rows.extend(dict(row) for row in ods_db.execute(text(f"""
+            SELECT sales_date, brand, channel, customer_code,
+                   MAX(customer_name) AS customer_name,
+                   COUNT(DISTINCT order_id) AS orders,
+                   SUM(quantity) AS quantity, SUM(paid_amount) AS paid_amount
+            FROM ({detail_sql}) detail
+            WHERE customer_code IS NOT NULL
+            GROUP BY sales_date, brand, channel, customer_code
+        """), params).mappings().all())
+        product_rows.extend(dict(row) for row in ods_db.execute(text(f"""
+            SELECT sales_date, brand, channel, customer_code, product_code,
+                   MAX(product_name) AS product_name,
+                   COUNT(DISTINCT order_id) AS orders,
+                   SUM(quantity) AS quantity, SUM(paid_amount) AS paid_amount
+            FROM ({detail_sql}) detail
+            WHERE customer_code IS NOT NULL
+            GROUP BY sales_date, brand, channel, customer_code, product_code
+        """), params).mappings().all())
+        quality_rows.extend(dict(row) for row in ods_db.execute(text(f"""
+            SELECT sales_date, brand, channel,
+                   COUNT(DISTINCT order_id) AS orders,
+                   COUNT(DISTINCT CASE WHEN customer_code IS NOT NULL THEN order_id END) AS identified_orders,
+                   SUM(paid_amount) AS paid_amount,
+                   SUM(CASE WHEN customer_code IS NOT NULL THEN paid_amount ELSE 0 END) AS identified_amount
+            FROM ({detail_sql}) detail
+            GROUP BY sales_date, brand, channel
+        """), params).mappings().all())
+    return customer_rows, product_rows, quality_rows
+
+
+def insert_customer_ads_rows(
+    ods_db: Session,
+    ads_db: Session,
+    data_version: str,
+    start_date: date,
+    end_date: date,
+) -> tuple[int, int, int]:
+    counts = [0, 0, 0]
+    models = (AdsSalesCustomerDaily, AdsSalesCustomerProductDaily, AdsSalesCustomerQualityDaily)
+    for slice_start, slice_end in month_ranges(start_date, end_date):
+        row_sets = load_customer_ads_rows(ods_db, slice_start, slice_end)
+        for position, (model, rows) in enumerate(zip(models, row_sets, strict=True)):
+            payload = []
+            for row in rows:
+                counts[position] += 1
+                item = {"data_version": data_version, "item_id": counts[position], **row}
+                for field in ("orders", "identified_orders"):
+                    if field in item:
+                        item[field] = int(item[field] or 0)
+                for field in ("paid_amount", "quantity", "identified_amount"):
+                    if field in item:
+                        item[field] = decimal_value(item[field])
+                payload.append(item)
+            if payload:
+                ads_db.execute(insert(model), payload)
+        ads_db.flush()
+    return counts[0], counts[1], counts[2]
 
 
 def load_brand_channel_scope_rows(
@@ -1414,6 +1517,11 @@ def build_sales_ads(
                         for row in channel_customer_rows
                     ],
                 )
+                customer_daily_row_count, customer_product_row_count, customer_quality_row_count = insert_customer_ads_rows(
+                    ods_db, ads_db, version, resolved_start, resolved_end,
+                )
+                if not customer_daily_row_count or not customer_product_row_count or not customer_quality_row_count:
+                    raise RuntimeError("No customer ADS rows found for the requested range")
                 ads_db.execute(
                     insert(AdsSalesDailyBrandChannelScope),
                     [
@@ -1584,6 +1692,18 @@ def build_sales_ads(
                     "ads_sales_daily_channel_customer",
                     version,
                 )
+                customer_ads_totals = ads_db.execute(text("""
+                    SELECT
+                      (SELECT COALESCE(SUM(`paid_amount`), 0) FROM `ads_sales_customer_daily` WHERE `data_version` = :data_version AND `brand` = '__all__') AS customer_amount,
+                      (SELECT COALESCE(SUM(`paid_amount`), 0) FROM `ads_sales_customer_product_daily` WHERE `data_version` = :data_version AND `brand` = '__all__') AS product_amount,
+                      (SELECT COALESCE(SUM(`identified_amount`), 0) FROM `ads_sales_customer_quality_daily` WHERE `data_version` = :data_version AND `brand` = '__all__') AS identified_amount,
+                      (SELECT COALESCE(SUM(`paid_amount`), 0) FROM `ads_sales_customer_quality_daily` WHERE `data_version` = :data_version AND `brand` = '__all__') AS total_amount
+                """), {"data_version": version}).mappings().one()
+                customer_ads_matches = (
+                    decimal_value(customer_ads_totals["customer_amount"]) == decimal_value(customer_ads_totals["product_amount"])
+                    and decimal_value(customer_ads_totals["customer_amount"]) == decimal_value(customer_ads_totals["identified_amount"])
+                    and decimal_value(customer_ads_totals["total_amount"]) == detail_source_summary.paid_amount
+                )
                 brand_channel_scope_summary = load_ads_brand_summary(
                     ads_db,
                     "ads_sales_daily_brand_channel_scope",
@@ -1681,6 +1801,7 @@ def build_sales_ads(
                     "customer_amount_quantity_matches": customer_amount_quantity_matches,
                     "brand_channel_scope_matches": brand_channel_scope_matches,
                     "brand_channel_product_amount_quantity_matches": brand_channel_product_amount_quantity_matches,
+                    "customer_ads_matches": customer_ads_matches,
                 }
                 reconciliation["passed"] = (
                     reconciliation["passed"]
@@ -1695,6 +1816,7 @@ def build_sales_ads(
                     and customer_amount_quantity_matches
                     and brand_channel_scope_matches
                     and brand_channel_product_amount_quantity_matches
+                    and customer_ads_matches
                 )
                 if not reconciliation["passed"]:
                     raise RuntimeError("ADS reconciliation failed")
@@ -1727,6 +1849,9 @@ def build_sales_ads(
                     "order_detail_row_count": order_detail_row_count,
                     "order_daily_filter_row_count": order_daily_filter_row_count,
                     "channel_customer_row_count": len(channel_customer_rows),
+                    "customer_daily_row_count": customer_daily_row_count,
+                    "customer_product_row_count": customer_product_row_count,
+                    "customer_quality_row_count": customer_quality_row_count,
                     "brand_channel_scope_row_count": len(brand_channel_scope_rows),
                     "brand_channel_product_row_count": len(brand_channel_product_rows),
                     "brand_turnover_product_row_count": len(
@@ -1792,6 +1917,9 @@ def main() -> None:
         f"order_detail_rows={result['order_detail_row_count']} "
         f"order_daily_filter_rows={result['order_daily_filter_row_count']} "
         f"channel_customer_rows={result['channel_customer_row_count']} "
+        f"customer_daily_rows={result['customer_daily_row_count']} "
+        f"customer_product_rows={result['customer_product_row_count']} "
+        f"customer_quality_rows={result['customer_quality_row_count']} "
         f"brand_channel_scope_rows={result['brand_channel_scope_row_count']} "
         f"brand_channel_product_rows={result['brand_channel_product_row_count']} "
         f"brand_turnover_product_rows={result['brand_turnover_product_row_count']} "

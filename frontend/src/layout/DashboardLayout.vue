@@ -41,6 +41,7 @@ const menuGroups = [
       { path: '/sales/product-rank', label: '商品销售排行' },
       { path: '/sales/brand-analysis', label: '品牌销售分析' },
       { path: '/sales/channel-analysis', label: '渠道分析' },
+      { path: '/sales/customer-analysis', label: '客户分析' },
     ],
   },
   {

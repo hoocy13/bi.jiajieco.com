@@ -19,6 +19,7 @@ from app.services.sales_sources import (
     ACTIVE_SALES_ORDER_SQL,
     BRAND_EXPRESSION_SQL,
     POSITIVE_SALES_ORDER_COUNT_SQL,
+    SALES_DETAIL_TABLE_SQL,
     SALES_ORDER_TABLE_SQL,
     is_online_sales_channel,
 )
@@ -29,6 +30,7 @@ from app.services.sales_ads import (
     load_sales_brand_analysis_from_ads,
     load_sales_brand_channel_from_ads,
     load_sales_channel_customer_from_ads,
+    load_sales_customer_analysis_from_ads,
     load_sales_channel_analysis_from_ads,
     load_sales_detail_from_ads,
     load_sales_overview_from_ads,
@@ -1578,6 +1580,349 @@ def sales_channel_customer_analysis(
             for row_orders in [_int(row["orders"])]
             for row_paid_amount in [_number(row["paid_amount"])]
         ],
+    }
+    return _cached_ok(cache_key, data)
+
+
+@router.get("/customer-analysis")
+def sales_customer_analysis(
+    response: Response,
+    direction: str = Query("brand", pattern="^(brand|channel|owner)$"),
+    range: str = Query("last_30"),
+    start_date: date | None = Query(None),
+    end_date: date | None = Query(None),
+    brand: str | None = Query(None),
+    channel: str | None = Query(None),
+    channel_type: str | None = Query(None),
+    owner: str | None = Query(None),
+    keyword: str | None = Query(None),
+    frequency: str = Query("all", pattern="^(all|first|stable|high)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=10, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    """Customer quality, frequency and top-product analysis from sales detail data."""
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
+    cache_key = _sales_cache_key(
+        "customer-analysis-v5",
+        direction=direction,
+        range=range,
+        start_date=start_date,
+        end_date=end_date,
+        brand=brand,
+        channel=channel,
+        channel_type=channel_type,
+        owner=owner,
+        keyword=keyword,
+        frequency=frequency,
+        query_mode=query_mode,
+        page=page,
+        page_size=page_size,
+    )
+    cached = _get_sales_cache(cache_key)
+    if cached is not None:
+        return ok(cached)
+
+    params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
+    if params is None:
+        return _cached_ok(cache_key, {
+            **meta,
+            "direction": direction,
+            "summary": {"customers": 0, "repeat_customers": 0, "repeat_rate": 0, "orders": 0, "quantity": 0, "paid_amount": 0, "identified_amount": 0, "identified_amount_rate": 0, "avg_order_amount": 0},
+            "quality": {"identified_orders": 0, "unidentified_orders": 0, "identified_order_rate": 0, "grade": "C"},
+            "frequency": [], "top_products": [], "options": {"brands": [], "channels": [], "channel_types": [], "owners": []},
+            "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
+        })
+
+    selected_scope = (
+        (brand or "").strip() if direction == "brand"
+        else (owner or "").strip() if direction == "owner"
+        else ((channel or "").strip() or (channel_type or "").strip())
+    )
+    if direction in {"brand", "owner"} and not selected_scope:
+        brands = db.execute(text(f"""
+            SELECT DISTINCT ({BRAND_EXPRESSION_SQL}) AS brand
+            FROM {SALES_DETAIL_TABLE_SQL}
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            ORDER BY brand
+        """), params).scalars().all()
+        channels = db.execute(text("""
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(`渠道名称`), ''), '未归类')
+            FROM `渠道列表`
+            ORDER BY 1
+        """)).scalars().all()
+        channel_types = db.execute(text("""
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(`分类`), ''), '未分类')
+            FROM `渠道列表`
+            ORDER BY 1
+        """)).scalars().all()
+        owners = db.execute(text("""
+            SELECT DISTINCT COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配')
+            FROM `渠道列表`
+            ORDER BY 1
+        """)).scalars().all()
+        return _cached_ok(cache_key, {
+            **meta,
+            "direction": direction,
+            "scope_required": True,
+            "summary": {"customers": 0, "repeat_customers": 0, "repeat_rate": 0, "orders": 0, "quantity": 0, "paid_amount": 0, "identified_amount": 0, "identified_amount_rate": 0, "avg_order_amount": 0},
+            "quality": {"identified_orders": 0, "unidentified_orders": 0, "identified_order_rate": 0, "grade": "C"},
+            "frequency": [], "top_products": [],
+            "options": {
+                "brands": [str(item) for item in brands if item],
+                "channels": [str(item) for item in channels if item],
+                "channel_types": [str(item) for item in channel_types if item],
+                "owners": [str(item) for item in owners if item],
+            },
+            "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
+        })
+
+    dimension_option_rows = db.execute(text("""
+        SELECT DISTINCT
+          COALESCE(NULLIF(TRIM(`渠道名称`), ''), '未归类') AS channel_name,
+          COALESCE(NULLIF(TRIM(`分类`), ''), '未分类') AS channel_type,
+          COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配') AS owner
+        FROM `渠道列表`
+        ORDER BY channel_name
+    """)).mappings().all()
+
+    if query_mode in {"ads", "dual"} and AdsSessionLocal is not None:
+        try:
+            selected_channels: list[str] | None = None
+            if direction == "channel" and channel and channel.strip():
+                selected_channels = [channel.strip()]
+            elif direction == "channel" and channel_type and channel_type.strip():
+                selected_channels = [str(item) for item in db.execute(text("""
+                    SELECT DISTINCT `渠道名称` FROM `渠道列表`
+                    WHERE COALESCE(NULLIF(TRIM(`分类`), ''), '未分类') = :channel_type
+                """), {"channel_type": channel_type.strip()}).scalars().all() if item]
+            elif direction == "owner" and owner and owner.strip():
+                selected_channels = [str(item) for item in db.execute(text("""
+                    SELECT DISTINCT `渠道名称` FROM `渠道列表`
+                    WHERE COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配') = :owner
+                """), {"owner": owner.strip()}).scalars().all() if item]
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_sales_batch(ads_db)
+                ads_data = load_sales_customer_analysis_from_ads(
+                    ads_db, batch, meta,
+                    brand.strip() if direction == "brand" and brand else None,
+                    selected_channels, keyword, frequency, page, page_size,
+                )
+                ads_brands = [str(item) for item in ads_db.execute(text("""
+                    SELECT DISTINCT `brand` FROM `ads_sales_customer_daily`
+                    WHERE `data_version` = :data_version AND `brand` <> '__all__'
+                    ORDER BY `brand`
+                """), {"data_version": batch.data_version}).scalars().all() if item]
+            ads_data["direction"] = direction
+            ads_data["options"] = {
+                "brands": ads_brands,
+                "channels": [str(row["channel_name"]) for row in dimension_option_rows],
+                "channel_types": sorted({str(row["channel_type"]) for row in dimension_option_rows}),
+                "owners": sorted({str(row["owner"]) for row in dimension_option_rows}),
+            }
+            response.headers["X-BI-Response-Source"] = "ads"
+            return _cached_ok(cache_key, ads_data)
+        except Exception as exc:
+            logger.warning("customer_analysis_ads_fallback error=%s", type(exc).__name__)
+
+    response.headers["X-BI-Response-Source"] = "ods"
+
+    filters = []
+    brand_expr = BRAND_EXPRESSION_SQL
+    if direction == "brand" and brand and brand.strip():
+        params["brand"] = brand.strip()
+        filters.append(f"({brand_expr}) = :brand")
+    if direction == "channel" and channel and channel.strip():
+        params["channel"] = channel.strip()
+        filters.append("COALESCE(NULLIF(TRIM(l.`销售渠道`), ''), '未归类') = :channel")
+    if direction == "channel" and channel_type and channel_type.strip():
+        params["channel_type"] = channel_type.strip()
+        filters.append("c.channel_type = :channel_type")
+    if direction == "owner" and owner and owner.strip():
+        params["owner"] = owner.strip()
+        filters.append("c.owner = :owner")
+    filter_sql = "".join(f" AND {item}" for item in filters)
+
+    base_sql = f"""
+        SELECT
+          l.`订单编号` AS order_id,
+          DATE(l.`下单时间`) AS sales_date,
+          COALESCE(NULLIF(TRIM(l.`销售渠道`), ''), '未归类') AS channel,
+          ({brand_expr}) AS brand,
+          COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code) AS customer_code,
+          COALESCE(o.customer_name, '未命名客户') AS customer_name,
+          l.`货品编号` AS product_code,
+          l.`货品名称` AS product_name,
+          COALESCE(l.`数量`, 0) AS quantity,
+          COALESCE(l.`分摊后金额`, 0) AS paid_amount
+        FROM {SALES_DETAIL_TABLE_SQL} l
+        LEFT JOIN (
+          SELECT `渠道名称`,
+                 MAX(COALESCE(NULLIF(TRIM(`分类`), ''), '未分类')) AS channel_type,
+                 MAX(COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配')) AS owner
+          FROM `渠道列表`
+          GROUP BY `渠道名称`
+        ) c ON c.`渠道名称` = l.`销售渠道`
+        LEFT JOIN (
+          SELECT `订单编号`,
+                 MAX(NULLIF(TRIM(`客户编号`), '')) AS customer_code,
+                 MAX(NULLIF(TRIM(`客户名称`), '')) AS customer_name
+          FROM {SALES_ORDER_TABLE_SQL}
+          WHERE `下单时间` >= :start_date
+            AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            AND {ACTIVE_SALES_ORDER_SQL}
+          GROUP BY `订单编号`
+        ) o ON o.`订单编号` = l.`订单编号`
+        WHERE l.`下单时间` >= :start_date
+          AND l.`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+          {filter_sql}
+    """
+    customer_group_sql = f"""
+        SELECT customer_code,
+               MAX(customer_name) AS customer_name,
+               COUNT(DISTINCT order_id) AS orders,
+               COUNT(DISTINCT sales_date) AS active_days,
+               MIN(sales_date) AS first_order_date,
+               MAX(sales_date) AS last_order_date,
+               SUM(quantity) AS quantity,
+               SUM(paid_amount) AS paid_amount
+        FROM ({base_sql}) customer_detail
+        WHERE customer_code IS NOT NULL AND customer_code <> ''
+        GROUP BY customer_code
+    """
+    keyword_sql = ""
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        keyword_sql = "WHERE customer_code LIKE :keyword OR customer_name LIKE :keyword"
+
+    summary = db.execute(text(f"""
+        SELECT COUNT(*) AS customers,
+               SUM(CASE WHEN orders >= 2 THEN 1 ELSE 0 END) AS repeat_customers,
+               SUM(orders) AS orders,
+               SUM(quantity) AS quantity,
+               SUM(paid_amount) AS paid_amount
+        FROM ({customer_group_sql}) customers
+        {keyword_sql}
+    """), params).mappings().one()
+    quality = db.execute(text(f"""
+        SELECT COUNT(DISTINCT order_id) AS orders,
+               COUNT(DISTINCT CASE WHEN customer_code IS NOT NULL AND customer_code <> '' THEN order_id END) AS identified_orders,
+               SUM(paid_amount) AS paid_amount,
+               SUM(CASE WHEN customer_code IS NOT NULL AND customer_code <> '' THEN paid_amount ELSE 0 END) AS identified_amount
+        FROM ({base_sql}) quality_detail
+    """), params).mappings().one()
+    frequency_rows = db.execute(text(f"""
+        SELECT CASE
+                 WHEN orders = 1 THEN 'first'
+                 WHEN orders BETWEEN 2 AND 3 THEN 'stable'
+                 ELSE 'high'
+               END AS bucket,
+               CASE
+                 WHEN orders = 1 THEN '首购客户'
+                 WHEN orders BETWEEN 2 AND 3 THEN '稳定客户'
+                 ELSE '高频客户'
+               END AS label,
+               COUNT(*) AS customers,
+               SUM(paid_amount) AS paid_amount
+        FROM ({customer_group_sql}) customers
+        {keyword_sql}
+        GROUP BY bucket, label
+        ORDER BY MIN(orders)
+    """), params).mappings().all()
+    top_products = db.execute(text(f"""
+        SELECT COALESCE(NULLIF(product_code, ''), '-') AS product_code,
+               COALESCE(NULLIF(product_name, ''), '未命名货品') AS product_name,
+               COUNT(DISTINCT order_id) AS orders,
+               COUNT(DISTINCT customer_code) AS customers,
+               SUM(quantity) AS quantity,
+               SUM(paid_amount) AS paid_amount
+        FROM ({base_sql}) product_detail
+        WHERE customer_code IS NOT NULL AND customer_code <> ''
+        GROUP BY COALESCE(NULLIF(product_code, ''), '-'), COALESCE(NULLIF(product_name, ''), '未命名货品')
+        ORDER BY paid_amount DESC, quantity DESC
+        LIMIT 15
+    """), params).mappings().all()
+    total = _int(summary["customers"])
+    repeat_customers = _int(summary["repeat_customers"])
+    total_orders = _int(quality["orders"])
+    identified_orders = _int(quality["identified_orders"])
+    total_amount = _number(quality["paid_amount"])
+    identified_amount = _number(quality["identified_amount"])
+    row_filters = []
+    if keyword_sql:
+        row_filters.append("(customer_code LIKE :keyword OR customer_name LIKE :keyword)")
+    frequency_conditions = {
+        "first": "orders = 1",
+        "stable": "orders BETWEEN 2 AND 3",
+        "high": "orders >= 4",
+    }
+    if frequency in frequency_conditions:
+        row_filters.append(frequency_conditions[frequency])
+    row_filter_sql = "WHERE " + " AND ".join(row_filters) if row_filters else ""
+    filtered_total = total if frequency == "all" else next(
+        (_int(row["customers"]) for row in frequency_rows if row["bucket"] == frequency),
+        0,
+    )
+    row_params = {**params, "limit": page_size, "offset": (page - 1) * page_size}
+    rows = db.execute(text(f"""
+        SELECT * FROM ({customer_group_sql}) customers
+        {row_filter_sql}
+        ORDER BY paid_amount DESC, orders DESC, customer_code
+        LIMIT :limit OFFSET :offset
+    """), row_params).mappings().all()
+    identified_order_rate = identified_orders / total_orders * 100 if total_orders else 0
+    quality_grade = "A" if identified_order_rate >= 90 else "B" if identified_order_rate >= 60 else "C"
+    ods_brand_options = []
+    if direction == "brand":
+        ods_brand_options = [str(item) for item in db.execute(text(f"""
+            SELECT DISTINCT ({BRAND_EXPRESSION_SQL}) AS brand
+            FROM {SALES_DETAIL_TABLE_SQL}
+            WHERE `下单时间` >= :start_date
+              AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
+            ORDER BY brand
+        """), params).scalars().all() if item]
+    data = {
+        **meta,
+        "direction": direction,
+        "scope_required": False,
+        "summary": {
+            "customers": total,
+            "repeat_customers": repeat_customers,
+            "repeat_rate": repeat_customers / total * 100 if total else 0,
+            "orders": _int(summary["orders"]),
+            "quantity": _int(summary["quantity"]),
+            "paid_amount": _number(summary["paid_amount"]),
+            "identified_amount": identified_amount,
+            "identified_amount_rate": identified_amount / total_amount * 100 if total_amount else 0,
+            "avg_order_amount": _number(summary["paid_amount"]) / _int(summary["orders"]) if _int(summary["orders"]) else 0,
+        },
+        "quality": {
+            "identified_orders": identified_orders,
+            "unidentified_orders": max(0, total_orders - identified_orders),
+            "identified_order_rate": identified_order_rate,
+            "grade": quality_grade,
+        },
+        "frequency": [{"bucket": row["bucket"], "label": row["label"], "customers": _int(row["customers"]), "paid_amount": _number(row["paid_amount"])} for row in frequency_rows],
+        "top_products": [{"product_code": row["product_code"], "product_name": row["product_name"], "orders": _int(row["orders"]), "customers": _int(row["customers"]), "quantity": _int(row["quantity"]), "paid_amount": _number(row["paid_amount"])} for row in top_products],
+        "options": {
+            "brands": ods_brand_options,
+            "channels": [str(row["channel_name"]) for row in dimension_option_rows],
+            "channel_types": sorted({str(row["channel_type"]) for row in dimension_option_rows}),
+            "owners": sorted({str(row["owner"]) for row in dimension_option_rows}),
+        },
+        "pagination": {"page": page, "page_size": page_size, "total": filtered_total},
+        "rows": [{
+            "customer_code": row["customer_code"], "customer_name": row["customer_name"],
+            "orders": _int(row["orders"]), "active_days": _int(row["active_days"]),
+            "first_order_date": row["first_order_date"].isoformat() if row["first_order_date"] else None,
+            "last_order_date": row["last_order_date"].isoformat() if row["last_order_date"] else None,
+            "avg_interval_days": max(0, (row["last_order_date"] - row["first_order_date"]).days / (_int(row["orders"]) - 1)) if _int(row["orders"]) > 1 else None,
+            "quantity": _int(row["quantity"]), "paid_amount": _number(row["paid_amount"]),
+            "avg_order_amount": _number(row["paid_amount"]) / _int(row["orders"]) if _int(row["orders"]) else 0,
+        } for row in rows],
     }
     return _cached_ok(cache_key, data)
 

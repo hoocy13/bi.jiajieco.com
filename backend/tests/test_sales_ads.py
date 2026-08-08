@@ -27,6 +27,9 @@ from app.models.ads import (
     AdsSalesDailyBrandScope,
     AdsSalesDailyChannel,
     AdsSalesDailyChannelCustomer,
+    AdsSalesCustomerDaily,
+    AdsSalesCustomerProductDaily,
+    AdsSalesCustomerQualityDaily,
     AdsSalesDailyCityChannel,
     AdsSalesDailyProduct,
     AdsSalesDetailDaily,
@@ -42,6 +45,7 @@ from app.services.sales_ads import (
     load_sales_brand_channel_from_ads,
     load_sales_channel_customer_from_ads,
     load_sales_channel_analysis_from_ads,
+    load_sales_customer_analysis_from_ads,
     load_sales_detail_from_ads,
     load_dashboard_overview_from_ads,
     load_sales_overview_from_ads,
@@ -86,6 +90,9 @@ class AdsSchemaTests(unittest.TestCase):
                     "ads_sales_daily_brand_channel_scope",
                     "ads_sales_daily_brand_scope",
                     "ads_sales_daily_channel_customer",
+                    "ads_sales_customer_daily",
+                    "ads_sales_customer_product_daily",
+                    "ads_sales_customer_quality_daily",
                     "ads_sales_brand_turnover_item",
                     "ads_sales_brand_turnover_order",
                     "ads_sales_daily_channel",
@@ -711,6 +718,33 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertTrue(data["rows"][0]["is_online"])
         self.assertEqual(data["channel_summary"]["active_channels"], 1)
         self.assertEqual(data["filter_options"]["platforms"], ["平台A"])
+
+    def test_loads_customer_frequency_and_list_from_ads(self) -> None:
+        version = "sales-test-ready"
+        self.db.add_all([
+            AdsSalesCustomerDaily(data_version=version, item_id=1, sales_date=date(2026, 7, 1), brand="品牌A", channel="渠道A", customer_code="C1", customer_name="客户一", orders=1, paid_amount=Decimal("10"), quantity=Decimal("1")),
+            AdsSalesCustomerDaily(data_version=version, item_id=2, sales_date=date(2026, 7, 1), brand="品牌A", channel="渠道A", customer_code="C2", customer_name="客户二", orders=3, paid_amount=Decimal("90"), quantity=Decimal("3")),
+            AdsSalesCustomerProductDaily(data_version=version, item_id=1, sales_date=date(2026, 7, 1), brand="品牌A", channel="渠道A", customer_code="C1", product_code="P1", product_name="商品一", orders=1, paid_amount=Decimal("10"), quantity=Decimal("1")),
+            AdsSalesCustomerProductDaily(data_version=version, item_id=2, sales_date=date(2026, 7, 1), brand="品牌A", channel="渠道A", customer_code="C2", product_code="P1", product_name="商品一", orders=3, paid_amount=Decimal("90"), quantity=Decimal("3")),
+            AdsSalesCustomerQualityDaily(data_version=version, item_id=1, sales_date=date(2026, 7, 1), brand="品牌A", channel="渠道A", orders=4, identified_orders=4, paid_amount=Decimal("100"), identified_amount=Decimal("100")),
+        ])
+        self.db.commit()
+        data = load_sales_customer_analysis_from_ads(
+            self.db, latest_ready_sales_batch(self.db),
+            {"start_date": "2026-07-01", "end_date": "2026-07-01", "range": "custom", "period": "自定义", "as_of": "2026-07-02"},
+            "品牌A", None, None, "stable", 1, 20,
+        )
+        self.assertEqual(data["summary"]["customers"], 2)
+        self.assertEqual(data["pagination"]["total"], 1)
+        self.assertEqual(data["rows"][0]["customer_code"], "C2")
+        self.assertEqual(data["top_products"][0]["paid_amount"], 100)
+        channel_data = load_sales_customer_analysis_from_ads(
+            self.db, latest_ready_sales_batch(self.db),
+            {"start_date": "2026-07-01", "end_date": "2026-07-01", "range": "custom", "period": "自定义", "as_of": "2026-07-02"},
+            "品牌A", ["渠道A"], None, "first", 1, 20,
+        )
+        self.assertEqual(channel_data["pagination"]["total"], 1)
+        self.assertEqual(channel_data["rows"][0]["customer_code"], "C1")
 
     def test_ads_query_mode_does_not_require_ods_session(self) -> None:
         original_mode = settings.BI_QUERY_SOURCE

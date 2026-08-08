@@ -101,6 +101,21 @@ ODS_BUILD_READ_TIMEOUT_SECONDS=300
 - `ads_sales_daily_brand_channel_scope`：按“日期 × 品牌 × 渠道 × 货品分类范围”聚合，保证品牌渠道汇总和趋势的订单去重口径。
 - `ads_sales_daily_brand_channel_product`：按“日期 × 品牌 × 渠道 × 分类 × 商品”聚合，用于品牌渠道商品和负责人正装/小样分析。
 
+### 客户分析 ADS
+
+- `ads_sales_customer_daily`：按“日期 × 品牌范围 × 渠道 × 客户”聚合订单数、数量和金额，支持品牌、渠道及渠道负责人客户名单与频次分层。
+- `ads_sales_customer_product_daily`：按“日期 × 品牌范围 × 渠道 × 客户 × 商品”聚合，用于客户分析 Top 商品。
+- `ads_sales_customer_quality_daily`：按“日期 × 品牌范围 × 渠道”保存总订单、可识别订单、总金额和可识别金额，用于数据质量评级。
+- 品牌范围同时保存实际品牌和 `__all__`。品牌分析读取实际品牌；渠道及渠道负责人分析读取 `__all__`，避免跨品牌订单重复累计。
+
+客户 ADS 已并入 `app.jobs.build_sales_ads`，无需在 DolphinScheduler 新增独立节点。现有销售 ADS 节点继续执行：
+
+```bash
+docker compose exec -T backend python -m app.jobs.build_sales_ads
+```
+
+该节点成功后才发布新的 `ready` 数据版本；客户汇总对账失败会使整个销售 ADS 批次失败，线上继续读取上一版数据。发布本版本后需要完整重跑一次销售 ADS。
+
 渠道主数据仍从 ODS 小表实时读取，事实统计全部从 ADS 读取。
 
 ## 初始化

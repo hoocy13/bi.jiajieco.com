@@ -27,6 +27,10 @@ export function getSalesChannelCustomerAnalysis(params = {}) {
   return http.get('/sales/channel-customer-analysis', { params })
 }
 
+export function getSalesCustomerAnalysis(params = {}) {
+  return http.get('/sales/customer-analysis', { params, timeout: 180000 })
+}
+
 export function getSalesBrandChannelAnalysis(params = {}) {
   return http.get('/sales/brand-channel-analysis', {
     params,

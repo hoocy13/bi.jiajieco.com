@@ -270,6 +270,63 @@ class AdsSalesDailyChannelCustomer(AdsBase):
     quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
 
 
+class AdsSalesCustomerDaily(AdsBase):
+    __tablename__ = "ads_sales_customer_daily"
+    __table_args__ = (
+        Index("idx_ads_customer_daily_brand", "data_version", "brand", "sales_date", "customer_code"),
+        Index("idx_ads_customer_daily_channel", "data_version", "channel", "sales_date", "customer_code"),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    customer_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    customer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesCustomerProductDaily(AdsBase):
+    __tablename__ = "ads_sales_customer_product_daily"
+    __table_args__ = (
+        Index("idx_ads_customer_product_brand", "data_version", "brand", "sales_date", "product_code"),
+        Index("idx_ads_customer_product_channel", "data_version", "channel", "sales_date", "product_code"),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    customer_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+
+
+class AdsSalesCustomerQualityDaily(AdsBase):
+    __tablename__ = "ads_sales_customer_quality_daily"
+    __table_args__ = (
+        Index("idx_ads_customer_quality_brand", "data_version", "brand", "sales_date"),
+        Index("idx_ads_customer_quality_channel", "data_version", "channel", "sales_date"),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    identified_orders: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    identified_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+
+
 class AdsSalesDailyBrandChannelScope(AdsBase):
     __tablename__ = "ads_sales_daily_brand_channel_scope"
     __table_args__ = (
