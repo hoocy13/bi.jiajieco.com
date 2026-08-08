@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy import insert, text
@@ -46,6 +47,7 @@ from app.services.sales_sources import (
 
 
 DATASET = "sales_daily"
+_BUILD_STARTED_AT: float | None = None
 BRAND_TURNOVER_DEFAULT_WAREHOUSES = (
     "上海仓库新",
     "【商家仓】抖超上海仓",
@@ -67,6 +69,16 @@ class SalesSummary:
 
 def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def report_progress(stage: str, **details: object) -> None:
+    elapsed = monotonic() - _BUILD_STARTED_AT if _BUILD_STARTED_AT is not None else 0
+    suffix = " ".join(f"{key}={value}" for key, value in details.items())
+    print(
+        f"[sales-ads] stage={stage} elapsed={elapsed:.1f}s"
+        f"{f' {suffix}' if suffix else ''}",
+        flush=True,
+    )
 
 
 def decimal_value(value: object) -> Decimal:
@@ -615,7 +627,8 @@ def insert_customer_ads_rows(
 ) -> tuple[int, int, int]:
     counts = [0, 0, 0]
     models = (AdsSalesCustomerDaily, AdsSalesCustomerProductDaily, AdsSalesCustomerQualityDaily)
-    for slice_start, slice_end in month_ranges(start_date, end_date):
+    ranges = list(month_ranges(start_date, end_date))
+    for index, (slice_start, slice_end) in enumerate(ranges, start=1):
         row_sets = load_customer_ads_rows(ods_db, slice_start, slice_end)
         for position, (model, rows) in enumerate(zip(models, row_sets, strict=True)):
             payload = []
@@ -632,6 +645,14 @@ def insert_customer_ads_rows(
             if payload:
                 ads_db.execute(insert(model), payload)
         ads_db.flush()
+        if index == 1 or index == len(ranges) or index % 6 == 0:
+            report_progress(
+                "customer-slices",
+                progress=f"{index}/{len(ranges)}",
+                through=slice_end,
+                customer_rows=counts[0],
+                product_rows=counts[1],
+            )
     return counts[0], counts[1], counts[2]
 
 
@@ -766,6 +787,8 @@ def insert_order_detail_rows_streaming(
         ads_db.execute(insert(AdsSalesOrderDetail), payload)
         if item_id % 50000 == 0:
             ads_db.commit()
+        if item_id % 500000 == 0:
+            report_progress("order-detail", rows=item_id)
     ads_db.commit()
     return item_id
 
@@ -790,7 +813,8 @@ def insert_order_detail_rows_server_side(
     end_date: date,
 ) -> int:
     item_offset = 0
-    for slice_start, slice_end in month_ranges(start_date, end_date):
+    ranges = list(month_ranges(start_date, end_date))
+    for index, (slice_start, slice_end) in enumerate(ranges, start=1):
         result = ads_db.execute(
             text(
                 f"""
@@ -845,6 +869,13 @@ def insert_order_detail_rows_server_side(
             ) - item_offset
         item_offset += inserted
         ads_db.commit()
+        if index == 1 or index == len(ranges) or index % 6 == 0:
+            report_progress(
+                "order-detail-slices",
+                progress=f"{index}/{len(ranges)}",
+                through=slice_end,
+                rows=item_offset,
+            )
     return item_offset
 
 
@@ -1253,9 +1284,12 @@ def build_sales_ads(
     end_date: date | None = None,
     data_version: str | None = None,
 ) -> dict:
+    global _BUILD_STARTED_AT
+    _BUILD_STARTED_AT = monotonic()
     if not settings.ODS_DATABASE_URL:
         raise RuntimeError("ODS_DATABASE_URL is not configured")
 
+    report_progress("initialize-schema")
     initialize_ads_schema()
     ads_session_factory = require_ads_build_session_factory()
     ods_build_engine = create_ods_engine(
@@ -1280,8 +1314,15 @@ def build_sales_ads(
             ads_db.add(batch)
             ads_db.commit()
             batch_id = batch.id
+            report_progress(
+                "batch-created",
+                batch=batch_id,
+                version=version,
+                range=f"{resolved_start}..{resolved_end}",
+            )
 
             try:
+                report_progress("load-core-aggregates")
                 source_summary = load_source_summary(ods_db, resolved_start, resolved_end)
                 daily_rows = load_daily_rows(ods_db, resolved_start, resolved_end)
                 channel_rows = load_channel_rows(ods_db, resolved_start, resolved_end)
@@ -1330,6 +1371,12 @@ def build_sales_ads(
                     resolved_start,
                     resolved_end,
                 )
+                report_progress(
+                    "core-aggregates-loaded",
+                    daily_rows=len(daily_rows),
+                    product_rows=len(product_rows),
+                    customer_rows=len(channel_customer_rows),
+                )
                 offline_customer_source_summary = load_offline_customer_source_summary(
                     ods_db,
                     resolved_start,
@@ -1354,6 +1401,12 @@ def build_sales_ads(
                     ods_db,
                     resolved_start,
                     resolved_end,
+                )
+                report_progress(
+                    "extended-aggregates-loaded",
+                    brand_scope_rows=len(brand_scope_rows),
+                    brand_channel_rows=len(brand_channel_scope_rows),
+                    turnover_rows=len(brand_turnover_product_rows),
                 )
 
                 if (
@@ -1517,11 +1570,18 @@ def build_sales_ads(
                         for row in channel_customer_rows
                     ],
                 )
+                report_progress("base-aggregates-written")
                 customer_daily_row_count, customer_product_row_count, customer_quality_row_count = insert_customer_ads_rows(
                     ods_db, ads_db, version, resolved_start, resolved_end,
                 )
                 if not customer_daily_row_count or not customer_product_row_count or not customer_quality_row_count:
                     raise RuntimeError("No customer ADS rows found for the requested range")
+                report_progress(
+                    "customer-aggregates-written",
+                    customer_rows=customer_daily_row_count,
+                    product_rows=customer_product_row_count,
+                    quality_rows=customer_quality_row_count,
+                )
                 ads_db.execute(
                     insert(AdsSalesDailyBrandChannelScope),
                     [
@@ -1567,6 +1627,11 @@ def build_sales_ads(
                     ads_db,
                     version,
                 )
+                report_progress(
+                    "order-detail-written",
+                    detail_rows=order_detail_row_count,
+                    filter_rows=order_daily_filter_row_count,
+                )
                 ads_db.execute(
                     insert(AdsSalesBrandTurnoverItem),
                     [
@@ -1610,6 +1675,7 @@ def build_sales_ads(
                     ],
                 )
 
+                report_progress("reconciliation")
                 daily_summary = load_ads_summary(ads_db, version)
                 channel_summary = load_ads_channel_summary(ads_db, version)
                 detail_daily_summary = load_ads_table_summary(
@@ -1832,6 +1898,7 @@ def build_sales_ads(
                 batch.finished_at = finished_at
                 batch.published_at = finished_at
                 ads_db.commit()
+                report_progress("ready", batch=batch_id, version=version)
                 return {
                     "data_version": version,
                     "status": "ready",
@@ -1863,6 +1930,7 @@ def build_sales_ads(
                     "reconciliation": reconciliation,
                 }
             except Exception as exc:
+                report_progress("failed", batch=batch_id, error=type(exc).__name__)
                 ads_db.rollback()
                 failed_batch = ads_db.get(AdsPublishBatch, batch_id)
                 if failed_batch is not None:
