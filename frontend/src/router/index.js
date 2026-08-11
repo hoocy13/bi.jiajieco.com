@@ -48,7 +48,7 @@ const routes = [
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '库存周转' } },
-      { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销商品' } },
+      { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销分析' } },
       { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析' } },
       { path: 'inventory/health', component: InventoryHealth, meta: { title: '库存健康度' } },
       { path: 'users', component: Users, meta: { title: '用户管理' } },

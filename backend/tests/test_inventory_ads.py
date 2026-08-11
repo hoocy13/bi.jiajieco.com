@@ -610,22 +610,6 @@ class InventoryAdsTests(unittest.TestCase):
             self.assertEqual(turnover["data"]["pagination"]["total"], 2)
 
             response = Response()
-            slow_moving = inventory_router.slow_moving_inventory(
-                response=response,
-                keyword=None,
-                barcode=None,
-                warehouse=["仓库A"],
-                product_type=["正装", "小样"],
-                page=1,
-                page_size=50,
-                current_user=None,
-                db=None,
-            )
-            self.assertEqual(response.headers["x-bi-response-source"], "ads")
-            self.assertEqual(slow_moving["data"]["pagination"]["total"], 2)
-            self.assertEqual(slow_moving["data"]["rows"][0]["product_code"], "B")
-
-            response = Response()
             brand_turnover = inventory_router.inventory_brand_turnover(
                 response=response,
                 year=2026,

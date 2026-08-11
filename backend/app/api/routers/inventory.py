@@ -40,6 +40,12 @@ from app.services.sales_ads import (
     ensure_batch_covers,
     latest_ready_sales_batch,
 )
+from app.services.slow_moving_period_analysis import (
+    ALLOWED_PERIOD_DAYS,
+    build_slow_moving_period_analysis,
+    load_completed_inventory_snapshots,
+    load_slow_moving_period_source,
+)
 
 
 router = APIRouter(prefix="/inventory", tags=["inventory"])
@@ -1898,6 +1904,12 @@ def slow_moving_inventory(
     barcode: str | None = Query(None),
     warehouse: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
+    snapshot_date: date | None = Query(None),
+    period_days: int = Query(90),
+    risk_scope: str = Query("slow_all"),
+    retention_scope: str = Query("all"),
+    sort_by: str = Query("stock"),
+    sort_order: str = Query("desc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=10, le=100),
     current_user: User = Depends(get_current_user),
@@ -1907,162 +1919,119 @@ def slow_moving_inventory(
     barcode = barcode.strip() if barcode else ""
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
-    page, page_size, offset = _pagination(page, page_size)
-    response.headers["X-BI-Query-Mode"] = settings.BI_QUERY_SOURCE
+    page, page_size, _ = _pagination(page, page_size)
+    if period_days not in ALLOWED_PERIOD_DAYS:
+        raise HTTPException(status_code=400, detail="观察周期仅支持30、60、90或180天")
+
+    snapshot_batches = load_completed_inventory_snapshots(db)
+    if not snapshot_batches:
+        raise HTTPException(status_code=503, detail="暂无已完成的历史库存快照")
+    available_dates = tuple(
+        value if isinstance(value := row["snapshot_date"], date) else date.fromisoformat(str(value))
+        for row in snapshot_batches
+    )
+    selected_snapshot = snapshot_date or available_dates[0]
+    if selected_snapshot not in available_dates:
+        raise HTTPException(status_code=400, detail="所选截止日不是已完成的库存快照")
+    trend_dates = tuple(sorted((value for value in available_dates if value <= selected_snapshot), reverse=True)[:6])
+    trend_dates = tuple(sorted(trend_dates))
+
+    sales_data_version = None
+    sales_source = "ods"
+    ads_batch = None
     if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
         try:
             with AdsSessionLocal() as ads_db:
-                batch = latest_ready_inventory_batch(ads_db)
-                turnover_reconciliation = (batch.reconciliation or {}).get(
-                    "product_turnover",
-                    {},
+                ads_batch = latest_ready_sales_batch(ads_db)
+                ensure_batch_covers(
+                    ads_batch,
+                    min(trend_dates) - timedelta(days=period_days - 1),
+                    selected_snapshot,
                 )
-                if (
-                    not turnover_reconciliation.get("matches")
-                    or not turnover_reconciliation.get("field_matches", {}).get(
-                        "sales90"
-                    )
-                ):
-                    raise InventoryAdsUnavailable(
-                        "Inventory ADS does not contain reconciled 90-day sales"
-                    )
-                cache_key = _cache_key(
-                    "slow-moving-v8",
-                    keyword=keyword,
-                    barcode=barcode,
-                    warehouses=warehouses,
-                    product_types=product_types,
-                    page=page,
-                    page_size=page_size,
-                    query_mode="ads",
-                    data_version=batch.data_version,
-                )
-                cached = _get_cache(cache_key)
-                if cached is not None:
-                    response.headers["X-BI-Response-Source"] = "ads"
-                    return ok(cached)
-                data = load_slow_moving_inventory_from_ads(
-                    ads_db,
-                    batch,
-                    keyword=keyword,
-                    barcode=barcode,
-                    warehouses=warehouses,
-                    product_types=product_types,
-                    page=page,
-                    page_size=page_size,
-                )
-            response.headers["X-BI-Response-Source"] = "ads"
-            return _cached_ok(cache_key, data)
-        except InventoryAdsUnavailable:
-            pass
-        except Exception as exc:
-            raise HTTPException(
-                status_code=503,
-                detail="Inventory ADS database is temporarily unavailable",
-            ) from exc
+                sales_data_version = ads_batch.data_version
+                sales_source = "ads"
+        except Exception:
+            ads_batch = None
+            sales_data_version = None
+            sales_source = "ods"
 
-    response.headers["X-BI-Response-Source"] = "ods"
     cache_key = _cache_key(
-        "slow-moving-v8",
+        "slow-moving-period-v4",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
         product_types=product_types,
+        snapshot_date=selected_snapshot.isoformat(),
+        period_days=period_days,
+        risk_scope=risk_scope,
+        retention_scope=retention_scope,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         page_size=page_size,
-        query_mode="ods",
+        sales_source=sales_source,
+        sales_data_version=sales_data_version or "",
     )
     cached = _get_cache(cache_key)
     if cached is not None:
+        response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
+        response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
         return ok(cached)
-
-    keyword_sql, params = _keyword_filter(keyword)
-    barcode_sql, barcode_params = _barcode_filter(barcode)
-    params.update(barcode_params)
-    warehouse_sql, warehouse_params = _warehouse_filter(warehouses)
-    params.update(warehouse_params)
-    product_type_sql, product_type_params = _product_type_filter(product_types, "slow_type")
-    params.update(product_type_params)
-    params["limit"] = page_size
-    params["offset"] = offset
-    total = db.execute(
-        text(
-            f"""
-            SELECT COUNT(*)
-            FROM (
-              SELECT `货品编号`
-              FROM `分仓库查询` s
-              WHERE COALESCE(`库存数量`, 0) > 0
-                {keyword_sql}
-                {barcode_sql}
-                {warehouse_sql}
-                {product_type_sql}
-              GROUP BY `货品编号`, `货品名称`, COALESCE(NULLIF(`品牌`, ''), '未归类'), COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类')
-            ) slow_products
-            """
-        ),
-        params,
-    ).scalar_one()
-    rows = db.execute(
-        text(
-            f"""
-            SELECT
-              `货品编号` AS product_code,
-              MAX(`条码`) AS barcode,
-              `货品名称` AS product,
-              COALESCE(NULLIF(`品牌`, ''), '未归类') AS brand,
-              COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类') AS product_type,
-              COUNT(DISTINCT COALESCE(NULLIF(`仓库`, ''), '未归类')) AS warehouse_count,
-              SUM(COALESCE(`库存数量`, 0)) AS stock,
-              SUM(COALESCE(`可用库存`, 0)) AS available_stock,
-              SUM(COALESCE(`近30天销量`, 0)) AS sales30,
-              SUM(COALESCE(`近90天销量(库存公式)`, 0)) AS sales90,
-              SUM(COALESCE(`库存金额`, 0)) AS stock_amount
-            FROM `分仓库查询` s
-            WHERE COALESCE(`库存数量`, 0) > 0
-              {keyword_sql}
-              {barcode_sql}
-              {warehouse_sql}
-              {product_type_sql}
-            GROUP BY `货品编号`, `货品名称`, COALESCE(NULLIF(`品牌`, ''), '未归类'), COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类')
-            ORDER BY
-              sales90 ASC,
-              sales30 ASC,
-              stock_amount DESC,
-              product_code,
-              product,
-              brand,
-              product_type
-            LIMIT :limit OFFSET :offset
-            """
-        ),
-        params,
-    ).mappings().all()
-
-    data = {
-        "keyword": keyword,
-        "barcode": barcode,
-        "warehouses_selected": list(warehouses),
-        "product_types_selected": list(product_types),
-        "pagination": {"page": page, "page_size": page_size, "total": _int(total)},
-        "rows": [
-            {
-                "rank": offset + index + 1,
-                "product_code": _text(row["product_code"]),
-                "barcode": _text(row["barcode"]),
-                "product": _text(row["product"], "未命名商品"),
-                "brand": _text(row["brand"], "未归类"),
-                "product_type": _text(row["product_type"], "未归类"),
-                "warehouse_count": _int(row["warehouse_count"]),
-                "stock": _number(row["stock"]),
-                "available_stock": _number(row["available_stock"]),
-                "sales30": _number(row["sales30"]),
-                "sales90": _number(row["sales90"]),
-                "stock_amount": _number(row["stock_amount"]),
-            }
-            for index, row in enumerate(rows)
-        ],
-    }
+    try:
+        if sales_source == "ads" and AdsSessionLocal is not None and sales_data_version:
+            with AdsSessionLocal() as ads_db:
+                source = load_slow_moving_period_source(
+                    db,
+                    snapshot_dates=trend_dates,
+                    period_days=period_days,
+                    keyword=keyword,
+                    barcode=barcode,
+                    warehouses=warehouses,
+                    product_types=product_types,
+                    ads_db=ads_db,
+                    sales_data_version=sales_data_version,
+                )
+        else:
+            source = load_slow_moving_period_source(
+                db,
+                snapshot_dates=trend_dates,
+                period_days=period_days,
+                keyword=keyword,
+                barcode=barcode,
+                warehouses=warehouses,
+                product_types=product_types,
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="历史滞销分析数据暂不可用") from exc
+    data = build_slow_moving_period_analysis(
+        source,
+        snapshot_date=selected_snapshot,
+        trend_dates=trend_dates,
+        period_days=period_days,
+        risk_scope=risk_scope,
+        retention_scope=retention_scope,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    data.update(
+        {
+            "keyword": keyword,
+            "barcode": barcode,
+            "warehouses_selected": list(warehouses),
+            "product_types_selected": list(product_types),
+            "snapshot_options": [
+                {
+                    "value": value.isoformat(),
+                    "label": value.strftime("%Y年%m月%d日"),
+                }
+                for value in available_dates
+            ],
+        }
+    )
+    response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
+    response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
     return _cached_ok(cache_key, data)
 
 

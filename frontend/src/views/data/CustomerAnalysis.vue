@@ -3,10 +3,12 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getSalesCustomerAnalysis } from '../../api/sales'
+import CustomerChurnAlerts from './CustomerChurnAlerts.vue'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const activeView = ref(route.query.view === 'churn' ? 'churn' : 'overview')
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(Number(route.query.page_size) || 20)
 const initialDirection = ['channel', 'owner'].includes(route.query.direction) ? route.query.direction : 'brand'
@@ -114,12 +116,22 @@ function reset() {
 function changePage(value) { page.value = value; load() }
 function changePageSize(value) { pageSize.value = value; page.value = 1; load() }
 function selectFrequency(value) { query.frequency = value; page.value = 1; load() }
+function switchView(value) {
+  activeView.value = value
+  router.replace({ query: { ...route.query, view: value === 'churn' ? 'churn' : undefined } })
+  if (value === 'overview') load()
+}
 
-onMounted(load)
+onMounted(() => { if (activeView.value === 'overview') load() })
 </script>
 
 <template>
   <div class="customer-page" v-loading="loading">
+    <section class="view-tabs">
+      <el-segmented :model-value="activeView" :options="[{ label: '客户概览', value: 'overview' }, { label: '流失预警', value: 'churn' }]" @change="switchView" />
+      <span>识别曾经高频、近期停止下单的老客户</span>
+    </section>
+    <template v-if="activeView === 'overview'">
     <section class="customer-hero">
       <div>
         <p>CUSTOMER VALUE & FREQUENCY</p>
@@ -216,11 +228,14 @@ onMounted(load)
       <footer><span>共 {{ number(data.pagination.total) }} 位可识别客户</span><el-pagination background layout="sizes, prev, pager, next" :total="data.pagination.total" :current-page="page" :page-size="pageSize" :page-sizes="[20, 50, 100]" @current-change="changePage" @size-change="changePageSize" /></footer>
     </section>
     </template>
+    </template>
+    <CustomerChurnAlerts v-else />
   </div>
 </template>
 
 <style scoped>
 .customer-page { display: grid; gap: 14px; color: #172033; }
+.view-tabs { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 8px; }.view-tabs > span { color: #7a8699; font-size: 12px; }
 .customer-hero, .customer-toolbar, .panel, .metric-grid article { background: #fff; border: 1px solid var(--border); border-radius: 8px; }
 .customer-hero { display: flex; align-items: center; justify-content: space-between; min-height: 116px; padding: 22px 28px; border-top: 3px solid var(--theme-primary); background: linear-gradient(108deg, #fff 65%, var(--theme-soft)); }
 .customer-hero p, .panel header small { margin: 0 0 5px; color: var(--theme-primary); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
@@ -236,5 +251,5 @@ onMounted(load)
 .frequency-list { display: grid; gap: 10px; padding: 14px; }.frequency-list > div { display: grid; grid-template-columns: 1fr auto; gap: 7px 12px; }.frequency-list span { color: #667085; font-size: 12px; font-weight: 700; }.frequency-list strong { font-size: 14px; }.frequency-list div div { grid-column: 1 / -1; height: 7px; overflow: hidden; background: var(--theme-soft); border-radius: 999px; }.frequency-list i { display: block; height: 100%; background: linear-gradient(90deg, var(--theme-strong), var(--theme-secondary)); border-radius: inherit; }.frequency-list small { grid-column: 1 / -1; color: #8a96a5; }.frequency-item { padding: 10px; cursor: pointer; border: 1px solid transparent; border-radius: 7px; transition: .18s ease; }.frequency-item:hover, .frequency-item.active { background: var(--theme-soft); border-color: var(--theme-soft-strong); }.frequency-item:focus-visible { outline: 2px solid var(--theme-primary); outline-offset: 2px; }
 .customer-table-panel footer { display: flex; align-items: center; justify-content: space-between; min-height: 58px; padding: 10px 16px; color: #8a96a5; font-size: 12px; border-top: 1px solid var(--border); }.amount { color: var(--theme-strong); }
 @media (max-width: 1180px) { .customer-toolbar { flex-wrap: wrap; }.metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.quality-strip { grid-template-columns: repeat(3, 1fr); }.quality-strip p { grid-column: 1 / -1; } }
-@media (max-width: 800px) { .customer-hero { align-items: flex-start; flex-direction: column; gap: 14px; }.hero-side { justify-items: start; }.overview-grid { grid-template-columns: 1fr; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.customer-toolbar > * { width: 100% !important; }.quality-strip { grid-template-columns: 1fr; }.customer-table-panel footer { align-items: flex-start; flex-direction: column; gap: 10px; } }
+@media (max-width: 800px) { .view-tabs { align-items: flex-start; flex-direction: column; gap: 8px; }.customer-hero { align-items: flex-start; flex-direction: column; gap: 14px; }.hero-side { justify-items: start; }.overview-grid { grid-template-columns: 1fr; }.metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.customer-toolbar > * { width: 100% !important; }.quality-strip { grid-template-columns: 1fr; }.customer-table-panel footer { align-items: flex-start; flex-direction: column; gap: 10px; } }
 </style>

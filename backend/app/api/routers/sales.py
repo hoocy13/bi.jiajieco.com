@@ -1641,7 +1641,7 @@ def sales_customer_analysis(
         else (owner or "").strip() if direction == "owner"
         else ((channel or "").strip() or (channel_type or "").strip())
     )
-    if direction in {"brand", "owner"} and not selected_scope:
+    if not selected_scope:
         brands = db.execute(text(f"""
             SELECT DISTINCT ({BRAND_EXPRESSION_SQL}) AS brand
             FROM {SALES_DETAIL_TABLE_SQL}
@@ -1925,6 +1925,259 @@ def sales_customer_analysis(
         } for row in rows],
     }
     return _cached_ok(cache_key, data)
+
+
+@router.get("/customer-churn-alerts")
+def sales_customer_churn_alerts(
+    response: Response,
+    direction: str = Query("brand", pattern="^(brand|channel|owner)$"),
+    brand: str | None = Query(None),
+    channel: str | None = Query(None),
+    channel_type: str | None = Query(None),
+    owner: str | None = Query(None),
+    keyword: str | None = Query(None),
+    inactive_months: int = Query(3),
+    min_historical_orders: int = Query(4, ge=2, le=100),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=10, le=100),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_ods_db),
+) -> dict:
+    """Customers who ordered frequently before the selected inactivity window."""
+    if inactive_months not in {3, 6, 12}:
+        raise HTTPException(status_code=422, detail="未下单周期仅支持 3、6 或 12 个月")
+
+    query_mode = settings.BI_QUERY_SOURCE
+    response.headers["X-BI-Query-Mode"] = query_mode
+    cache_key = _sales_cache_key(
+        "customer-churn-alerts-v1",
+        direction=direction,
+        brand=brand,
+        channel=channel,
+        channel_type=channel_type,
+        owner=owner,
+        keyword=keyword,
+        inactive_months=inactive_months,
+        min_historical_orders=min_historical_orders,
+        query_mode=query_mode,
+        page=page,
+        page_size=page_size,
+    )
+    cached = _get_sales_cache(cache_key)
+    if cached is not None:
+        return ok(cached)
+
+    max_date = db.execute(text("SELECT MAX(`下单时间`) FROM `dwd`.`销售单明细账_品牌补全`")).scalar()
+    as_of = _as_date(max_date)
+    if as_of is None:
+        return _cached_ok(cache_key, {
+            "as_of": None, "scope_required": False,
+            "summary": {"alert_customers": 0, "critical_customers": 0, "high_value_customers": 0, "historical_amount": 0},
+            "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
+            "options": {"brands": [], "channels": [], "channel_types": [], "owners": []},
+        })
+
+    def subtract_months(value: date, months: int) -> date:
+        target_month = value.month - months
+        target_year = value.year + (target_month - 1) // 12
+        target_month = (target_month - 1) % 12 + 1
+        month_days = [31, 29 if target_year % 4 == 0 and (target_year % 100 != 0 or target_year % 400 == 0) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        return date(target_year, target_month, min(value.day, month_days[target_month - 1]))
+
+    cutoff_date = subtract_months(as_of, inactive_months)
+    history_start = subtract_months(cutoff_date, 12)
+    selected_scope = (
+        (brand or "").strip() if direction == "brand"
+        else (owner or "").strip() if direction == "owner"
+        else ((channel or "").strip() or (channel_type or "").strip())
+    )
+
+    dimension_rows = db.execute(text("""
+        SELECT DISTINCT
+          COALESCE(NULLIF(TRIM(`渠道名称`), ''), '未归类') AS channel_name,
+          COALESCE(NULLIF(TRIM(`分类`), ''), '未分类') AS channel_type,
+          COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配') AS owner
+        FROM `渠道列表`
+        ORDER BY channel_name
+    """)).mappings().all()
+    option_channels = [str(row["channel_name"]) for row in dimension_rows]
+    option_channel_types = sorted({str(row["channel_type"]) for row in dimension_rows})
+    option_owners = sorted({str(row["owner"]) for row in dimension_rows})
+
+    if direction in {"brand", "owner"} and not selected_scope:
+        brands = db.execute(text(f"""
+            SELECT DISTINCT ({BRAND_EXPRESSION_SQL}) AS brand
+            FROM {SALES_DETAIL_TABLE_SQL}
+            WHERE `下单时间` >= :history_start
+              AND `下单时间` < DATE_ADD(:as_of, INTERVAL 1 DAY)
+            ORDER BY brand
+        """), {"history_start": history_start, "as_of": as_of}).scalars().all()
+        return _cached_ok(cache_key, {
+            "as_of": as_of.isoformat(), "cutoff_date": cutoff_date.isoformat(),
+            "history_start": history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
+            "scope_required": True,
+            "summary": {"alert_customers": 0, "critical_customers": 0, "high_value_customers": 0, "historical_amount": 0},
+            "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
+            "options": {"brands": [str(item) for item in brands if item], "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
+        })
+
+    selected_channels: list[str] | None = None
+    if direction == "channel" and channel and channel.strip():
+        selected_channels = [channel.strip()]
+    elif direction == "channel" and channel_type and channel_type.strip():
+        selected_channels = [str(row["channel_name"]) for row in dimension_rows if str(row["channel_type"]) == channel_type.strip()]
+    elif direction == "owner" and owner and owner.strip():
+        selected_channels = [str(row["channel_name"]) for row in dimension_rows if str(row["owner"]) == owner.strip()]
+
+    params: dict = {
+        "history_start": history_start,
+        "cutoff_date": cutoff_date,
+        "as_of": as_of,
+        "min_historical_orders": min_historical_orders,
+    }
+    source_sql = ""
+    ads_brands: list[str] = []
+    used_ads = False
+    if query_mode in {"ads", "dual"} and AdsSessionLocal is not None:
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_sales_batch(ads_db)
+                if history_start < batch.source_start_date or as_of > batch.source_end_date:
+                    raise AdsDataUnavailable("ADS batch does not cover churn history")
+                params["data_version"] = batch.data_version
+                params["brand"] = brand.strip() if direction == "brand" and brand else "__all__"
+                channel_filter = ""
+                if selected_channels:
+                    params["channel_0"] = selected_channels[0]
+                    channel_tokens = [":channel_0"]
+                    for index, value in enumerate(selected_channels[1:], start=1):
+                        params[f"channel_{index}"] = value
+                        channel_tokens.append(f":channel_{index}")
+                    channel_filter = f"AND `channel` IN ({', '.join(channel_tokens)})"
+                source_sql = f"""
+                    SELECT `sales_date`, `customer_code`, `customer_name`, `orders`, `quantity`, `paid_amount`
+                    FROM `ads_sales_customer_daily`
+                    WHERE `data_version` = :data_version
+                      AND `sales_date` BETWEEN :history_start AND :as_of
+                      AND `brand` = :brand {channel_filter}
+                """
+                ads_brands = [str(item) for item in ads_db.execute(text("""
+                    SELECT DISTINCT `brand` FROM `ads_sales_customer_daily`
+                    WHERE `data_version` = :data_version AND `brand` <> '__all__' ORDER BY `brand`
+                """), {"data_version": batch.data_version}).scalars().all() if item]
+                result_db = ads_db
+                used_ads = True
+                response.headers["X-BI-Response-Source"] = "ads"
+                result = _customer_churn_result(result_db, source_sql, params, keyword, page, page_size, as_of)
+        except Exception as exc:
+            logger.warning("customer_churn_ads_fallback error=%s", type(exc).__name__)
+            used_ads = False
+
+    if not used_ads:
+        response.headers["X-BI-Response-Source"] = "ods"
+        filters = []
+        if direction == "brand" and brand and brand.strip():
+            params["brand"] = brand.strip()
+            filters.append(f"({BRAND_EXPRESSION_SQL}) = :brand")
+        if selected_channels:
+            channel_tokens = []
+            for index, value in enumerate(selected_channels):
+                params[f"channel_{index}"] = value
+                channel_tokens.append(f":channel_{index}")
+            filters.append(f"COALESCE(NULLIF(TRIM(l.`销售渠道`), ''), '未归类') IN ({', '.join(channel_tokens)})")
+        filter_sql = "".join(f" AND {item}" for item in filters)
+        source_sql = f"""
+            SELECT DATE(l.`下单时间`) AS sales_date,
+                   COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code) AS customer_code,
+                   MAX(COALESCE(o.customer_name, '未命名客户')) AS customer_name,
+                   COUNT(DISTINCT l.`订单编号`) AS orders,
+                   SUM(COALESCE(l.`数量`, 0)) AS quantity,
+                   SUM(COALESCE(l.`分摊后金额`, 0)) AS paid_amount
+            FROM {SALES_DETAIL_TABLE_SQL} l
+            LEFT JOIN (
+              SELECT `订单编号`, MAX(NULLIF(TRIM(`客户编号`), '')) AS customer_code,
+                     MAX(NULLIF(TRIM(`客户名称`), '')) AS customer_name
+              FROM {SALES_ORDER_TABLE_SQL}
+              WHERE `下单时间` >= :history_start AND `下单时间` < DATE_ADD(:as_of, INTERVAL 1 DAY)
+                AND {ACTIVE_SALES_ORDER_SQL}
+              GROUP BY `订单编号`
+            ) o ON o.`订单编号` = l.`订单编号`
+            WHERE l.`下单时间` >= :history_start AND l.`下单时间` < DATE_ADD(:as_of, INTERVAL 1 DAY)
+              {filter_sql}
+            GROUP BY DATE(l.`下单时间`), COALESCE(NULLIF(TRIM(l.`客户编号`), ''), o.customer_code)
+        """
+        result = _customer_churn_result(db, source_sql, params, keyword, page, page_size, as_of)
+
+    result.update({
+        "as_of": as_of.isoformat(), "cutoff_date": cutoff_date.isoformat(),
+        "history_start": history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
+        "inactive_months": inactive_months, "min_historical_orders": min_historical_orders,
+        "scope_required": False,
+        "options": {"brands": ads_brands if used_ads else ([brand] if brand else []), "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
+    })
+    return _cached_ok(cache_key, result)
+
+
+def _customer_churn_result(
+    db: Session,
+    source_sql: str,
+    params: dict,
+    keyword: str | None,
+    page: int,
+    page_size: int,
+    as_of: date,
+) -> dict:
+    customer_sql = f"""
+        SELECT customer_code, MAX(customer_name) AS customer_name,
+               SUM(CASE WHEN sales_date < :cutoff_date THEN orders ELSE 0 END) AS historical_orders,
+               SUM(CASE WHEN sales_date >= :cutoff_date THEN orders ELSE 0 END) AS recent_orders,
+               COUNT(DISTINCT CASE WHEN sales_date < :cutoff_date THEN sales_date END) AS active_days,
+               MIN(CASE WHEN sales_date < :cutoff_date THEN sales_date END) AS first_order_date,
+               MAX(CASE WHEN sales_date < :cutoff_date THEN sales_date END) AS last_order_date,
+               SUM(CASE WHEN sales_date < :cutoff_date THEN quantity ELSE 0 END) AS historical_quantity,
+               SUM(CASE WHEN sales_date < :cutoff_date THEN paid_amount ELSE 0 END) AS historical_amount
+        FROM ({source_sql}) daily
+        WHERE customer_code IS NOT NULL AND customer_code <> ''
+        GROUP BY customer_code
+        HAVING historical_orders >= :min_historical_orders AND recent_orders = 0
+    """
+    filters = []
+    if keyword and keyword.strip():
+        params["keyword"] = f"%{keyword.strip()}%"
+        filters.append("(customer_code LIKE :keyword OR customer_name LIKE :keyword)")
+    filter_sql = "WHERE " + " AND ".join(filters) if filters else ""
+    eligible_rows = db.execute(text(f"""
+        SELECT *, DATEDIFF(:as_of, last_order_date) AS inactive_days,
+               CASE WHEN DATEDIFF(:as_of, last_order_date) >= 365 THEN 'critical'
+                    WHEN DATEDIFF(:as_of, last_order_date) >= 180 THEN 'high' ELSE 'watch' END AS alert_level
+        FROM ({customer_sql}) eligible {filter_sql}
+        ORDER BY historical_amount DESC, historical_orders DESC, last_order_date
+    """), params).mappings().all()
+    total = len(eligible_rows)
+    historical_amount = sum(_number(row["historical_amount"]) for row in eligible_rows)
+    avg_amount = historical_amount / total if total else 0
+    high_value = sum(1 for row in eligible_rows if _number(row["historical_amount"]) >= avg_amount)
+    critical = sum(1 for row in eligible_rows if _int(row["inactive_days"]) >= 365)
+    offset = (page - 1) * page_size
+    rows = eligible_rows[offset:offset + page_size]
+    return {
+        "summary": {
+            "alert_customers": total,
+            "critical_customers": critical,
+            "high_value_customers": _int(high_value),
+            "historical_amount": historical_amount,
+        },
+        "pagination": {"page": page, "page_size": page_size, "total": total},
+        "rows": [{
+            "customer_code": row["customer_code"], "customer_name": row["customer_name"],
+            "historical_orders": _int(row["historical_orders"]), "active_days": _int(row["active_days"]),
+            "last_order_date": row["last_order_date"].isoformat() if row["last_order_date"] else None,
+            "avg_interval_days": max(0, (row["last_order_date"] - row["first_order_date"]).days / (_int(row["historical_orders"]) - 1)) if _int(row["historical_orders"]) > 1 else None,
+            "inactive_days": _int(row["inactive_days"]), "alert_level": row["alert_level"],
+            "historical_quantity": _int(row["historical_quantity"]), "historical_amount": _number(row["historical_amount"]),
+            "is_high_value": _number(row["historical_amount"]) >= avg_amount,
+        } for row in rows],
+    }
 
 
 @router.get("/brand-channel-analysis")

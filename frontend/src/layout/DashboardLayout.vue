@@ -53,7 +53,7 @@ const menuGroups = [
       { path: '/inventory/brand-arrivals', label: '品牌月度到货' },
       { path: '/inventory/brand-inventory-flow', label: '品牌进销存' },
       { path: '/inventory/turnover', label: '品牌周转' },
-      { path: '/inventory/slow-moving', label: '滞销商品' },
+      { path: '/inventory/slow-moving', label: '滞销分析' },
       { path: '/inventory/batch-expiry', label: '批次效期分析' },
       { path: '/inventory/health', label: '库存健康度' },
     ],
