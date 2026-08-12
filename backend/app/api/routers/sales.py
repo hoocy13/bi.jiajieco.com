@@ -2038,12 +2038,15 @@ def sales_customer_churn_alerts(
     source_sql = ""
     ads_brands: list[str] = []
     used_ads = False
+    result_history_start = history_start
     if query_mode in {"ads", "dual"} and AdsSessionLocal is not None:
         try:
             with AdsSessionLocal() as ads_db:
                 batch = latest_ready_sales_batch(ads_db)
-                if history_start < batch.source_start_date or as_of > batch.source_end_date:
+                if as_of > batch.source_end_date or batch.source_start_date >= cutoff_date:
                     raise AdsDataUnavailable("ADS batch does not cover churn history")
+                result_history_start = max(history_start, batch.source_start_date)
+                params["history_start"] = result_history_start
                 params["data_version"] = batch.data_version
                 params["brand"] = brand.strip() if direction == "brand" and brand else "__all__"
                 channel_filter = ""
@@ -2110,7 +2113,7 @@ def sales_customer_churn_alerts(
 
     result.update({
         "as_of": as_of.isoformat(), "cutoff_date": cutoff_date.isoformat(),
-        "history_start": history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
+        "history_start": result_history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
         "inactive_months": inactive_months, "min_historical_orders": min_historical_orders,
         "scope_required": False,
         "options": {"brands": ads_brands if used_ads else ([brand] if brand else []), "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
