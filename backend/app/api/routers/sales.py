@@ -2149,20 +2149,33 @@ def _customer_churn_result(
         params["keyword"] = f"%{keyword.strip()}%"
         filters.append("(customer_code LIKE :keyword OR customer_name LIKE :keyword)")
     filter_sql = "WHERE " + " AND ".join(filters) if filters else ""
-    eligible_rows = db.execute(text(f"""
-        SELECT *, DATEDIFF(:as_of, last_order_date) AS inactive_days,
-               CASE WHEN DATEDIFF(:as_of, last_order_date) >= 365 THEN 'critical'
-                    WHEN DATEDIFF(:as_of, last_order_date) >= 180 THEN 'high' ELSE 'watch' END AS alert_level
-        FROM ({customer_sql}) eligible {filter_sql}
-        ORDER BY historical_amount DESC, historical_orders DESC, last_order_date
-    """), params).mappings().all()
-    total = len(eligible_rows)
-    historical_amount = sum(_number(row["historical_amount"]) for row in eligible_rows)
-    avg_amount = historical_amount / total if total else 0
-    high_value = sum(1 for row in eligible_rows if _number(row["historical_amount"]) >= avg_amount)
-    critical = sum(1 for row in eligible_rows if _int(row["inactive_days"]) >= 365)
     offset = (page - 1) * page_size
-    rows = eligible_rows[offset:offset + page_size]
+    params["page_size"] = page_size
+    params["offset"] = offset
+    rows = db.execute(text(f"""
+        WITH eligible AS ({customer_sql}),
+        enriched AS (
+          SELECT *, DATEDIFF(:as_of, last_order_date) AS inactive_days,
+                 CASE WHEN DATEDIFF(:as_of, last_order_date) >= 365 THEN 'critical'
+                      WHEN DATEDIFF(:as_of, last_order_date) >= 180 THEN 'high' ELSE 'watch' END AS alert_level,
+                 COUNT(*) OVER () AS total_customers,
+                 SUM(historical_amount) OVER () AS total_historical_amount,
+                 AVG(historical_amount) OVER () AS avg_historical_amount,
+                 SUM(CASE WHEN DATEDIFF(:as_of, last_order_date) >= 365 THEN 1 ELSE 0 END) OVER () AS critical_customers
+          FROM eligible {filter_sql}
+        )
+        SELECT *,
+               SUM(CASE WHEN historical_amount >= avg_historical_amount THEN 1 ELSE 0 END) OVER () AS high_value_customers
+        FROM enriched
+        ORDER BY historical_amount DESC, historical_orders DESC, last_order_date
+        LIMIT :page_size OFFSET :offset
+    """), params).mappings().all()
+    first_row = rows[0] if rows else {}
+    total = _int(first_row.get("total_customers"))
+    historical_amount = _number(first_row.get("total_historical_amount"))
+    avg_amount = _number(first_row.get("avg_historical_amount"))
+    high_value = _int(first_row.get("high_value_customers"))
+    critical = _int(first_row.get("critical_customers"))
     return {
         "summary": {
             "alert_customers": total,
