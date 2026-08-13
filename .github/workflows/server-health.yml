@@ -38,6 +38,10 @@ jobs:
           ps -eo pid,ppid,stat,%cpu,%mem,rss,etime,comm,args --sort=-%cpu | head -n 21
           echo '[top-memory]'
           ps -eo pid,ppid,stat,%cpu,%mem,rss,etime,comm,args --sort=-rss | head -n 21
+          echo '[io-snapshot]'
+          vmstat 1 5
+          echo '[blocked-processes]'
+          ps -eo pid,ppid,stat,wchan:32,etime,comm,args | awk '$3 ~ /^D/' | head -n 30
           echo '[docker-containers]'
           docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
           echo '[docker-stats]'
@@ -52,7 +56,17 @@ jobs:
           journalctl --disk-usage 2>/dev/null || true
           du -sh /var/log/* 2>/dev/null | sort -h | tail -n 20 || true
           echo '[large-docker-logs]'
-          find /var/lib/docker/containers -name '*-json.log' -type f -printf '%s %p\n' 2>/dev/null | sort -n | tail -n 15 || true
+          docker ps -a --no-trunc --format '{{.ID}} {{.Names}} {{.Status}}' > /tmp/codex-container-map.txt
+          find /var/lib/docker/containers -name '*-json.log' -type f -printf '%s %p\n' 2>/dev/null \
+            | sort -n | tail -n 15 \
+            | while read -r bytes path; do
+                container_id=$(basename "$(dirname "$path")")
+                identity=$(grep "^$container_id " /tmp/codex-container-map.txt || true)
+                echo "$bytes $identity"
+              done
+          rm -f /tmp/codex-container-map.txt
+          echo '[mysql-activity]'
+          mysql -NBe "SELECT COMMAND, STATE, COUNT(*) FROM information_schema.PROCESSLIST GROUP BY COMMAND, STATE ORDER BY COUNT(*) DESC" 2>/dev/null | head -n 30 || true
           echo '[failed-services]'
           systemctl --failed --no-pager 2>/dev/null || true
           REMOTE
