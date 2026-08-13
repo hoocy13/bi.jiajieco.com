@@ -2001,6 +2001,8 @@ def sales_customer_churn_alerts(
 
     cutoff_date = subtract_months(as_of, inactive_months)
     history_start = subtract_months(cutoff_date, 12)
+    result_as_of = as_of
+    result_cutoff_date = cutoff_date
     selected_scope = (
         (brand or "").strip() if direction == "brand"
         else (owner or "").strip() if direction == "owner"
@@ -2058,18 +2060,26 @@ def sales_customer_churn_alerts(
         try:
             with AdsSessionLocal() as ads_db:
                 batch = latest_ready_sales_batch(ads_db)
-                if as_of > batch.source_end_date or batch.source_start_date >= cutoff_date:
+                ads_as_of = min(as_of, batch.source_end_date)
+                ads_cutoff_date = subtract_months(ads_as_of, inactive_months)
+                ads_history_start = subtract_months(ads_cutoff_date, 12)
+                if batch.source_start_date >= ads_cutoff_date:
                     raise AdsDataUnavailable("ADS batch does not cover churn history")
-                result_history_start = max(history_start, batch.source_start_date)
-                params["history_start"] = result_history_start
-                params["data_version"] = batch.data_version
-                params["brand"] = brand.strip() if direction == "brand" and brand else "__all__"
+                ads_result_history_start = max(ads_history_start, batch.source_start_date)
+                ads_params = dict(params)
+                ads_params.update({
+                    "history_start": ads_result_history_start,
+                    "cutoff_date": ads_cutoff_date,
+                    "as_of": ads_as_of,
+                    "data_version": batch.data_version,
+                    "brand": brand.strip() if direction == "brand" and brand else "__all__",
+                })
                 channel_filter = ""
                 if selected_channels:
-                    params["channel_0"] = selected_channels[0]
+                    ads_params["channel_0"] = selected_channels[0]
                     channel_tokens = [":channel_0"]
                     for index, value in enumerate(selected_channels[1:], start=1):
-                        params[f"channel_{index}"] = value
+                        ads_params[f"channel_{index}"] = value
                         channel_tokens.append(f":channel_{index}")
                     channel_filter = f"AND `channel` IN ({', '.join(channel_tokens)})"
                 source_sql = f"""
@@ -2086,7 +2096,12 @@ def sales_customer_churn_alerts(
                 result_db = ads_db
                 used_ads = True
                 response.headers["X-BI-Response-Source"] = "ads"
-                result = _customer_churn_result(result_db, source_sql, params, keyword, page, page_size, as_of)
+                result = _customer_churn_result(
+                    result_db, source_sql, ads_params, keyword, page, page_size, ads_as_of
+                )
+                result_as_of = ads_as_of
+                result_cutoff_date = ads_cutoff_date
+                result_history_start = ads_result_history_start
         except Exception as exc:
             logger.warning("customer_churn_ads_fallback error=%s", type(exc).__name__)
             used_ads = False
@@ -2127,8 +2142,8 @@ def sales_customer_churn_alerts(
         result = _customer_churn_result(db, source_sql, params, keyword, page, page_size, as_of)
 
     result.update({
-        "as_of": as_of.isoformat(), "cutoff_date": cutoff_date.isoformat(),
-        "history_start": result_history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
+        "as_of": result_as_of.isoformat(), "cutoff_date": result_cutoff_date.isoformat(),
+        "history_start": result_history_start.isoformat(), "history_end": (result_cutoff_date - timedelta(days=1)).isoformat(),
         "inactive_months": inactive_months, "min_historical_orders": min_historical_orders,
         "scope_required": False,
         "options": {"brands": ads_brands if used_ads else ([brand] if brand else []), "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
