@@ -10,3 +10,4 @@ __pycache__/
 bi-deploy.tar.gz
 *.log
 docs/awesome-design-md/
+outputs/

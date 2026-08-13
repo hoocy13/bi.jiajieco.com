@@ -1224,14 +1224,33 @@ def insert_order_daily_filter_rows(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> int:
-    date_filter = ""
-    params: dict[str, object] = {"data_version": data_version}
-    if start_date is not None and end_date is not None:
-        date_filter = "AND `sales_date` BETWEEN :start_date AND :end_date"
-        params.update({"start_date": start_date, "end_date": end_date})
-    result = ads_db.execute(
-        text(
-            f"""
+    if (start_date is None) != (end_date is None):
+        raise ValueError("start_date and end_date must be provided together")
+
+    slices: list[tuple[date | None, date | None]] = []
+    if start_date is None or end_date is None:
+        slices.append((None, None))
+    else:
+        cursor = start_date
+        while cursor <= end_date:
+            if cursor.month == 12:
+                next_month = date(cursor.year + 1, 1, 1)
+            else:
+                next_month = date(cursor.year, cursor.month + 1, 1)
+            slice_end = min(end_date, next_month - timedelta(days=1))
+            slices.append((cursor, slice_end))
+            cursor = slice_end + timedelta(days=1)
+
+    inserted_total = 0
+    for index, (slice_start, slice_end) in enumerate(slices, start=1):
+        date_filter = ""
+        params: dict[str, object] = {"data_version": data_version}
+        if slice_start is not None and slice_end is not None:
+            date_filter = "AND `sales_date` BETWEEN :start_date AND :end_date"
+            params.update({"start_date": slice_start, "end_date": slice_end})
+        result = ads_db.execute(
+            text(
+                f"""
             INSERT INTO `ads_sales_order_daily_filter` (
               `data_version`, `sales_date`, `channel`, `status`,
               `detail_rows`, `orders`, `paid_amount`, `quantity`
@@ -1247,12 +1266,19 @@ def insert_order_daily_filter_rows(
               {date_filter}
             GROUP BY `data_version`, `sales_date`, `channel`, `status`
             """
-        ),
-        params,
-    )
-    row_count = int(result.rowcount or 0)
-    ads_db.commit()
-    return row_count
+            ),
+            params,
+        )
+        inserted_total += int(result.rowcount or 0)
+        ads_db.commit()
+        if slice_end is not None:
+            report_progress(
+                "order-filter-slices",
+                progress=f"{index}/{len(slices)}",
+                through=slice_end,
+                rows=inserted_total,
+            )
+    return inserted_total
 
 
 def load_brand_turnover_product_rows(
