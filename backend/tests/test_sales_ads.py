@@ -41,9 +41,11 @@ from app.models.ads import (
     AdsSalesDetailDailyScope,
     AdsSalesOrderDetail,
     AdsSalesOrderDailyFilter,
+    AdsSalesBrandTurnoverItem,
 )
 from app.services.sales_ads import (
     compare_sales_overviews,
+    latest_ready_brand_turnover_batch,
     latest_ready_sales_batch,
     load_sales_brand_analysis_from_ads,
     load_sales_brand_channel_from_ads,
@@ -659,6 +661,55 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual(data["metrics"]["paid_amount"], 150)
         self.assertEqual([row["channel"] for row in data["channels"]], ["渠道A", "渠道B"])
         self.assertEqual(data["channels"][0]["paid_amount"], 130)
+
+    def test_turnover_reader_skips_newer_ready_batch_without_detail_rows(self) -> None:
+        usable = AdsPublishBatch(
+            data_version="sales-turnover-usable",
+            dataset="sales_daily",
+            status="ready",
+            source_start_date=date(2026, 1, 1),
+            source_end_date=date(2026, 7, 31),
+            created_at=datetime(2026, 8, 1, 1, 0),
+            finished_at=datetime(2026, 8, 1, 1, 1),
+            published_at=datetime(2026, 8, 1, 1, 1),
+        )
+        incomplete = AdsPublishBatch(
+            data_version="sales-turnover-incomplete",
+            dataset="sales_daily",
+            status="ready",
+            source_start_date=date(2026, 1, 1),
+            source_end_date=date(2026, 7, 31),
+            created_at=datetime(2026, 8, 2, 1, 0),
+            finished_at=datetime(2026, 8, 2, 1, 1),
+            published_at=datetime(2026, 8, 2, 1, 1),
+        )
+        self.db.add_all([usable, incomplete])
+        self.db.flush()
+        self.db.add(
+            AdsSalesBrandTurnoverItem(
+                data_version=usable.data_version,
+                item_id=1,
+                sales_date=date(2026, 7, 15),
+                order_number=None,
+                warehouse="上海仓",
+                brand="品牌A",
+                product_type="正装",
+                product_key="SKU-001",
+                product_code="SKU-001",
+                product="商品A",
+                quantity=Decimal("40"),
+                paid_amount=Decimal("400"),
+            )
+        )
+        self.db.commit()
+
+        batch = latest_ready_brand_turnover_batch(
+            self.db,
+            date(2026, 7, 1),
+            date(2026, 7, 31),
+        )
+
+        self.assertEqual(batch.data_version, usable.data_version)
 
     def test_loads_remaining_slow_endpoints_from_ads(self) -> None:
         batch = latest_ready_sales_batch(self.db)

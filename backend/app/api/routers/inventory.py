@@ -38,6 +38,7 @@ from app.services.inventory_ads import (
 from app.services.sales_ads import (
     AdsDataUnavailable,
     ensure_batch_covers,
+    latest_ready_brand_turnover_batch,
     latest_ready_sales_batch,
 )
 from app.services.slow_moving_period_analysis import (
@@ -1958,9 +1959,8 @@ def slow_moving_inventory(
     if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
         try:
             with AdsSessionLocal() as ads_db:
-                ads_batch = latest_ready_sales_batch(ads_db)
-                ensure_batch_covers(
-                    ads_batch,
+                ads_batch = latest_ready_brand_turnover_batch(
+                    ads_db,
                     min(trend_dates) - timedelta(days=period_days - 1),
                     selected_snapshot,
                 )
@@ -1972,7 +1972,7 @@ def slow_moving_inventory(
             sales_source = "ods"
 
     cache_key = _cache_key(
-        "slow-moving-period-v5",
+        "slow-moving-period-v6",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,

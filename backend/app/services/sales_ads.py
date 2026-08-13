@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
-from app.models.ads import AdsPublishBatch
+from app.models.ads import AdsPublishBatch, AdsSalesBrandTurnoverItem
 from app.services.sales_sources import is_online_sales_channel
 
 
@@ -62,6 +62,47 @@ def latest_ready_sales_batch(ads_db: Session) -> AdsPublishBatch:
     ).first()
     if batch is None:
         raise AdsDataUnavailable("No ready sales ADS batch is available")
+    return batch
+
+
+def latest_ready_brand_turnover_batch(
+    ads_db: Session,
+    start_date: date,
+    end_date: date,
+) -> AdsPublishBatch:
+    """Return the newest ready batch that actually contains turnover sales rows.
+
+    A ready sales batch can be published without the optional brand-turnover
+    detail table being populated. Using such a batch for slow-moving analysis
+    silently turns every SKU's period sales into zero and its retention into
+    100%, so batch coverage metadata alone is not sufficient here.
+    """
+    has_turnover_rows = (
+        select(AdsSalesBrandTurnoverItem.item_id)
+        .where(
+            AdsSalesBrandTurnoverItem.data_version == AdsPublishBatch.data_version,
+            AdsSalesBrandTurnoverItem.sales_date >= start_date,
+            AdsSalesBrandTurnoverItem.sales_date <= end_date,
+        )
+        .limit(1)
+        .exists()
+    )
+    batch = ads_db.scalars(
+        select(AdsPublishBatch)
+        .where(
+            AdsPublishBatch.dataset == SALES_DATASET,
+            AdsPublishBatch.status == "ready",
+            AdsPublishBatch.source_start_date <= start_date,
+            AdsPublishBatch.source_end_date >= end_date,
+            has_turnover_rows,
+        )
+        .order_by(AdsPublishBatch.published_at.desc(), AdsPublishBatch.id.desc())
+        .limit(1)
+    ).first()
+    if batch is None:
+        raise AdsDataUnavailable(
+            "No ready sales ADS batch with brand-turnover rows covers the requested range"
+        )
     return batch
 
 
