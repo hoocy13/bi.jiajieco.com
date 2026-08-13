@@ -1,0 +1,58 @@
+name: Diagnose Server Health
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    name: Read server resource usage
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KEY: ${{ secrets.TENCENT_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Read resource usage
+        env:
+          DEPLOY_HOST: ${{ secrets.TENCENT_HOST }}
+          DEPLOY_USER: ${{ secrets.TENCENT_USER }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "bash -s" <<'REMOTE'
+          set -u
+          echo '[system]'
+          hostname
+          date
+          uptime
+          echo '[memory]'
+          free -h
+          echo '[disk]'
+          df -hT / /var/lib/docker /www 2>/dev/null || df -hT /
+          echo '[top-cpu]'
+          ps -eo pid,ppid,stat,%cpu,%mem,rss,etime,comm,args --sort=-%cpu | head -n 21
+          echo '[top-memory]'
+          ps -eo pid,ppid,stat,%cpu,%mem,rss,etime,comm,args --sort=-rss | head -n 21
+          echo '[docker-containers]'
+          docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+          echo '[docker-stats]'
+          docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.PIDs}}'
+          echo '[docker-space]'
+          docker system df
+          echo '[docker-images]'
+          docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}} {{.CreatedSince}}' | head -n 30
+          echo '[application-releases]'
+          du -sh /www/wwwroot/bi.jiajieco.com* 2>/dev/null | sort -h | tail -n 30 || true
+          echo '[large-logs]'
+          journalctl --disk-usage 2>/dev/null || true
+          du -sh /var/log/* 2>/dev/null | sort -h | tail -n 20 || true
+          echo '[large-docker-logs]'
+          find /var/lib/docker/containers -name '*-json.log' -type f -printf '%s %p\n' 2>/dev/null | sort -n | tail -n 15 || true
+          echo '[failed-services]'
+          systemctl --failed --no-pager 2>/dev/null || true
+          REMOTE
