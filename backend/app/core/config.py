@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     BI_QUERY_SOURCE: str = "ads"
     ADS_POOL_SIZE: int = 5
     ADS_MAX_OVERFLOW: int = 5
+    ADS_BUILD_READ_TIMEOUT_SECONDS: int = 300
     ODS_BUILD_READ_TIMEOUT_SECONDS: int = 300
     SECRET_KEY: str = "change-me-in-production"
     ALGORITHM: str = "HS256"

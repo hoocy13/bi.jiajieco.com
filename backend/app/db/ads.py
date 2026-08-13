@@ -9,14 +9,14 @@ from app.core.config import settings
 from app.core.performance import register_engine_performance
 
 
-def _mysql_connect_args(url: str) -> dict:
+def _mysql_connect_args(url: str, read_timeout: int = 30) -> dict:
     if not url.startswith("mysql"):
         return {}
     return {
         "charset": "utf8mb4",
         "connect_timeout": 10,
-        "read_timeout": 30,
-        "write_timeout": 60,
+        "read_timeout": read_timeout,
+        "write_timeout": max(60, read_timeout),
     }
 
 
@@ -38,7 +38,7 @@ def ensure_separate_ads_database(ods_url: str, ads_url: str) -> None:
         return
 
 
-def create_ads_engine(url: str) -> Engine:
+def create_ads_engine(url: str, read_timeout: int = 30) -> Engine:
     ensure_separate_ads_database(settings.ODS_DATABASE_URL, url)
     engine_options: dict = {
         "pool_pre_ping": True,
@@ -51,7 +51,7 @@ def create_ads_engine(url: str) -> Engine:
         )
     return create_engine(
         url,
-        connect_args=_mysql_connect_args(url),
+        connect_args=_mysql_connect_args(url, read_timeout=read_timeout),
         **engine_options,
     )
 
@@ -64,7 +64,10 @@ else:
     AdsSessionLocal = None
 
 if settings.ADS_BUILD_DATABASE_URL:
-    ads_build_engine = create_ads_engine(settings.ADS_BUILD_DATABASE_URL)
+    ads_build_engine = create_ads_engine(
+        settings.ADS_BUILD_DATABASE_URL,
+        read_timeout=settings.ADS_BUILD_READ_TIMEOUT_SECONDS,
+    )
     AdsBuildSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=ads_build_engine)
 else:
     ads_build_engine = None
