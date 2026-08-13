@@ -13,6 +13,7 @@ import { getBrandInventoryTurnover, getBrandInventoryTurnoverAnalysis, getInvent
 import { DEFAULT_INVENTORY_PRODUCT_TYPES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
 import { getSavedTheme } from '../../utils/theme'
+import ExportExcelButton from '../common/ExportExcelButton.vue'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
 
@@ -99,6 +100,7 @@ const analysis = ref({
   product_turnover_rows: [],
   rows: [],
 })
+const turnoverExportColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'brand', label: '品牌' }, { key: 'net_sales_quantity', label: '期间净销售数量', kind: 'integer' }, { key: 'ending_stock', label: '期末库存数量', kind: 'integer' }, { key: 'average_inventory', label: '期间平均库存', kind: 'number' }, { key: 'net_sales_amount', label: '期间分摊销售额', kind: 'number' }, { key: 'turnover_rate', label: '库存周转次数', kind: 'number' }, { key: 'turnover_days', label: '库存周转天数', kind: 'number' }, { key: 'status', label: '状态' }]
 
 const isHistoricalBasis = computed(() => analysis.value.basis === 'monthly_average_inventory')
 
@@ -692,7 +694,7 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           <span class="panel-kicker">数据明细</span>
           <h2>品牌周转明细<span class="panel-source">（销售单明细账 + {{ isHistoricalBasis ? '历史月末库存快照' : '当前分仓库存' }}）</span></h2>
         </div>
-        <el-button :icon="'Refresh'" circle @click="fetchRows" />
+        <div class="header-actions"><ExportExcelButton title="品牌周转明细" :rows="analysis.chart_rows || analysis.rows" :columns="turnoverExportColumns" :total="analysis.pagination.total" /><el-button :icon="'Refresh'" circle @click="fetchRows" /></div>
       </header>
       <el-table :data="analysis.rows" height="520">
         <el-table-column prop="rank" label="排名" width="74" align="center">

@@ -59,6 +59,7 @@ http.interceptors.response.use(
       'success',
       diagnostics,
     )
+    if (response.config.metadata?.rawResponse) return response
     if (response.data && typeof response.data === 'object') {
       response.data._request = {
         duration_ms: Math.round(requestRecord?.durationMs || 0),
@@ -97,6 +98,8 @@ http.interceptors.response.use(
       }
       return Promise.reject(error)
     }
+
+    if (error.config?.metadata?.rawResponse) return Promise.reject(error)
 
     const message = error.response?.data?.message || error.message || '请求失败'
     ElMessage.error(message)

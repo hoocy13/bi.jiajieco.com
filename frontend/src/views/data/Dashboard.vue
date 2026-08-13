@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { CustomChart, LineChart, PieChart } from 'echarts/charts'
 import { GeoComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import chinaGeoJson from '../../assets/china.json'
 import { getDashboardSummary } from '../../api/dashboard'
 import { getSalesBrandAnalysis } from '../../api/sales'
@@ -26,6 +27,7 @@ const summary = ref({
 })
 
 const brandRows = ref([])
+const dashboardBrandColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'brand', label: '品牌' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '占比', kind: 'percent' }]
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -283,7 +285,7 @@ const geoPieOption = computed(() => ({
         <v-chart class="map-chart map-chart-compact" :option="geoPieOption" autoresize />
       </section>
       <section class="panel">
-        <header><h2>品牌占比<span class="panel-source">（商品明细分摊金额口径）</span></h2></header>
+        <header><h2>品牌占比<span class="panel-source">（商品明细分摊金额口径）</span></h2><ExportExcelButton title="经营总览_品牌排行" :rows="brandRows" :columns="dashboardBrandColumns" :total="brandRows.length" :filters="{ 统计区间: '近30天' }" /></header>
         <v-chart class="chart" :option="brandOption" autoresize />
       </section>
     </div>

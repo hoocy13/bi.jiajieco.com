@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesOverview } from '../../api/sales'
 import { getSavedTheme } from '../../utils/theme'
 
@@ -55,6 +56,7 @@ const dateRangeLabel = computed(() => {
 })
 
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
+const channelExportColumns = [{ key: 'channel', label: '销售渠道' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '实付金额', kind: 'number' }, { key: 'share', label: '占比', kind: 'percent' }]
 
 const metrics = computed(() => [
   { label: '订单实付金额', value: formatNumber(overview.value.metrics.paid_amount), unit: '元', trend: overview.value.period },
@@ -253,6 +255,7 @@ onMounted(fetchOverview)
     <section class="panel">
       <header>
         <h2>{{ overview.period }}渠道排行<span class="panel-source">（订单头实付金额口径）</span></h2>
+        <ExportExcelButton title="销售概览_渠道排行" :rows="overview.channels" :columns="channelExportColumns" :total="overview.channels.length" :filters="{ 统计区间: dateRangeLabel }" />
       </header>
       <v-chart class="chart chart-compact" :option="channelBarOption" autoresize />
       <el-table :data="overview.channels" height="360">

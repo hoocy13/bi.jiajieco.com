@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getBrandMonthlyArrivals } from '../../api/inventory'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
@@ -49,6 +50,7 @@ const analysis = ref({
   trend: [], product_type_summary: [], products: [], brands: [],
   pagination: { page: 1, page_size: 20, total: 0 }, details: [],
 })
+const exportFilters = computed(() => ({ start_date: dateRange.value[0], end_date: dateRange.value[1], brand: selectedBrands.value, product_type: selectedProductTypes.value, warehouse: selectedWarehouses.value, detail_product_type: detailType.value === 'all' ? undefined : detailType.value }))
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -323,9 +325,7 @@ onMounted(() => fetchData())
     <section v-else class="arrival-panel detail-panel">
       <header>
         <div><small>到货明细</small><h2>入库单与货品明细</h2></div>
-        <div class="detail-tabs">
-          <button v-for="item in [{label:'全部明细',value:'all'},{label:'正装明细',value:'正装'},{label:'小样明细',value:'小样'}]" :key="item.value" :class="{ active: detailType === item.value }" @click="setDetailType(item.value)">{{ item.label }}</button>
-        </div>
+        <div class="header-actions"><div class="detail-tabs"><button v-for="item in [{label:'全部明细',value:'all'},{label:'正装明细',value:'正装'},{label:'小样明细',value:'小样'}]" :key="item.value" :class="{ active: detailType === item.value }" @click="setDetailType(item.value)">{{ item.label }}</button></div><ExportExcelButton dataset="brand-arrivals" :filters="exportFilters" :total="analysis.pagination.total" /></div>
       </header>
       <div class="type-metrics-grid is-detail-summary">
         <article v-for="item in arrivalTypeMetrics" :key="item.key" class="type-metric" :class="[`is-${item.kind}`, `is-${item.productType === '正装' ? 'full' : 'sample'}`]">

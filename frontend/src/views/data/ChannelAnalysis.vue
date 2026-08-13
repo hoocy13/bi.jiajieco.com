@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getSalesChannelAnalysis, getSalesChannelCustomerAnalysis } from '../../api/sales'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
@@ -63,6 +64,7 @@ const analysis = ref({
   unmatched_channels: [],
   filter_options: { channel_types: [], platforms: [] },
 })
+const channelExportColumns = [{ key: 'channel_code', label: '编号' }, { key: 'channel_name', label: '渠道名称' }, { key: 'category', label: '渠道分类' }, { key: 'platform', label: '平台归属' }, { key: 'owner', label: '负责人' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '销售占比', kind: 'percent' }]
 const customerDrawerVisible = ref(false)
 const customerLoading = ref(false)
 const selectedOfflineChannel = ref(null)
@@ -518,7 +520,7 @@ onMounted(fetchAnalysis)
       </div>
 
       <section class="panel">
-        <header><h2>渠道清单<span class="panel-source">（销售单明细账 + 渠道列表）</span></h2><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></header>
+        <header><h2>渠道清单<span class="panel-source">（销售单明细账 + 渠道列表）</span></h2><div class="header-actions"><ExportExcelButton title="渠道分析" :rows="analysis.rows" :columns="channelExportColumns" :total="analysis.rows.length" /><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></div></header>
         <el-table :data="analysis.rows" height="520">
           <el-table-column prop="channel_code" label="编号" width="90" sortable />
           <el-table-column prop="channel_name" label="渠道名称" min-width="220" show-overflow-tooltip sortable>

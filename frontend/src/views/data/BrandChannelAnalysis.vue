@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getSalesBrandChannelAnalysis } from '../../api/sales'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
@@ -81,6 +82,7 @@ const analysis = ref({
     channel_names: [],
   },
 })
+const productExportColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'product', label: '商品名称', width: 42 }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '占比', kind: 'percent' }]
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -633,7 +635,7 @@ function returnToBrands() {
       </section>
 
       <section class="panel">
-      <header><h2>{{ brand }} 商品排行<span class="panel-source">（销售单明细账）</span></h2></header>
+      <header><h2>{{ brand }} 商品排行<span class="panel-source">（销售单明细账）</span></h2><ExportExcelButton title="品牌商品排行" :rows="analysis.products" :columns="productExportColumns" :total="analysis.products.length" :filters="{ 品牌: brand, 开始日期: analysis.start_date, 结束日期: analysis.end_date }" /></header>
       <el-table :data="analysis.products" height="460">
         <el-table-column prop="rank" label="排名" width="74" align="center"><template #default="{ row }"><span class="rank-badge">{{ row.rank }}</span></template></el-table-column>
         <el-table-column prop="product" label="商品名称" min-width="300" show-overflow-tooltip sortable />

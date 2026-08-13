@@ -8,6 +8,7 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getBrandInventoryFlow, getBrandInventoryTurnoverAnalysis, getInventoryWarehouses } from '../../api/inventory'
 import { getSavedTheme } from '../../utils/theme'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
 
@@ -68,6 +69,7 @@ const analysis = ref({
   freshness: {},
   metric_notes: {},
 })
+const flowExportColumns = [{ key: 'month', label: '月份' }, { key: 'opening_quantity', label: '期初库存', kind: 'integer' }, { key: 'inbound_quantity', label: '采购入库', kind: 'integer' }, { key: 'sales_quantity', label: '销售数量', kind: 'integer' }, { key: 'ending_quantity', label: '期末库存', kind: 'integer' }, { key: 'sell_through_rate', label: '可售消化率', kind: 'percent' }, { key: 'inbound_cost', label: '采购入库成本', kind: 'number' }, { key: 'sales_amount', label: '分摊销售额', kind: 'number' }, { key: 'ending_stock_amount', label: '期末库存金额', kind: 'number' }]
 const turnoverAnalysis = ref({
   brand: selectedBrand.value, start_date: defaultStartDate, end_date: defaultEndDate, period: `${defaultYear}年01月—${defaultYear}年12月`, period_days: 365,
   summary: { sales_quantity: 0, sales_amount: 0, average_inventory: 0, ending_inventory: 0, ending_inventory_amount: 0, turnover_rate: null, turnover_days: null },
@@ -555,6 +557,7 @@ onMounted(() => {
     <section class="flow-panel table-panel">
       <header>
         <div><small>月度明细</small><h2>{{ analysis.period }}进销存明细</h2></div>
+        <ExportExcelButton title="品牌进销存月度明细" :rows="analysis.months" :columns="flowExportColumns" :total="analysis.months.length" :filters="{ 品牌: analysis.brand, 开始日期: analysis.start_date, 结束日期: analysis.end_date }" />
           <span>{{ productTypeLabel }} · 点击列头可排序 · 金额单位：元</span>
       </header>
       <el-table :data="analysis.months" stripe empty-text="暂无数据">

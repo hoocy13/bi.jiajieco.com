@@ -10,6 +10,7 @@ import WarehouseFilter from '../../components/inventory/WarehouseFilter.vue'
 import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
 import ProductInventoryDrawer from '../../components/inventory/ProductInventoryDrawer.vue'
 import BrandInventoryTurnover from '../../components/inventory/BrandInventoryTurnover.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getInventoryTurnover, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
@@ -49,6 +50,7 @@ const query = reactive({
 const rows = ref([])
 const total = ref(0)
 const productDrawer = ref(null)
+const exportFilters = computed(() => ({ keyword: query.keyword.trim() || undefined, barcode: query.barcode.trim() || undefined, min_stock: query.minStock, warehouse: query.warehouses, product_type: productTypeParam(query.productTypes) }))
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -329,7 +331,7 @@ onMounted(() => {
     <section class="panel">
       <header>
         <h2>库存周转<span class="panel-source">（分仓库查询）</span></h2>
-        <el-button :icon="'Refresh'" circle @click="fetchRows" />
+        <div class="header-actions"><ExportExcelButton dataset="inventory-turnover" :filters="exportFilters" :total="total" /><el-button :icon="'Refresh'" circle @click="fetchRows" /></div>
       </header>
       <el-table :data="rows" height="560">
         <el-table-column label="排名" width="74" align="center">

@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesCustomerChurnAlerts } from '../../api/sales'
 
 const route = useRoute()
@@ -51,6 +52,10 @@ function params() {
     page_size: pageSize.value,
   }
 }
+const exportFilters = computed(() => {
+  const { page: currentPage, page_size: currentPageSize, ...filters } = params()
+  return filters
+})
 function urlParams() {
   const values = params()
   return {
@@ -121,7 +126,10 @@ onMounted(load)
         <article><span>历史贡献金额</span><strong>{{ money(data.summary.historical_amount) }}</strong></article>
       </section>
       <section class="panel alert-table">
-        <header><div><small>CHURN ALERT DETAIL</small><h2>重点维护名单</h2></div><span>高价值按当前名单历史金额平均值识别</span></header>
+        <header>
+          <div><small>CHURN ALERT DETAIL</small><h2>重点维护名单</h2></div>
+          <div class="header-actions"><span>高价值按当前名单历史金额平均值识别</span><ExportExcelButton dataset="customer-churn-alerts" :filters="exportFilters" :total="data.pagination.total" :disabled="data.scope_required" /></div>
+        </header>
         <el-table :data="data.rows" height="540">
           <el-table-column label="预警" width="105"><template #default="{ row }"><el-tag :type="levelType(row.alert_level)" effect="light">{{ levelText(row.alert_level) }}</el-tag></template></el-table-column>
           <el-table-column prop="customer_code" label="客户编号" min-width="145" show-overflow-tooltip sortable />

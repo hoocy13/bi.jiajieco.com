@@ -134,6 +134,39 @@ class SlowMovingPeriodAnalysisTests(unittest.TestCase):
         self.assertEqual(result["retention_scope"], "ge90")
         self.assertEqual([row["product_code"] for row in result["rows"]], ["A"])
 
+    def test_matches_sales_by_product_code_when_brand_or_type_text_differs(self) -> None:
+        source = {
+            "stock": [{
+                "snapshot_date": self.snapshot,
+                "warehouse": "上海仓",
+                "product_type": "正装",
+                "product_code": "SKU-001",
+                "product_name": "测试商品",
+                "brand": "品牌A",
+                "stock_quantity": Decimal("60"),
+            }],
+            "sales": [{
+                "sales_date": date(2026, 7, 15),
+                "warehouse": "上海仓",
+                "product_type": "未归类",
+                "product_code": "SKU-001",
+                "product_name": "测试商品新名称",
+                "brand": "品牌A（补全）",
+                "sales_quantity": Decimal("40"),
+            }],
+        }
+
+        result = build_slow_moving_period_analysis(
+            source,
+            snapshot_date=self.snapshot,
+            trend_dates=(self.snapshot,),
+            period_days=90,
+            risk_scope="all",
+        )
+
+        self.assertEqual(result["rows"][0]["period_sales"], 40.0)
+        self.assertAlmostEqual(result["rows"][0]["ending_stock_ratio"], 60.0)
+
 
 if __name__ == "__main__":
     unittest.main()

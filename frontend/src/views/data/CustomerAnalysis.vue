@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesCustomerAnalysis } from '../../api/sales'
 import CustomerChurnAlerts from './CustomerChurnAlerts.vue'
 
@@ -83,6 +84,11 @@ function params() {
     page_size: pageSize.value,
   }
 }
+
+const exportFilters = computed(() => {
+  const { page: currentPage, page_size: currentPageSize, ...filters } = params()
+  return filters
+})
 
 async function load() {
   loading.value = true
@@ -213,7 +219,10 @@ onMounted(() => { if (activeView.value === 'overview') load() })
     <section class="panel customer-table-panel">
       <header>
         <div><small>CUSTOMER DETAIL</small><h2>{{ customerListTitle }}</h2></div>
-        <el-segmented :model-value="query.frequency" :options="[{ label: '全部', value: 'all' }, { label: '首购', value: 'first' }, { label: '稳定', value: 'stable' }, { label: '高频', value: 'high' }]" @change="selectFrequency" />
+        <div class="header-actions">
+          <el-segmented :model-value="query.frequency" :options="[{ label: '全部', value: 'all' }, { label: '首购', value: 'first' }, { label: '稳定', value: 'stable' }, { label: '高频', value: 'high' }]" @change="selectFrequency" />
+          <ExportExcelButton dataset="customer-analysis" :filters="exportFilters" :total="data.pagination.total" :disabled="data.scope_required" />
+        </div>
       </header>
       <el-table :data="data.rows" height="520">
         <el-table-column prop="customer_code" label="客户编号" min-width="150" show-overflow-tooltip sortable />

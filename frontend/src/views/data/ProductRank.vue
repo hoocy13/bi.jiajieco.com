@@ -6,6 +6,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesProductRank } from '../../api/sales'
 import { getSavedTheme } from '../../utils/theme'
 
@@ -73,6 +74,7 @@ const metrics = computed(() => [
 ])
 
 const amountChartRows = computed(() => rank.value.rows.slice(0, 10).toReversed())
+const rankExportColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'product', label: '商品摘要', width: 42 }, { key: 'share', label: '占比', kind: 'percent' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'avg_unit_price', label: '件均价', kind: 'number' }]
 const quantityChartRows = computed(() => rank.value.quantity_rows.slice(0, 10).toReversed())
 
 function buildBarOption(rows, valueKey, unit, digits = 0) {
@@ -201,6 +203,7 @@ onMounted(fetchRank)
     <section class="panel">
       <header>
         <h2>商品销售排行榜<span class="panel-source">（按明细分摊金额）</span></h2>
+        <ExportExcelButton title="商品销售排行" :rows="rank.rows" :columns="rankExportColumns" :total="rank.rows.length" :filters="{ 统计区间: dateRangeLabel }" />
         <el-button :icon="'Refresh'" circle @click="fetchRank" />
       </header>
       <v-chart class="rank-chart" :option="amountChartOption" autoresize />
@@ -241,6 +244,7 @@ onMounted(fetchRank)
     <section class="panel">
       <header>
         <h2>商品数量排行<span class="panel-source">（按销售数量）</span></h2>
+        <ExportExcelButton title="商品数量排行" :rows="rank.quantity_rows" :columns="rankExportColumns" :total="rank.quantity_rows.length" :filters="{ 统计区间: dateRangeLabel }" />
       </header>
       <v-chart class="rank-chart" :option="quantityChartOption" autoresize />
       <el-table :data="rank.quantity_rows" height="520">

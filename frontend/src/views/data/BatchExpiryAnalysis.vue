@@ -10,6 +10,7 @@ import MetricCard from '../../components/dashboard/MetricCard.vue'
 import WarehouseFilter from '../../components/inventory/WarehouseFilter.vue'
 import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
 import ProductInventoryDrawer from '../../components/inventory/ProductInventoryDrawer.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getBatchExpiryAnalysis, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
@@ -52,6 +53,7 @@ const analysis = ref({
 })
 const productDrawer = ref(null)
 const total = ref(0)
+const exportFilters = computed(() => ({ keyword: query.keyword.trim() || undefined, barcode: query.barcode.trim() || undefined, warehouse: query.warehouses, product_type: productTypeParam(query.productTypes), expiry_range: query.expiryRange }))
 const longTotal = ref(0)
 
 function formatNumber(value, digits = 0) {
@@ -371,7 +373,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchAnalysis()]))
     <section class="panel">
       <header>
         <h2>FEFO 出库优先级<span class="panel-source">（批次货品库存查询）</span></h2>
-        <el-button :icon="'Refresh'" circle @click="fetchAnalysis" />
+        <div class="header-actions"><ExportExcelButton dataset="batch-expiry-fefo" :filters="exportFilters" :total="total" /><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></div>
       </header>
       <v-chart class="rank-chart" :option="fefoChartOption" autoresize />
       <el-table :data="analysis.fefo_rows" height="560">
@@ -426,6 +428,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchAnalysis()]))
     <section class="panel">
       <header>
         <h2>剩余效期超过24个月商品排行<span class="panel-source">（按长期库存占用）</span></h2>
+        <ExportExcelButton dataset="batch-expiry-long" :filters="exportFilters" :total="longTotal" />
       </header>
       <v-chart class="rank-chart" :option="longExpiryChartOption" autoresize />
       <el-table :data="analysis.long_expiry_rows" height="420">

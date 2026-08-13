@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import ai_decisions, auth, dashboard, inventory, model_settings, rag, sales, text_to_sql, users
+from app.api.routers import ai_decisions, auth, dashboard, exports, inventory, model_settings, rag, sales, text_to_sql, users
 from app.core.config import settings
 from app.core.performance import performance_middleware
 from app.db.init_db import init_db
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
             "X-BI-Query-Mode",
             "X-BI-Response-Source",
             "X-BI-Dual-Status",
+            "Content-Disposition",
         ],
     )
     app.middleware("http")(performance_middleware)
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router, prefix=settings.API_PREFIX)
     app.include_router(inventory.router, prefix=settings.API_PREFIX)
     app.include_router(sales.router, prefix=settings.API_PREFIX)
+    app.include_router(exports.router, prefix=settings.API_PREFIX)
     app.include_router(text_to_sql.router, prefix=settings.API_PREFIX)
     app.include_router(users.router, prefix=settings.API_PREFIX)
     app.include_router(model_settings.router, prefix=settings.API_PREFIX)

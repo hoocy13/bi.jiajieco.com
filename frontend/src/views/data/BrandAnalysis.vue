@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesBrandAnalysis } from '../../api/sales'
 
 const route = useRoute()
@@ -71,6 +72,7 @@ const dateRangeLabel = computed(() => {
 })
 
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
+const brandExportColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'brand', label: '品牌' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '占比', kind: 'percent' }]
 
 const metrics = computed(() => [
   { label: '明细分摊销售额', value: formatNumber(analysis.value.summary.paid_amount), unit: '元', trend: analysis.value.period },
@@ -188,6 +190,7 @@ onMounted(fetchAnalysis)
     <section class="panel">
       <header>
         <h2>品牌销售分析<span class="panel-source">（商品明细分摊金额口径）</span></h2>
+        <ExportExcelButton title="品牌销售分析" :rows="analysis.rows" :columns="brandExportColumns" :total="analysis.rows.length" :filters="{ 统计区间: dateRangeLabel }" />
         <el-button :icon="'Refresh'" circle @click="fetchAnalysis" />
       </header>
       <el-table :data="analysis.rows" height="560">

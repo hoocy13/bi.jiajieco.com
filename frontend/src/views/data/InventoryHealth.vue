@@ -5,6 +5,7 @@ import MetricCard from '../../components/dashboard/MetricCard.vue'
 import ProductInventoryDrawer from '../../components/inventory/ProductInventoryDrawer.vue'
 import WarehouseFilter from '../../components/inventory/WarehouseFilter.vue'
 import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getInventoryHealth, getInventoryWarehouses } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
@@ -37,6 +38,7 @@ const query = reactive({
   page: Number(route.query.page || 1),
   pageSize: Number(route.query.page_size || 50),
 })
+const exportFilters = computed(() => ({ keyword: query.keyword.trim() || undefined, barcode: query.barcode.trim() || undefined, warehouse: query.warehouses, product_type: productTypeParam(query.productTypes), issue_type: query.issueType }))
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -198,7 +200,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
     <section class="panel">
       <header>
         <h2>库存异常明细<span class="panel-source">（最新库存发布版本）</span></h2>
-        <el-button :icon="'Refresh'" circle @click="fetchRows" />
+        <div class="header-actions"><ExportExcelButton dataset="inventory-health" :filters="exportFilters" :total="total" /><el-button :icon="'Refresh'" circle @click="fetchRows" /></div>
       </header>
       <el-table :data="rows" height="560">
         <el-table-column label="序号" width="74" align="center">

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesDetail } from '../../api/sales'
 
 const loading = ref(false)
@@ -69,6 +70,11 @@ function buildParams() {
   if (query.status.trim()) params.status = query.status.trim()
   return params
 }
+
+const exportFilters = computed(() => {
+  const { page, page_size, ...filters } = buildParams()
+  return filters
+})
 
 function handleRangeChange() {
   dateRange.value = []
@@ -139,7 +145,10 @@ onMounted(() => fetchDetail())
     <section class="panel">
       <header>
         <h2>销售订单明细<span class="panel-source">（订单头实付金额口径）</span></h2>
-        <el-button :icon="'Refresh'" circle @click="fetchDetail()" />
+        <div class="header-actions">
+          <ExportExcelButton dataset="sales-detail" :filters="exportFilters" :total="detail.total" />
+          <el-button :icon="'Refresh'" circle @click="fetchDetail()" />
+        </div>
       </header>
       <el-table :data="detail.rows" height="520">
         <el-table-column prop="date" label="日期" width="120" />

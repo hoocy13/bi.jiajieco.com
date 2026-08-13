@@ -7,6 +7,7 @@ import { BarChart } from 'echarts/charts'
 import { GridComponent, TooltipComponent } from 'echarts/components'
 import { useRoute, useRouter } from 'vue-router'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import WarehouseFilter from '../../components/inventory/WarehouseFilter.vue'
 import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
 import { getInventoryOverview, getInventoryWarehouses } from '../../api/inventory'
@@ -69,6 +70,7 @@ const metrics = computed(() => [
   },
   { label: '临期批次', value: formatNumber(overview.value.metrics.expiring_batch_count), unit: '批', trend: `更新 ${formatDate(overview.value.updated_at)}` },
 ])
+const warehouseExportColumns = [{ key: 'warehouse', label: '仓库' }, { key: 'records', label: '记录数', kind: 'integer' }, { key: 'stock_quantity', label: '库存数量', kind: 'integer' }, { key: 'available_stock', label: '可用库存', kind: 'integer' }, { key: 'stock_amount', label: '库存金额', kind: 'number' }]
 
 const warehouseBarOption = computed(() => ({
   color: [chartTheme.primary],
@@ -229,6 +231,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchOverview()]))
     <section class="panel">
       <header>
         <h2>仓库可用库存排行<span class="panel-source">（最新库存发布版本）</span></h2>
+        <ExportExcelButton title="库存概览_仓库排行" :rows="overview.warehouses" :columns="warehouseExportColumns" :total="overview.warehouses.length" :filters="{ 数据更新时间: overview.updated_at }" />
         <el-button :icon="'Refresh'" circle @click="fetchOverview" />
       </header>
       <v-chart class="chart chart-compact" :option="warehouseBarOption" autoresize />

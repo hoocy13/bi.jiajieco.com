@@ -92,8 +92,18 @@ def _set_cache(key: tuple, data: dict) -> None:
 
 
 def _cached_ok(key: tuple, data: dict) -> dict:
+    if len(key) > 1 and ("page_size", 50_001) in key[1]:
+        return ok(data)
     _set_cache(key, data)
     return ok(data)
+
+
+def _normal_request_context() -> bool:
+    return False
+
+
+def _query_result(key: tuple, data: dict, export_mode: bool) -> dict:
+    return ok(data) if export_mode else _cached_ok(key, data)
 
 
 def _number(value: object) -> float:
@@ -123,7 +133,7 @@ def _limit(value: int) -> int:
 
 def _pagination(page: int, page_size: int) -> tuple[int, int, int]:
     normalized_page = max(1, page)
-    normalized_size = max(10, min(page_size, 100))
+    normalized_size = 50_001 if page_size == 50_001 else max(10, min(page_size, 100))
     return normalized_page, normalized_size, (normalized_page - 1) * normalized_size
 
 
@@ -1914,12 +1924,18 @@ def slow_moving_inventory(
     page_size: int = Query(50, ge=10, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
+    _export: bool = Depends(_normal_request_context),
 ) -> dict:
+    export_mode = _export is True
     keyword = keyword.strip() if keyword else ""
     barcode = barcode.strip() if barcode else ""
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type)
-    page, page_size, _ = _pagination(page, page_size)
+    if export_mode:
+        page = max(1, page)
+        page_size = min(max(10, page_size), 50_001)
+    else:
+        page, page_size, _ = _pagination(page, page_size)
     if period_days not in ALLOWED_PERIOD_DAYS:
         raise HTTPException(status_code=400, detail="观察周期仅支持30、60、90或180天")
 
@@ -1956,7 +1972,7 @@ def slow_moving_inventory(
             sales_source = "ods"
 
     cache_key = _cache_key(
-        "slow-moving-period-v4",
+        "slow-moving-period-v5",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
@@ -1972,7 +1988,7 @@ def slow_moving_inventory(
         sales_source=sales_source,
         sales_data_version=sales_data_version or "",
     )
-    cached = _get_cache(cache_key)
+    cached = None if export_mode else _get_cache(cache_key)
     if cached is not None:
         response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
         response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
@@ -2032,7 +2048,7 @@ def slow_moving_inventory(
     )
     response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
     response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
-    return _cached_ok(cache_key, data)
+    return _query_result(cache_key, data, export_mode)
 
 
 @router.get("/brand-monthly-arrivals")

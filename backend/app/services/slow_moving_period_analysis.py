@@ -45,11 +45,16 @@ def _dimension(value: object, fallback: str = "未归类") -> str:
     return normalized or fallback
 
 
-def _product_key(row: dict) -> tuple[str, str, str]:
+def _product_key(row: dict) -> tuple[str, ...]:
     product_code = str(row.get("product_code") or "").strip()
     product_name = _dimension(row.get("product_name"), "未命名商品")
-    identity = f"code:{product_code}" if product_code else f"name:{product_name}"
-    return identity, _dimension(row.get("brand")), _dimension(row.get("product_type"))
+    if product_code:
+        return (f"code:{product_code}",)
+    return (
+        f"name:{product_name}",
+        _dimension(row.get("brand")),
+        _dimension(row.get("product_type")),
+    )
 
 
 def _placeholders(prefix: str, values: tuple[str, ...], params: dict) -> str:
@@ -199,11 +204,9 @@ def load_slow_moving_period_source(
             f"COALESCE(NULLIF(TRIM({('s.`warehouse`' if ads_db is not None and sales_data_version else 's.`发货仓库`')}), ''), '未归类') "
             f"IN ({_placeholders('sales_warehouse', warehouses, sales_params)})"
         )
-    if product_types:
-        sales_filters.append(
-            f"COALESCE(NULLIF(TRIM({('s.`product_type`' if ads_db is not None and sales_data_version else 's.`货品分类`')}), ''), '未归类') "
-            f"IN ({_placeholders('sales_type', product_types, sales_params)})"
-        )
+    # Product classification is taken from the selected inventory snapshot.
+    # Sales-side classification can lag or differ for the same stable product code;
+    # filtering it here would turn valid sales into zero and inflate retention to 100%.
     sales_filter_sql = "" if not sales_filters else " AND " + " AND ".join(sales_filters)
 
     if ads_db is not None and sales_data_version:
@@ -321,8 +324,8 @@ def build_slow_moving_period_analysis(
         if isinstance(updated_at, datetime) and (latest_update is None or updated_at > latest_update):
             latest_update = updated_at
 
-    sales_by_key: dict[tuple[str, str, str], list[tuple[date, Decimal]]] = defaultdict(list)
-    window_sales: dict[date, dict[tuple[str, str, str], Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    sales_by_key: dict[tuple[str, ...], list[tuple[date, Decimal]]] = defaultdict(list)
+    window_sales: dict[date, dict[tuple[str, ...], Decimal]] = defaultdict(lambda: defaultdict(Decimal))
     for raw in source.get("sales", []):
         row = dict(raw)
         key = _product_key(row)

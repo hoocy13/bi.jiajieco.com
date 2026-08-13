@@ -9,6 +9,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import WarehouseFilter from '../../components/inventory/WarehouseFilter.vue'
 import ProductTypeFilter from '../../components/inventory/ProductTypeFilter.vue'
 import ProductInventoryDrawer from '../../components/inventory/ProductInventoryDrawer.vue'
+import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getInventoryWarehouses, getSlowMovingInventory } from '../../api/inventory'
 import { DEFAULT_INVENTORY_PRODUCT_TYPES, DEFAULT_INVENTORY_WAREHOUSES } from '../../constants/inventory'
 import { inventoryQuery, productTypeParam, queryArray } from '../../utils/inventoryFilters'
@@ -62,6 +63,19 @@ const query = reactive({
   page: Number(route.query.page || 1),
   pageSize: Number(route.query.page_size || 50),
 })
+
+const exportFilters = computed(() => ({
+  keyword: query.keyword.trim() || undefined,
+  barcode: query.barcode.trim() || undefined,
+  warehouse: query.warehouses,
+  product_type: productTypeParam(query.productTypes),
+  snapshot_date: query.snapshotDate || undefined,
+  period_days: query.periodDays,
+  risk_scope: query.riskScope,
+  retention_scope: query.retentionScope,
+  sort_by: query.sortBy,
+  sort_order: query.sortOrder,
+}))
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', {
@@ -413,7 +427,10 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
             <h2>滞销分析明细<span class="panel-source">（历史库存快照 + 周期净销量）</span></h2>
             <p>库存留存率 = 截止库存 /（截止库存 + 周期净销量），期间补货会影响该参考值。</p>
           </div>
-          <el-button :icon="'Refresh'" circle @click="fetchRows" />
+          <div class="header-actions">
+            <ExportExcelButton dataset="slow-moving" :filters="exportFilters" :total="total" />
+            <el-button :icon="'Refresh'" circle @click="fetchRows" />
+          </div>
         </header>
         <el-table
           :data="rows"

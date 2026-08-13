@@ -108,6 +108,14 @@ def _cached_ok(key: tuple, data: dict) -> dict:
     return ok(data)
 
 
+def _normal_request_context() -> bool:
+    return False
+
+
+def _query_result(key: tuple, data: dict, export_mode: bool) -> dict:
+    return ok(data) if export_mode else _cached_ok(key, data)
+
+
 def _number(value: object) -> float:
     if isinstance(value, Decimal):
         return float(value)
@@ -644,7 +652,9 @@ def sales_detail(
     status: str | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session | None = Depends(_get_sales_overview_ods_db),
+    _export: bool = Depends(_normal_request_context),
 ) -> dict:
+    export_mode = _export is True
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
@@ -659,7 +669,7 @@ def sales_detail(
         status=status,
         query_mode=query_mode,
     )
-    cached = _get_sales_cache(cache_key)
+    cached = None if export_mode else _get_sales_cache(cache_key)
     if cached is not None:
         response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
         return ok(cached)
@@ -683,14 +693,15 @@ def sales_detail(
         except AdsDataUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         response.headers["X-BI-Response-Source"] = "ads"
-        return _cached_ok(cache_key, data)
+        return _query_result(cache_key, data, export_mode)
 
     if db is None:
         raise HTTPException(status_code=503, detail="ODS database is not configured")
     response.headers["X-BI-Response-Source"] = "ods"
     params, meta = _resolve_sales_period(db, range, start_date, end_date)
     if params is None:
-        return _cached_ok(cache_key, {**meta, "summary": {"paid_amount": 0, "orders": 0, "quantity": 0}, "rows": [], "total": 0})
+        data = {**meta, "summary": {"paid_amount": 0, "orders": 0, "quantity": 0}, "rows": [], "total": 0}
+        return _query_result(cache_key, data, export_mode)
 
     filters = [
         "`下单时间` >= :start_date",
@@ -777,7 +788,7 @@ def sales_detail(
         "page": page,
         "page_size": page_size,
     }
-    return _cached_ok(cache_key, data)
+    return _query_result(cache_key, data, export_mode)
 
 
 @router.get("/product-rank")
@@ -1601,8 +1612,10 @@ def sales_customer_analysis(
     page_size: int = Query(20, ge=10, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
+    _export: bool = Depends(_normal_request_context),
 ) -> dict:
     """Customer quality, frequency and top-product analysis from sales detail data."""
+    export_mode = _export is True
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
@@ -1621,20 +1634,20 @@ def sales_customer_analysis(
         page=page,
         page_size=page_size,
     )
-    cached = _get_sales_cache(cache_key)
+    cached = None if export_mode else _get_sales_cache(cache_key)
     if cached is not None:
         return ok(cached)
 
     params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
-        return _cached_ok(cache_key, {
+        return _query_result(cache_key, {
             **meta,
             "direction": direction,
             "summary": {"customers": 0, "repeat_customers": 0, "repeat_rate": 0, "orders": 0, "quantity": 0, "paid_amount": 0, "identified_amount": 0, "identified_amount_rate": 0, "avg_order_amount": 0},
             "quality": {"identified_orders": 0, "unidentified_orders": 0, "identified_order_rate": 0, "grade": "C"},
             "frequency": [], "top_products": [], "options": {"brands": [], "channels": [], "channel_types": [], "owners": []},
             "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
-        })
+        }, export_mode)
 
     selected_scope = (
         (brand or "").strip() if direction == "brand"
@@ -1664,7 +1677,7 @@ def sales_customer_analysis(
             FROM `渠道列表`
             ORDER BY 1
         """)).scalars().all()
-        return _cached_ok(cache_key, {
+        return _query_result(cache_key, {
             **meta,
             "direction": direction,
             "scope_required": True,
@@ -1678,7 +1691,7 @@ def sales_customer_analysis(
                 "owners": [str(item) for item in owners if item],
             },
             "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
-        })
+        }, export_mode)
 
     dimension_option_rows = db.execute(text("""
         SELECT DISTINCT
@@ -1724,7 +1737,7 @@ def sales_customer_analysis(
                 "owners": sorted({str(row["owner"]) for row in dimension_option_rows}),
             }
             response.headers["X-BI-Response-Source"] = "ads"
-            return _cached_ok(cache_key, ads_data)
+            return _query_result(cache_key, ads_data, export_mode)
         except Exception as exc:
             logger.warning("customer_analysis_ads_fallback error=%s", type(exc).__name__)
 
@@ -1924,7 +1937,7 @@ def sales_customer_analysis(
             "avg_order_amount": _number(row["paid_amount"]) / _int(row["orders"]) if _int(row["orders"]) else 0,
         } for row in rows],
     }
-    return _cached_ok(cache_key, data)
+    return _query_result(cache_key, data, export_mode)
 
 
 @router.get("/customer-churn-alerts")
@@ -1942,8 +1955,10 @@ def sales_customer_churn_alerts(
     page_size: int = Query(20, ge=10, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
+    _export: bool = Depends(_normal_request_context),
 ) -> dict:
     """Customers who ordered frequently before the selected inactivity window."""
+    export_mode = _export is True
     if inactive_months not in {3, 6, 12}:
         raise HTTPException(status_code=422, detail="未下单周期仅支持 3、6 或 12 个月")
 
@@ -1963,19 +1978,19 @@ def sales_customer_churn_alerts(
         page=page,
         page_size=page_size,
     )
-    cached = _get_sales_cache(cache_key)
+    cached = None if export_mode else _get_sales_cache(cache_key)
     if cached is not None:
         return ok(cached)
 
     max_date = db.execute(text("SELECT MAX(`下单时间`) FROM `dwd`.`销售单明细账_品牌补全`")).scalar()
     as_of = _as_date(max_date)
     if as_of is None:
-        return _cached_ok(cache_key, {
+        return _query_result(cache_key, {
             "as_of": None, "scope_required": False,
             "summary": {"alert_customers": 0, "critical_customers": 0, "high_value_customers": 0, "historical_amount": 0},
             "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
             "options": {"brands": [], "channels": [], "channel_types": [], "owners": []},
-        })
+        }, export_mode)
 
     def subtract_months(value: date, months: int) -> date:
         target_month = value.month - months
@@ -2012,14 +2027,14 @@ def sales_customer_churn_alerts(
               AND `下单时间` < DATE_ADD(:as_of, INTERVAL 1 DAY)
             ORDER BY brand
         """), {"history_start": history_start, "as_of": as_of}).scalars().all()
-        return _cached_ok(cache_key, {
+        return _query_result(cache_key, {
             "as_of": as_of.isoformat(), "cutoff_date": cutoff_date.isoformat(),
             "history_start": history_start.isoformat(), "history_end": (cutoff_date - timedelta(days=1)).isoformat(),
             "scope_required": True,
             "summary": {"alert_customers": 0, "critical_customers": 0, "high_value_customers": 0, "historical_amount": 0},
             "pagination": {"page": page, "page_size": page_size, "total": 0}, "rows": [],
             "options": {"brands": [str(item) for item in brands if item], "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
-        })
+        }, export_mode)
 
     selected_channels: list[str] | None = None
     if direction == "channel" and channel and channel.strip():
@@ -2118,7 +2133,7 @@ def sales_customer_churn_alerts(
         "scope_required": False,
         "options": {"brands": ads_brands if used_ads else ([brand] if brand else []), "channels": option_channels, "channel_types": option_channel_types, "owners": option_owners},
     })
-    return _cached_ok(cache_key, result)
+    return _query_result(cache_key, result, export_mode)
 
 
 def _customer_churn_result(
