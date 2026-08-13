@@ -96,22 +96,6 @@ jobs:
             echo "Missing production backend/.env"
             exit 1
           fi
-          ods_line=$(grep '^ODS_DATABASE_URL=' "$ENV_FILE" | tail -n 1 || true)
-          if [ -z "$ods_line" ]; then
-            echo "Missing ODS_DATABASE_URL in production backend/.env"
-            exit 1
-          fi
-          ods_value=${ods_line#*=}
-          ads_value=$(printf '%s' "$ods_value" | sed 's#/ods?#/ads?#')
-          if [ "$ads_value" = "$ods_value" ]; then
-            echo "Could not derive ADS_DATABASE_URL from ODS_DATABASE_URL"
-            exit 1
-          fi
-          sed -i '/^ADS_DATABASE_URL=/d; /^BI_QUERY_SOURCE=/d' "$ENV_FILE"
-          {
-            printf '\nADS_DATABASE_URL=%s\n' "$ads_value"
-            printf 'BI_QUERY_SOURCE=ads\n'
-          } >> "$ENV_FILE"
           chmod 600 "$ENV_FILE"
 
           if [ -d "$APP_DIR" ]; then
@@ -140,89 +124,6 @@ jobs:
 
             sleep 2
           done
-
-          docker compose exec -T backend python - <<'PY'
-          import json
-          import urllib.parse
-          import urllib.request
-
-          from app.core.security import create_access_token
-          from app.db.session import SessionLocal
-          from app.models.user import User
-
-          with SessionLocal() as db:
-              user = db.query(User).filter(User.is_active.is_(True)).first()
-          if user is None:
-              raise SystemExit("No active user available for authenticated health check")
-
-          token = create_access_token(subject=user.username)
-
-          def check_endpoint(
-              path: str,
-              label: str,
-              expected_mode: str = "ads",
-              expected_source: str = "ads",
-          ) -> dict:
-              request = urllib.request.Request(
-                  f"http://127.0.0.1:8000{path}",
-                  headers={"Authorization": f"Bearer {token}"},
-              )
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  query_mode = response.headers.get("X-BI-Query-Mode")
-                  response_source = response.headers.get("X-BI-Response-Source")
-                  server_timing = response.headers.get("Server-Timing")
-                  payload = json.load(response)
-
-              if query_mode != expected_mode or response_source != expected_source:
-                  raise SystemExit(
-                      f"{label} health check failed: "
-                      f"mode={query_mode} source={response_source}"
-                  )
-              print(
-                  f"{label} health check passed: "
-                  f"mode={query_mode} source={response_source} "
-                  f"server_timing={server_timing or 'unknown'}"
-              )
-              return payload
-
-          check_endpoint("/api/v1/sales/overview?range=last_30", "sales_overview")
-          check_endpoint("/api/v1/sales/product-rank?range=last_30&limit=30", "sales_product_rank")
-          brand_payload = check_endpoint("/api/v1/sales/brand-analysis?range=this_year&limit=30", "sales_brand_analysis")
-          channel_payload = check_endpoint("/api/v1/sales/channel-analysis?range=this_year", "sales_channel_analysis")
-          check_endpoint("/api/v1/sales/detail?range=last_30&page=1&page_size=20", "sales_detail")
-          brand = brand_payload["data"]["rows"][0]["brand"]
-          channel = channel_payload["data"]["rows"][0]["channel_name"]
-          check_endpoint(
-              "/api/v1/sales/brand-channel-analysis?"
-              + urllib.parse.urlencode({"brand": brand, "range": "last_30"}),
-              "sales_brand_channel_analysis",
-          )
-          check_endpoint(
-              "/api/v1/sales/channel-customer-analysis?"
-              + urllib.parse.urlencode({"channel_name": channel, "range": "this_year"}),
-              "sales_channel_customer_analysis",
-          )
-          check_endpoint("/api/v1/dashboard/overview", "dashboard_overview")
-          check_endpoint("/api/v1/inventory/warehouses", "inventory_warehouses")
-          check_endpoint("/api/v1/inventory/overview", "inventory_overview")
-          check_endpoint("/api/v1/inventory/health", "inventory_health")
-          check_endpoint("/api/v1/inventory/batch-expiry", "inventory_batch_expiry")
-          check_endpoint("/api/v1/inventory/turnover", "inventory_product_turnover")
-          check_endpoint(
-              "/api/v1/inventory/brand-turnover",
-              "inventory_brand_turnover",
-              expected_source="ods",
-          )
-          check_endpoint(
-              "/api/v1/inventory/slow-moving",
-              "inventory_slow_moving",
-              expected_mode="historical-snapshot-period-sales",
-              expected_source="ods-snapshot+ads-sales",
-          )
-          check_endpoint("/api/v1/inventory/brand-monthly-arrivals", "inventory_brand_monthly_arrivals")
-          PY
-
-          rm -f /etc/cron.d/bi-sales-ads
 
           trap - ERR
           echo "Deploy finished."
