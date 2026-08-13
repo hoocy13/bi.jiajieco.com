@@ -30,6 +30,7 @@ jobs:
           hostname
           date
           uptime
+          echo "cpu_count=$(nproc)"
           echo '[memory]'
           free -h
           echo '[disk]'
@@ -67,6 +68,9 @@ jobs:
           rm -f /tmp/codex-container-map.txt
           echo '[mysql-activity]'
           mysql -NBe "SELECT COMMAND, STATE, COUNT(*) FROM information_schema.PROCESSLIST GROUP BY COMMAND, STATE ORDER BY COUNT(*) DESC" 2>/dev/null | head -n 30 || true
+          mysql -NBe "SELECT ID, USER, DB, COMMAND, TIME, COALESCE(STATE,'') FROM information_schema.PROCESSLIST WHERE COMMAND <> 'Sleep' ORDER BY TIME DESC" 2>/dev/null | head -n 30 || true
+          echo '[ads-processes]'
+          ps -eo pid,ppid,stat,%cpu,%mem,etime,comm,args | grep -E 'build_sales_ads|refresh_sales_ads|bi-refresh-ads' | grep -v grep || true
           echo '[failed-services]'
           systemctl --failed --no-pager 2>/dev/null || true
           REMOTE
