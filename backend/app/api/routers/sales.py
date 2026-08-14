@@ -1619,7 +1619,7 @@ def sales_customer_analysis(
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
-        "customer-analysis-v5",
+        "customer-analysis-v6",
         direction=direction,
         range=range,
         start_date=start_date,
@@ -1652,7 +1652,11 @@ def sales_customer_analysis(
     selected_scope = (
         (brand or "").strip() if direction == "brand"
         else (owner or "").strip() if direction == "owner"
-        else ((channel or "").strip() or (channel_type or "").strip())
+        else (
+            (channel or "").strip()
+            or (channel_type or "").strip()
+            or (owner or "").strip()
+        )
     )
     if not selected_scope:
         brands = db.execute(text(f"""
@@ -1701,17 +1705,43 @@ def sales_customer_analysis(
         FROM `渠道列表`
         ORDER BY channel_name
     """)).mappings().all()
+    channel_type_option_rows = [
+        row for row in dimension_option_rows
+        if direction != "channel"
+        or not channel_type
+        or str(row["channel_type"]) == channel_type.strip()
+    ]
+    channel_option_rows = [
+        row for row in channel_type_option_rows
+        if direction != "channel"
+        or not owner
+        or str(row["owner"]) == owner.strip()
+    ]
 
     if query_mode in {"ads", "dual"} and AdsSessionLocal is not None:
         try:
             selected_channels: list[str] | None = None
             if direction == "channel" and channel and channel.strip():
                 selected_channels = [channel.strip()]
-            elif direction == "channel" and channel_type and channel_type.strip():
-                selected_channels = [str(item) for item in db.execute(text("""
+            elif direction == "channel" and (
+                (channel_type and channel_type.strip()) or (owner and owner.strip())
+            ):
+                channel_filters = []
+                channel_params: dict[str, str] = {}
+                if channel_type and channel_type.strip():
+                    channel_filters.append(
+                        "COALESCE(NULLIF(TRIM(`分类`), ''), '未分类') = :channel_type"
+                    )
+                    channel_params["channel_type"] = channel_type.strip()
+                if owner and owner.strip():
+                    channel_filters.append(
+                        "COALESCE(NULLIF(TRIM(`负责人`), ''), '未分配') = :channel_owner"
+                    )
+                    channel_params["channel_owner"] = owner.strip()
+                selected_channels = [str(item) for item in db.execute(text(f"""
                     SELECT DISTINCT `渠道名称` FROM `渠道列表`
-                    WHERE COALESCE(NULLIF(TRIM(`分类`), ''), '未分类') = :channel_type
-                """), {"channel_type": channel_type.strip()}).scalars().all() if item]
+                    WHERE {' AND '.join(channel_filters)}
+                """), channel_params).scalars().all() if item]
             elif direction == "owner" and owner and owner.strip():
                 selected_channels = [str(item) for item in db.execute(text("""
                     SELECT DISTINCT `渠道名称` FROM `渠道列表`
@@ -1732,9 +1762,9 @@ def sales_customer_analysis(
             ads_data["direction"] = direction
             ads_data["options"] = {
                 "brands": ads_brands,
-                "channels": [str(row["channel_name"]) for row in dimension_option_rows],
+                "channels": [str(row["channel_name"]) for row in channel_option_rows],
                 "channel_types": sorted({str(row["channel_type"]) for row in dimension_option_rows}),
-                "owners": sorted({str(row["owner"]) for row in dimension_option_rows}),
+                "owners": sorted({str(row["owner"]) for row in channel_type_option_rows}),
             }
             response.headers["X-BI-Response-Source"] = "ads"
             return _query_result(cache_key, ads_data, export_mode)
@@ -1754,6 +1784,9 @@ def sales_customer_analysis(
     if direction == "channel" and channel_type and channel_type.strip():
         params["channel_type"] = channel_type.strip()
         filters.append("c.channel_type = :channel_type")
+    if direction == "channel" and owner and owner.strip():
+        params["channel_owner"] = owner.strip()
+        filters.append("c.owner = :channel_owner")
     if direction == "owner" and owner and owner.strip():
         params["owner"] = owner.strip()
         filters.append("c.owner = :owner")
@@ -1922,9 +1955,9 @@ def sales_customer_analysis(
         "top_products": [{"product_code": row["product_code"], "product_name": row["product_name"], "orders": _int(row["orders"]), "customers": _int(row["customers"]), "quantity": _int(row["quantity"]), "paid_amount": _number(row["paid_amount"])} for row in top_products],
         "options": {
             "brands": ods_brand_options,
-            "channels": [str(row["channel_name"]) for row in dimension_option_rows],
+            "channels": [str(row["channel_name"]) for row in channel_option_rows],
             "channel_types": sorted({str(row["channel_type"]) for row in dimension_option_rows}),
-            "owners": sorted({str(row["owner"]) for row in dimension_option_rows}),
+            "owners": sorted({str(row["owner"]) for row in channel_type_option_rows}),
         },
         "pagination": {"page": page, "page_size": page_size, "total": filtered_total},
         "rows": [{

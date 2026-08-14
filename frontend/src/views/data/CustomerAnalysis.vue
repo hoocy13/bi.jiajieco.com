@@ -31,7 +31,7 @@ const query = reactive({
   dates: route.query.start_date && route.query.end_date ? [route.query.start_date, route.query.end_date] : recent30Dates(),
   brand: String(route.query.brand || (initialDirection === 'brand' ? '资生堂' : '')),
   channel: String(route.query.channel || ''),
-  channelType: String(route.query.channel_type || ''),
+  channelType: String(route.query.channel_type || (initialDirection === 'channel' ? '销售部渠道' : '')),
   owner: String(route.query.owner || ''),
   keyword: String(route.query.keyword || ''),
   frequency: ['first', 'stable', 'high'].includes(route.query.frequency) ? route.query.frequency : 'all',
@@ -50,7 +50,7 @@ const data = ref({
 })
 
 const title = computed(() => query.direction === 'brand' ? '品牌客户分析' : query.direction === 'channel' ? '渠道客户分析' : '渠道负责人客户分析')
-const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : query.direction === 'channel' ? (query.channel || query.channelType || '全部渠道') : (query.owner || '全部负责人'))
+const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : query.direction === 'channel' ? (query.channel || query.owner || query.channelType || '全部渠道') : (query.owner || '全部负责人'))
 const description = computed(() => query.direction === 'owner' ? '按渠道档案负责人查看客户频次、销售金额与 Top 商品' : '基于可识别客户监控销售金额、复购频次、购买周期与 Top 商品')
 const maxFrequencyCustomers = computed(() => Math.max(1, ...data.value.frequency.map((item) => item.customers)))
 const customerListTitle = computed(() => ({ all: '全部客户列表', first: '首购客户列表', stable: '稳定客户列表', high: '高频客户列表' })[query.frequency])
@@ -77,7 +77,7 @@ function params() {
     brand: query.direction === 'brand' ? query.brand || undefined : undefined,
     channel: query.direction === 'channel' ? query.channel || undefined : undefined,
     channel_type: query.direction === 'channel' ? query.channelType || undefined : undefined,
-    owner: query.direction === 'owner' ? query.owner || undefined : undefined,
+    owner: ['channel', 'owner'].includes(query.direction) ? query.owner || undefined : undefined,
     keyword: query.keyword.trim() || undefined,
     frequency: query.frequency,
     page: page.value,
@@ -96,9 +96,9 @@ async function load() {
     const result = await getSalesCustomerAnalysis(params())
     data.value = result.data
     options.brands = mergeOptions(options.brands, result.data.options?.brands, query.brand)
-    options.channels = mergeOptions(options.channels, result.data.options?.channels, query.channel)
+    options.channels = mergeOptions([], result.data.options?.channels, query.channel)
     options.channelTypes = mergeOptions(options.channelTypes, result.data.options?.channel_types, query.channelType)
-    options.owners = mergeOptions(options.owners, result.data.options?.owners, query.owner)
+    options.owners = mergeOptions([], result.data.options?.owners, query.owner)
     router.replace({ query: Object.fromEntries(Object.entries(params()).filter(([, value]) => value !== undefined && value !== '')) })
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '客户分析加载失败')
@@ -110,14 +110,26 @@ async function load() {
 function switchDirection(value) {
   query.direction = value
   if (value === 'brand' && !query.brand) query.brand = '资生堂'
+  if (value === 'channel' && !query.channelType) query.channelType = '销售部渠道'
   query.keyword = ''
   query.frequency = 'all'
   page.value = 1
   load()
 }
+function changeChannelType() {
+  query.owner = ''
+  query.channel = ''
+  page.value = 1
+  load()
+}
+function changeChannelOwner() {
+  if (query.direction === 'channel') query.channel = ''
+  page.value = 1
+  load()
+}
 function search() { page.value = 1; load() }
 function reset() {
-  query.range = 'last_30'; query.dates = recent30Dates(); query.brand = query.direction === 'brand' ? '资生堂' : ''; query.channel = ''; query.channelType = ''; query.owner = ''; query.keyword = ''; query.frequency = 'all'; page.value = 1; load()
+  query.range = 'last_30'; query.dates = recent30Dates(); query.brand = query.direction === 'brand' ? '资生堂' : ''; query.channel = ''; query.channelType = query.direction === 'channel' ? '销售部渠道' : ''; query.owner = ''; query.keyword = ''; query.frequency = 'all'; page.value = 1; load()
 }
 function changePage(value) { page.value = value; load() }
 function changePageSize(value) { pageSize.value = value; page.value = 1; load() }
@@ -155,14 +167,14 @@ onMounted(() => { if (activeView.value === 'overview') load() })
       <el-select v-if="query.direction === 'brand'" v-model="query.brand" clearable filterable placeholder="全部品牌" class="scope-select">
         <el-option v-for="item in options.brands" :key="item" :label="item" :value="item" />
       </el-select>
-      <el-select v-else-if="query.direction === 'channel'" v-model="query.channel" clearable filterable placeholder="全部渠道" class="scope-select">
-        <el-option v-for="item in options.channels" :key="item" :label="item" :value="item" />
-      </el-select>
-      <el-select v-if="query.direction === 'channel'" v-model="query.channelType" clearable filterable placeholder="渠道分类" class="channel-type-select">
+      <el-select v-if="query.direction === 'channel'" v-model="query.channelType" clearable filterable placeholder="渠道分类" class="channel-type-select" @change="changeChannelType">
         <el-option v-for="item in options.channelTypes" :key="item" :label="item" :value="item" />
       </el-select>
-      <el-select v-if="query.direction === 'owner'" v-model="query.owner" clearable filterable placeholder="选择渠道负责人" class="scope-select">
+      <el-select v-if="['channel', 'owner'].includes(query.direction)" v-model="query.owner" clearable filterable placeholder="选择渠道负责人" class="scope-select" @change="changeChannelOwner">
         <el-option v-for="item in options.owners" :key="item" :label="item" :value="item" />
+      </el-select>
+      <el-select v-if="query.direction === 'channel'" v-model="query.channel" clearable filterable placeholder="全部渠道" class="scope-select">
+        <el-option v-for="item in options.channels" :key="item" :label="item" :value="item" />
       </el-select>
       <el-date-picker v-model="query.dates" type="daterange" value-format="YYYY-MM-DD" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" class="date-filter" />
       <el-input v-model="query.keyword" clearable placeholder="客户编号 / 客户名称" class="keyword-input" @keyup.enter="search" />
