@@ -1615,6 +1615,8 @@ def sales_customer_analysis(
     _export: bool = Depends(_normal_request_context),
 ) -> dict:
     """Customer quality, frequency and top-product analysis from sales detail data."""
+    if direction == "owner":
+        direction = "channel"
     export_mode = _export is True
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
@@ -1991,6 +1993,8 @@ def sales_customer_churn_alerts(
     _export: bool = Depends(_normal_request_context),
 ) -> dict:
     """Customers who ordered frequently before the selected inactivity window."""
+    if direction == "owner":
+        direction = "channel"
     export_mode = _export is True
     if inactive_months not in {3, 6, 12}:
         raise HTTPException(status_code=422, detail="未下单周期仅支持 3、6 或 12 个月")
@@ -1998,7 +2002,7 @@ def sales_customer_churn_alerts(
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
-        "customer-churn-alerts-v1",
+        "customer-churn-alerts-v2",
         direction=direction,
         brand=brand,
         channel=channel,
@@ -2038,8 +2042,11 @@ def sales_customer_churn_alerts(
     result_cutoff_date = cutoff_date
     selected_scope = (
         (brand or "").strip() if direction == "brand"
-        else (owner or "").strip() if direction == "owner"
-        else ((channel or "").strip() or (channel_type or "").strip())
+        else (
+            (channel or "").strip()
+            or (channel_type or "").strip()
+            or (owner or "").strip()
+        )
     )
 
     dimension_rows = db.execute(text("""
@@ -2050,11 +2057,23 @@ def sales_customer_churn_alerts(
         FROM `渠道列表`
         ORDER BY channel_name
     """)).mappings().all()
-    option_channels = [str(row["channel_name"]) for row in dimension_rows]
+    channel_type_rows = [
+        row for row in dimension_rows
+        if direction != "channel"
+        or not channel_type
+        or str(row["channel_type"]) == channel_type.strip()
+    ]
+    channel_rows = [
+        row for row in channel_type_rows
+        if direction != "channel"
+        or not owner
+        or str(row["owner"]) == owner.strip()
+    ]
+    option_channels = [str(row["channel_name"]) for row in channel_rows]
     option_channel_types = sorted({str(row["channel_type"]) for row in dimension_rows})
-    option_owners = sorted({str(row["owner"]) for row in dimension_rows})
+    option_owners = sorted({str(row["owner"]) for row in channel_type_rows})
 
-    if direction in {"brand", "owner"} and not selected_scope:
+    if direction == "brand" and not selected_scope:
         brands = db.execute(text(f"""
             SELECT DISTINCT ({BRAND_EXPRESSION_SQL}) AS brand
             FROM {SALES_DETAIL_TABLE_SQL}
@@ -2074,10 +2093,10 @@ def sales_customer_churn_alerts(
     selected_channels: list[str] | None = None
     if direction == "channel" and channel and channel.strip():
         selected_channels = [channel.strip()]
-    elif direction == "channel" and channel_type and channel_type.strip():
-        selected_channels = [str(row["channel_name"]) for row in dimension_rows if str(row["channel_type"]) == channel_type.strip()]
-    elif direction == "owner" and owner and owner.strip():
-        selected_channels = [str(row["channel_name"]) for row in dimension_rows if str(row["owner"]) == owner.strip()]
+    elif direction == "channel" and (
+        (channel_type and channel_type.strip()) or (owner and owner.strip())
+    ):
+        selected_channels = [str(row["channel_name"]) for row in channel_rows]
 
     params: dict = {
         "history_start": history_start,

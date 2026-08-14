@@ -12,7 +12,7 @@ const loading = ref(false)
 const activeView = ref(route.query.view === 'churn' ? 'churn' : 'overview')
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(Number(route.query.page_size) || 20)
-const initialDirection = ['channel', 'owner'].includes(route.query.direction) ? route.query.direction : 'brand'
+const initialDirection = ['channel', 'owner'].includes(route.query.direction) ? 'channel' : 'brand'
 function formatLocalDate(value) {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')
@@ -49,9 +49,9 @@ const data = ref({
   frequency: [], top_products: [], rows: [], pagination: { total: 0 },
 })
 
-const title = computed(() => query.direction === 'brand' ? '品牌客户分析' : query.direction === 'channel' ? '渠道客户分析' : '渠道负责人客户分析')
-const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : query.direction === 'channel' ? (query.channel || query.owner || query.channelType || '全部渠道') : (query.owner || '全部负责人'))
-const description = computed(() => query.direction === 'owner' ? '按渠道档案负责人查看客户频次、销售金额与 Top 商品' : '基于可识别客户监控销售金额、复购频次、购买周期与 Top 商品')
+const title = computed(() => query.direction === 'brand' ? '品牌客户分析' : '渠道客户分析')
+const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : (query.channel || query.owner || query.channelType || '全部渠道'))
+const description = computed(() => '基于可识别客户监控销售金额、复购频次、购买周期与 Top 商品')
 const maxFrequencyCustomers = computed(() => Math.max(1, ...data.value.frequency.map((item) => item.customers)))
 const customerListTitle = computed(() => ({ all: '全部客户列表', first: '首购客户列表', stable: '稳定客户列表', high: '高频客户列表' })[query.frequency])
 
@@ -77,7 +77,7 @@ function params() {
     brand: query.direction === 'brand' ? query.brand || undefined : undefined,
     channel: query.direction === 'channel' ? query.channel || undefined : undefined,
     channel_type: query.direction === 'channel' ? query.channelType || undefined : undefined,
-    owner: ['channel', 'owner'].includes(query.direction) ? query.owner || undefined : undefined,
+    owner: query.direction === 'channel' ? query.owner || undefined : undefined,
     keyword: query.keyword.trim() || undefined,
     frequency: query.frequency,
     page: page.value,
@@ -163,14 +163,14 @@ onMounted(() => { if (activeView.value === 'overview') load() })
     </section>
 
     <section class="customer-toolbar">
-      <el-segmented :model-value="query.direction" :options="[{ label: '品牌客户分析', value: 'brand' }, { label: '渠道客户分析', value: 'channel' }, { label: '渠道负责人客户分析', value: 'owner' }]" @change="switchDirection" />
+      <el-segmented :model-value="query.direction" :options="[{ label: '品牌客户分析', value: 'brand' }, { label: '渠道客户分析', value: 'channel' }]" @change="switchDirection" />
       <el-select v-if="query.direction === 'brand'" v-model="query.brand" clearable filterable placeholder="全部品牌" class="scope-select">
         <el-option v-for="item in options.brands" :key="item" :label="item" :value="item" />
       </el-select>
       <el-select v-if="query.direction === 'channel'" v-model="query.channelType" clearable filterable placeholder="渠道分类" class="channel-type-select" @change="changeChannelType">
         <el-option v-for="item in options.channelTypes" :key="item" :label="item" :value="item" />
       </el-select>
-      <el-select v-if="['channel', 'owner'].includes(query.direction)" v-model="query.owner" clearable filterable placeholder="选择渠道负责人" class="scope-select" @change="changeChannelOwner">
+      <el-select v-if="query.direction === 'channel'" v-model="query.owner" clearable filterable placeholder="选择渠道负责人" class="scope-select" @change="changeChannelOwner">
         <el-option v-for="item in options.owners" :key="item" :label="item" :value="item" />
       </el-select>
       <el-select v-if="query.direction === 'channel'" v-model="query.channel" clearable filterable placeholder="全部渠道" class="scope-select">
@@ -183,7 +183,7 @@ onMounted(() => { if (activeView.value === 'overview') load() })
     </section>
 
     <section v-if="data.scope_required && !loading" class="scope-empty">
-      <strong>请选择{{ query.direction === 'brand' ? '品牌' : query.direction === 'owner' ? '渠道负责人' : '渠道或渠道分类' }}后开始分析</strong>
+      <strong>请选择{{ query.direction === 'brand' ? '品牌' : '渠道分类、负责人或渠道' }}后开始分析</strong>
       <span>为避免在客户明细上进行无范围的全量扫描，第一版需要指定分析范围。</span>
     </section>
 

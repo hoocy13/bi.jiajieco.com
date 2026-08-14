@@ -10,12 +10,12 @@ const router = useRouter()
 const loading = ref(false)
 const page = ref(Number(route.query.alert_page) || 1)
 const pageSize = ref(Number(route.query.alert_page_size) || 20)
-const initialDirection = ['channel', 'owner'].includes(route.query.alert_direction) ? route.query.alert_direction : 'brand'
+const initialDirection = ['channel', 'owner'].includes(route.query.alert_direction) ? 'channel' : 'brand'
 const query = reactive({
   direction: initialDirection,
   brand: String(route.query.alert_brand || (initialDirection === 'brand' ? '资生堂' : '')),
   channel: String(route.query.alert_channel || ''),
-  channelType: String(route.query.alert_channel_type || ''),
+  channelType: String(route.query.alert_channel_type || (initialDirection === 'channel' ? '销售部渠道' : '')),
   owner: String(route.query.alert_owner || ''),
   keyword: String(route.query.alert_keyword || ''),
   inactiveMonths: [3, 6, 12].includes(Number(route.query.inactive_months)) ? Number(route.query.inactive_months) : 3,
@@ -28,7 +28,7 @@ const data = ref({
   rows: [], pagination: { total: 0 },
 })
 
-const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : query.direction === 'channel' ? (query.channel || query.channelType || '全部渠道') : (query.owner || '全部负责人'))
+const scopeText = computed(() => query.direction === 'brand' ? (query.brand || '全部品牌') : (query.channel || query.owner || query.channelType || '全部渠道'))
 const periodText = computed(() => data.value.history_start ? `历史高频期 ${data.value.history_start} 至 ${data.value.history_end}` : '历史高频期按失联窗口前 12 个月计算')
 
 function number(value, digits = 0) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits }) }
@@ -44,7 +44,7 @@ function params() {
     brand: query.direction === 'brand' ? query.brand || undefined : undefined,
     channel: query.direction === 'channel' ? query.channel || undefined : undefined,
     channel_type: query.direction === 'channel' ? query.channelType || undefined : undefined,
-    owner: query.direction === 'owner' ? query.owner || undefined : undefined,
+    owner: query.direction === 'channel' ? query.owner || undefined : undefined,
     keyword: query.keyword.trim() || undefined,
     inactive_months: query.inactiveMonths,
     min_historical_orders: query.minHistoricalOrders,
@@ -71,9 +71,9 @@ async function load() {
     const result = await getSalesCustomerChurnAlerts(params())
     data.value = result.data
     options.brands = mergeOptions(options.brands, result.data.options?.brands, query.brand)
-    options.channels = mergeOptions(options.channels, result.data.options?.channels, query.channel)
+    options.channels = mergeOptions([], result.data.options?.channels, query.channel)
     options.channelTypes = mergeOptions(options.channelTypes, result.data.options?.channel_types, query.channelType)
-    options.owners = mergeOptions(options.owners, result.data.options?.owners, query.owner)
+    options.owners = mergeOptions([], result.data.options?.owners, query.owner)
     router.replace({ query: Object.fromEntries(Object.entries(urlParams()).filter(([, value]) => value !== undefined && value !== '')) })
   } catch (error) {
     ElMessage.error(error?.response?.data?.detail || '客户流失预警加载失败')
@@ -82,12 +82,19 @@ async function load() {
 function switchDirection(value) {
   query.direction = value
   if (value === 'brand' && !query.brand) query.brand = '资生堂'
+  if (value === 'channel' && !query.channelType) query.channelType = '销售部渠道'
   query.keyword = ''; page.value = 1; load()
+}
+function changeChannelType() {
+  query.owner = ''; query.channel = ''; page.value = 1; load()
+}
+function changeChannelOwner() {
+  query.channel = ''; page.value = 1; load()
 }
 function search() { page.value = 1; load() }
 function reset() {
   query.inactiveMonths = 3; query.minHistoricalOrders = 4; query.brand = query.direction === 'brand' ? '资生堂' : ''
-  query.channel = ''; query.channelType = ''; query.owner = ''; query.keyword = ''; page.value = 1; load()
+  query.channel = ''; query.channelType = query.direction === 'channel' ? '销售部渠道' : ''; query.owner = ''; query.keyword = ''; page.value = 1; load()
 }
 function changePage(value) { page.value = value; load() }
 function changePageSize(value) { pageSize.value = value; page.value = 1; load() }
@@ -102,11 +109,11 @@ onMounted(load)
     </section>
 
     <section class="churn-toolbar">
-      <el-segmented :model-value="query.direction" :options="[{ label: '品牌客户', value: 'brand' }, { label: '渠道客户', value: 'channel' }, { label: '负责人客户', value: 'owner' }]" @change="switchDirection" />
+      <el-segmented :model-value="query.direction" :options="[{ label: '品牌客户', value: 'brand' }, { label: '渠道客户', value: 'channel' }]" @change="switchDirection" />
       <el-select v-if="query.direction === 'brand'" v-model="query.brand" clearable filterable placeholder="选择品牌" class="scope-select"><el-option v-for="item in options.brands" :key="item" :label="item" :value="item" /></el-select>
-      <el-select v-else-if="query.direction === 'channel'" v-model="query.channel" clearable filterable placeholder="全部渠道" class="scope-select"><el-option v-for="item in options.channels" :key="item" :label="item" :value="item" /></el-select>
-      <el-select v-if="query.direction === 'channel'" v-model="query.channelType" clearable filterable placeholder="渠道分类" class="type-select"><el-option v-for="item in options.channelTypes" :key="item" :label="item" :value="item" /></el-select>
-      <el-select v-if="query.direction === 'owner'" v-model="query.owner" clearable filterable placeholder="选择负责人" class="scope-select"><el-option v-for="item in options.owners" :key="item" :label="item" :value="item" /></el-select>
+      <el-select v-if="query.direction === 'channel'" v-model="query.channelType" clearable filterable placeholder="渠道分类" class="type-select" @change="changeChannelType"><el-option v-for="item in options.channelTypes" :key="item" :label="item" :value="item" /></el-select>
+      <el-select v-if="query.direction === 'channel'" v-model="query.owner" clearable filterable placeholder="选择渠道负责人" class="scope-select" @change="changeChannelOwner"><el-option v-for="item in options.owners" :key="item" :label="item" :value="item" /></el-select>
+      <el-select v-if="query.direction === 'channel'" v-model="query.channel" clearable filterable placeholder="全部渠道" class="scope-select"><el-option v-for="item in options.channels" :key="item" :label="item" :value="item" /></el-select>
       <el-select v-model="query.inactiveMonths" class="period-select"><el-option label="近3个月未下单" :value="3" /><el-option label="近6个月未下单" :value="6" /><el-option label="近12个月未下单" :value="12" /></el-select>
       <el-input-number v-model="query.minHistoricalOrders" :min="2" :max="100" controls-position="right" class="orders-input" />
       <span class="orders-label">历史至少下单</span>
@@ -115,7 +122,7 @@ onMounted(load)
     </section>
 
     <section v-if="data.scope_required && !loading" class="scope-empty">
-      <strong>请选择{{ query.direction === 'brand' ? '品牌' : query.direction === 'channel' ? '渠道或渠道分类' : '负责人' }}后查看流失预警</strong><span>历史客户明细需要限定业务范围，以保证查询速度。</span>
+      <strong>请选择{{ query.direction === 'brand' ? '品牌' : '渠道分类、负责人或渠道' }}后查看流失预警</strong><span>历史客户明细需要限定业务范围，以保证查询速度。</span>
     </section>
     <template v-else>
       <section class="rule-strip"><strong>识别规则</strong><span>{{ periodText }}，至少 {{ query.minHistoricalOrders }} 单；从 {{ data.cutoff_date || '-' }} 起没有新订单。</span></section>
