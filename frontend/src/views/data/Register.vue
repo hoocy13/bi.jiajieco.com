@@ -9,7 +9,7 @@ const loading = ref(false)
 const form = reactive({ email: '', display_name: '', phone: '', password: '', confirmPassword: '' })
 
 async function submit() {
-  if (!form.email || !form.display_name || !form.password) return ElMessage.warning('请填写邮箱、姓名和密码')
+  if (!form.email || !form.display_name || !form.password) return ElMessage.warning('请填写邮箱、用户名和密码')
   if (form.password.length < 8) return ElMessage.warning('密码至少 8 位')
   if (form.password !== form.confirmPassword) return ElMessage.warning('两次输入的密码不一致')
   loading.value = true
@@ -30,7 +30,7 @@ async function submit() {
           <div class="login-card__head"><h2>注册 BI 账号</h2><p>注册后由管理员分配访问角色</p></div>
           <el-form class="login-form" label-position="top" @submit.prevent="submit">
             <el-form-item label="邮箱"><el-input v-model="form.email" size="large" autocomplete="email" placeholder="name@company.com" /></el-form-item>
-            <el-form-item label="姓名"><el-input v-model="form.display_name" size="large" placeholder="用于管理员识别账号" /></el-form-item>
+            <el-form-item label="用户名"><el-input v-model="form.display_name" size="large" placeholder="请输入用户名" /></el-form-item>
             <el-form-item label="手机号（选填）"><el-input v-model="form.phone" size="large" /></el-form-item>
             <div class="register-passwords">
               <el-form-item label="密码"><el-input v-model="form.password" size="large" type="password" show-password autocomplete="new-password" /></el-form-item>
