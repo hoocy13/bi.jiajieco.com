@@ -14,6 +14,8 @@ from app.api.routers.sales import (
 from app.core.config import settings
 from app.db.ads import AdsSessionLocal
 from app.db.ods import get_ods_db
+from app.db.session import get_db
+from app.models.announcement import Announcement
 from app.models.user import User
 from app.schemas.common import ok
 from app.services.sales_sources import (
@@ -73,6 +75,12 @@ CITY_COORDS = {
     "惠州市": [114.4168, 23.1115],
     "汕头市": [116.6819, 23.3541],
 }
+
+
+@router.get("/announcements")
+def active_announcements(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    items = db.query(Announcement).filter(Announcement.is_active.is_(True)).order_by(Announcement.updated_at.desc()).limit(5).all()
+    return ok([{"id": item.id, "title": item.title, "content": item.content, "updated_at": item.updated_at} for item in items])
 
 
 def _number(value: object) -> float:

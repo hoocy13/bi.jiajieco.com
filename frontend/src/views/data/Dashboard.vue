@@ -11,6 +11,7 @@ import chinaGeoJson from '../../assets/china.json'
 import { getDashboardSummary } from '../../api/dashboard'
 import { getSalesBrandAnalysis } from '../../api/sales'
 import { getSavedTheme } from '../../utils/theme'
+import { getActiveAnnouncements } from '../../api/announcements'
 
 use([CanvasRenderer, CustomChart, LineChart, PieChart, GeoComponent, GridComponent, LegendComponent, TooltipComponent])
 registerMap('china', chinaGeoJson)
@@ -27,6 +28,7 @@ const summary = ref({
 })
 
 const brandRows = ref([])
+const announcements = ref([])
 const dashboardBrandColumns = [{ key: 'rank', label: '排名', kind: 'integer' }, { key: 'brand', label: '品牌' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '占比', kind: 'percent' }]
 
 function formatNumber(value, digits = 0) {
@@ -54,12 +56,14 @@ function topWithOther(rows, nameKey = 'name', valueKey = 'value', limit = 7) {
 }
 
 onMounted(async () => {
-  const [dashboardResult, brandResult] = await Promise.all([
+  const [dashboardResult, brandResult, announcementResult] = await Promise.all([
     getDashboardSummary(),
     getSalesBrandAnalysis({ range: 'last_30', limit: 30 }),
+    getActiveAnnouncements(),
   ])
   summary.value = dashboardResult.data
   brandRows.value = brandResult.data.rows || []
+  announcements.value = announcementResult.data || []
 })
 
 const channelPieData = computed(() => topWithOther(summary.value.channels, 'name', 'value', 6))
@@ -264,6 +268,12 @@ const geoPieOption = computed(() => ({
 
 <template>
   <div class="page-stack">
+    <section v-if="announcements.length" class="dashboard-announcements" aria-label="系统公告">
+      <article v-for="item in announcements" :key="item.id" class="dashboard-announcement">
+        <el-icon><Bell /></el-icon>
+        <div><strong>{{ item.title }}</strong><p>{{ item.content }}</p></div>
+      </article>
+    </section>
     <div class="metric-grid dashboard-metrics">
       <MetricCard v-for="card in summary.cards" :key="card.label" v-bind="card" />
     </div>
@@ -291,3 +301,11 @@ const geoPieOption = computed(() => ({
     </div>
   </div>
 </template>
+
+<style scoped>
+.dashboard-announcements { display: grid; gap: 8px; }
+.dashboard-announcement { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; padding: 12px 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.dashboard-announcement .el-icon { margin-top: 2px; color: var(--accent-strong); }
+.dashboard-announcement strong { font-size: 14px; }
+.dashboard-announcement p { margin: 4px 0 0; color: var(--text-soft); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+</style>

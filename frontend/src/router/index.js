@@ -23,36 +23,44 @@ const TextToSqlAgent = () => import('../views/data/TextToSqlAgent.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
 const AiAssistant = () => import('../views/data/AiAssistant.vue')
 const Users = () => import('../views/data/Users.vue')
+const Roles = () => import('../views/data/Roles.vue')
+const Register = () => import('../views/data/Register.vue')
+const PendingAccess = () => import('../views/data/PendingAccess.vue')
+const Announcements = () => import('../views/data/Announcements.vue')
 
 const routes = [
   { path: '/', redirect: '/dashboard' },
   { path: '/login', component: Login, meta: { public: true } },
+  { path: '/register', component: Register, meta: { public: true } },
+  { path: '/pending-access', component: PendingAccess },
   {
     path: '/',
     component: DashboardLayout,
     children: [
-      { path: 'dashboard', component: Dashboard, meta: { title: '经营总览' } },
-      { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: 'AI 决策中心' } },
-      { path: 'ai/text-to-sql', component: TextToSqlAgent, meta: { title: '数据智能问答' } },
-      { path: 'ai/assistant', component: AiAssistant, meta: { title: 'AI 数据助手' } },
+      { path: 'dashboard', component: Dashboard, meta: { title: '经营总览', permission: 'dashboard.view' } },
+      { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: 'AI 决策中心', permission: 'ai.decision.view' } },
+      { path: 'ai/text-to-sql', component: TextToSqlAgent, meta: { title: '数据智能问答', permission: 'ai.text_to_sql.use' } },
+      { path: 'ai/assistant', component: AiAssistant, meta: { title: 'AI 数据助手', permission: 'ai.assistant.use' } },
       { path: 'sales', redirect: '/sales/overview' },
-      { path: 'sales/overview', component: SalesOverview, meta: { title: '销售概览' } },
-      { path: 'sales/detail', component: Sales, meta: { title: '销售明细' } },
-      { path: 'sales/product-rank', component: ProductRank, meta: { title: '商品销售排行' } },
-      { path: 'sales/brand-analysis', component: BrandAnalysis, meta: { title: '品牌销售分析' } },
-      { path: 'sales/brand-analysis/:brand', component: BrandChannelAnalysis, meta: { title: '品牌销售分析' } },
-      { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析' } },
-      { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析' } },
+      { path: 'sales/overview', component: SalesOverview, meta: { title: '销售概览', permission: 'sales.view' } },
+      { path: 'sales/detail', component: Sales, meta: { title: '销售明细', permission: 'sales.view' } },
+      { path: 'sales/product-rank', component: ProductRank, meta: { title: '商品销售排行', permission: 'sales.view' } },
+      { path: 'sales/brand-analysis', component: BrandAnalysis, meta: { title: '品牌销售分析', permission: 'sales.view' } },
+      { path: 'sales/brand-analysis/:brand', component: BrandChannelAnalysis, meta: { title: '品牌销售分析', permission: 'sales.view' } },
+      { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析', permission: 'sales.view' } },
+      { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析', permission: 'sales.view' } },
                     { path: 'inventory', redirect: '/inventory/overview' },
-      { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览' } },
-      { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货' } },
-      { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存' } },
-      { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '库存周转' } },
-      { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销分析' } },
-      { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析' } },
-      { path: 'inventory/health', component: InventoryHealth, meta: { title: '库存健康度' } },
-      { path: 'users', component: Users, meta: { title: '用户管理' } },
-      { path: 'model-settings', component: ModelSettings, meta: { title: '模型设置' } },
+      { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览', permission: 'inventory.view' } },
+      { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货', permission: 'inventory.view' } },
+      { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存', permission: 'inventory.view' } },
+      { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '品牌周转', permission: 'inventory.view' } },
+      { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销分析', permission: 'inventory.view' } },
+      { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析', permission: 'inventory.view' } },
+      { path: 'inventory/health', component: InventoryHealth, meta: { title: '库存健康度', permission: 'inventory.view' } },
+      { path: 'users', component: Users, meta: { title: '账号权限', permission: 'system.users.manage' } },
+      { path: 'roles', component: Roles, meta: { title: '角色管理', permission: 'system.roles.manage' } },
+      { path: 'model-settings', component: ModelSettings, meta: { title: '模型设置', permission: 'system.models.manage' } },
+      { path: 'announcements', component: Announcements, meta: { title: '系统公告', permission: 'system.announcements.manage' } },
     ],
   },
 ]
@@ -62,13 +70,17 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore()
   if (!to.meta.public && !auth.isAuthenticated) {
     return '/login'
   }
   if (to.path === '/login' && auth.isAuthenticated) {
     return '/dashboard'
+  }
+  if (auth.isAuthenticated && !auth.profileLoaded) await auth.loadProfile()
+  if (to.meta.permission && !auth.hasPermission(to.meta.permission)) {
+    return '/pending-access'
   }
   return true
 })

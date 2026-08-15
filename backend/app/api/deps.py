@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
@@ -31,3 +33,21 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     return user
+
+
+def permission_codes(user: User) -> set[str]:
+    if user.role is None or not user.role.is_active:
+        return set()
+    return {permission.code for permission in user.role.permissions}
+
+
+def require_permission(code: str) -> Callable[..., User]:
+    def dependency(user: User = Depends(get_current_user)) -> User:
+        if code not in permission_codes(user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"code": 403, "message": "当前账号没有访问该功能的权限", "data": None},
+            )
+        return user
+
+    return dependency

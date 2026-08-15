@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { exportCurrentData, exportExcel } from '../../api/exports'
+import { useAuthStore } from '../../stores/auth'
 
 const props = defineProps({
   dataset: { type: String, default: '' },
@@ -13,6 +14,7 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   disabled: { type: Boolean, default: false },
 })
+const auth = useAuthStore()
 
 const exporting = ref(false)
 const exceedsLimit = computed(() => props.total > 50000)
@@ -66,7 +68,7 @@ async function download() {
 </script>
 
 <template>
-  <el-tooltip :content="disabledReason" :disabled="!exceedsLimit" placement="top">
+  <el-tooltip v-if="auth.hasPermission('data.export')" :content="disabledReason" :disabled="!exceedsLimit" placement="top">
     <span>
       <el-button :icon="'Download'" :loading="exporting" :disabled="disabled || exceedsLimit" @click="download">
         导出 Excel

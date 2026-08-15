@@ -19,16 +19,16 @@ const activeMenuPath = computed(() => (
     : route.path
 ))
 
-const menuGroups = [
+const menuGroups = computed(() => [
   {
     key: 'guide',
     label: '引导看板',
     icon: 'DataBoard',
     children: [
-      { path: '/dashboard', label: '经营总览' },
-      { path: '/ai/decisions', label: 'AI 决策中心' },
-      { path: '/ai/text-to-sql', label: '数据智能问答' },
-      { path: '/ai/assistant', label: 'AI 数据助手' },
+      { path: '/dashboard', label: '经营总览', permission: 'dashboard.view' },
+      { path: '/ai/decisions', label: 'AI 决策中心', permission: 'ai.decision.view' },
+      { path: '/ai/text-to-sql', label: '数据智能问答', permission: 'ai.text_to_sql.use' },
+      { path: '/ai/assistant', label: 'AI 数据助手', permission: 'ai.assistant.use' },
     ],
   },
   {
@@ -36,12 +36,12 @@ const menuGroups = [
     label: '销售分析',
     icon: 'TrendCharts',
     children: [
-      { path: '/sales/overview', label: '销售概览' },
-      { path: '/sales/detail', label: '销售明细' },
-      { path: '/sales/product-rank', label: '商品销售排行' },
-      { path: '/sales/brand-analysis', label: '品牌销售分析' },
-      { path: '/sales/channel-analysis', label: '渠道分析' },
-      { path: '/sales/customer-analysis', label: '客户分析' },
+      { path: '/sales/overview', label: '销售概览', permission: 'sales.view' },
+      { path: '/sales/detail', label: '销售明细', permission: 'sales.view' },
+      { path: '/sales/product-rank', label: '商品销售排行', permission: 'sales.view' },
+      { path: '/sales/brand-analysis', label: '品牌销售分析', permission: 'sales.view' },
+      { path: '/sales/channel-analysis', label: '渠道分析', permission: 'sales.view' },
+      { path: '/sales/customer-analysis', label: '客户分析', permission: 'sales.view' },
     ],
   },
   {
@@ -49,13 +49,13 @@ const menuGroups = [
     label: '库存分析',
     icon: 'Box',
     children: [
-      { path: '/inventory/overview', label: '库存概览' },
-      { path: '/inventory/brand-arrivals', label: '品牌月度到货' },
-      { path: '/inventory/brand-inventory-flow', label: '品牌进销存' },
-      { path: '/inventory/turnover', label: '品牌周转' },
-      { path: '/inventory/slow-moving', label: '滞销分析' },
-      { path: '/inventory/batch-expiry', label: '批次效期分析' },
-      { path: '/inventory/health', label: '库存健康度' },
+      { path: '/inventory/overview', label: '库存概览', permission: 'inventory.view' },
+      { path: '/inventory/brand-arrivals', label: '品牌月度到货', permission: 'inventory.view' },
+      { path: '/inventory/brand-inventory-flow', label: '品牌进销存', permission: 'inventory.view' },
+      { path: '/inventory/turnover', label: '品牌周转', permission: 'inventory.view' },
+      { path: '/inventory/slow-moving', label: '滞销分析', permission: 'inventory.view' },
+      { path: '/inventory/batch-expiry', label: '批次效期分析', permission: 'inventory.view' },
+      { path: '/inventory/health', label: '库存健康度', permission: 'inventory.view' },
     ],
   },
   {
@@ -63,11 +63,14 @@ const menuGroups = [
     label: '系统设置',
     icon: 'Setting',
     children: [
-      { path: '/users', label: '用户管理' },
-      { path: '/model-settings', label: '模型设置' },
+      { path: '/users', label: '账号权限', permission: 'system.users.manage' },
+      { path: '/roles', label: '角色管理', permission: 'system.roles.manage' },
+      { path: '/model-settings', label: '模型设置', permission: 'system.models.manage' },
+      { path: '/announcements', label: '系统公告', permission: 'system.announcements.manage' },
     ],
   },
-]
+].map(group => ({ ...group, children: group.children.filter(item => auth.hasPermission(item.permission)) }))
+  .filter(group => group.children.length))
 
 function logout() {
   auth.logout()
@@ -136,7 +139,7 @@ function selectTheme(name) {
           <el-dropdown>
             <button class="user-button">
               <el-icon><User /></el-icon>
-              <span>{{ auth.user?.username || 'admin' }}</span>
+              <span>{{ auth.user?.display_name || auth.user?.email || auth.user?.username || '用户' }}</span>
             </button>
             <template #dropdown>
               <el-dropdown-menu>

@@ -9,7 +9,7 @@ const auth = useAuthStore()
 const loading = ref(false)
 const headingVisible = ref(false)
 const form = reactive({
-  username: 'jiajie',
+  username: '',
   password: '',
 })
 
@@ -94,8 +94,8 @@ async function submit() {
                 <h2>登录枷捷 BI</h2>
               </div>
               <el-form class="login-form login-form--glass" label-position="top" @submit.prevent="submit">
-                <el-form-item label="账号">
-                  <el-input v-model="form.username" size="large" autocomplete="username" />
+                <el-form-item label="邮箱或账号">
+                  <el-input v-model="form.username" size="large" autocomplete="username" placeholder="请输入注册邮箱" />
                 </el-form-item>
                 <el-form-item label="密码">
                   <el-input
@@ -107,6 +107,7 @@ async function submit() {
                   />
                 </el-form-item>
                 <el-button type="primary" size="large" :loading="loading" @click="submit">登录</el-button>
+                <button class="register-link" type="button" @click="router.push('/register')">没有账号？立即注册</button>
               </el-form>
             </section>
           </div>
@@ -115,3 +116,25 @@ async function submit() {
     </div>
   </main>
 </template>
+
+<style scoped>
+.register-link {
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  color: rgb(255 255 255 / 82%);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 160ms ease, background-color 160ms ease;
+}
+.register-link:hover,
+.register-link:focus-visible {
+  color: #fff;
+  background: rgb(255 255 255 / 10%);
+  outline: none;
+}
+.register-link:active { transform: translateY(1px); }
+</style>
