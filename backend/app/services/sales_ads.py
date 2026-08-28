@@ -307,14 +307,14 @@ def load_dashboard_overview_from_ads(
         "cards": [
             {
                 "label": "近30天订单实付金额",
-                "value": f"{paid_amount / 1_000_000:,.2f}",
-                "unit": "百万",
+                "value": f"{paid_amount / 10_000:,.2f}",
+                "unit": "万",
                 "trend": f"截至 {as_of.isoformat()}",
             },
             {
                 "label": "近30天销售",
-                "value": f"{quantity / 1_000_000:,.2f}",
-                "unit": "百万",
+                "value": f"{quantity / 10_000:,.2f}",
+                "unit": "万",
                 "trend": "净销售数量",
             },
         ],

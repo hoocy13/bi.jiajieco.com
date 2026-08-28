@@ -19,9 +19,9 @@ const InventoryHealth = () => import('../views/data/InventoryHealth.vue')
 const BrandMonthlyArrivals = () => import('../views/data/BrandMonthlyArrivals.vue')
 const BrandInventoryFlow = () => import('../views/data/BrandInventoryFlow.vue')
 const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
-const TextToSqlAgent = () => import('../views/data/TextToSqlAgent.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
-const AiAssistant = () => import('../views/data/AiAssistant.vue')
+const SmartQuery = () => import('../views/data/SmartQuery.vue')
+const AnalysisWorkspace = () => import('../views/data/AnalysisWorkspace.vue')
 const Users = () => import('../views/data/Users.vue')
 const Roles = () => import('../views/data/Roles.vue')
 const Register = () => import('../views/data/Register.vue')
@@ -38,9 +38,11 @@ const routes = [
     component: DashboardLayout,
     children: [
       { path: 'dashboard', component: Dashboard, meta: { title: '经营总览', permission: 'dashboard.view' } },
-      { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: 'AI 决策中心', permission: 'ai.decision.view' } },
-      { path: 'ai/text-to-sql', component: TextToSqlAgent, meta: { title: '数据智能问答', permission: 'ai.text_to_sql.use' } },
-      { path: 'ai/assistant', component: AiAssistant, meta: { title: 'AI 数据助手', permission: 'ai.assistant.use' } },
+      { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: '智能洞察', permission: 'ai.decision.view' } },
+      { path: 'ai/query', component: SmartQuery, meta: { title: '智能问数', permissionsAny: ['ai.text_to_sql.use', 'ai.assistant.use'] } },
+      { path: 'ai/analysis', component: AnalysisWorkspace, meta: { title: '分析工作台', permission: 'ai.decision.view' } },
+      { path: 'ai/text-to-sql', redirect: '/ai/query?mode=query' },
+      { path: 'ai/assistant', redirect: '/ai/query?mode=assistant' },
       { path: 'sales', redirect: '/sales/overview' },
       { path: 'sales/overview', component: SalesOverview, meta: { title: '销售概览', permission: 'sales.view' } },
       { path: 'sales/detail', component: Sales, meta: { title: '销售明细', permission: 'sales.view' } },
@@ -80,6 +82,9 @@ router.beforeEach(async (to) => {
   }
   if (auth.isAuthenticated && !auth.profileLoaded) await auth.loadProfile()
   if (to.meta.permission && !auth.hasPermission(to.meta.permission)) {
+    return '/pending-access'
+  }
+  if (to.meta.permissionsAny && !to.meta.permissionsAny.some(permission => auth.hasPermission(permission))) {
     return '/pending-access'
   }
   return true

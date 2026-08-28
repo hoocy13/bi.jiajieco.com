@@ -111,8 +111,8 @@ def _format_number(value: float, digits: int = 0) -> str:
     return f"{value:,.{digits}f}"
 
 
-def _format_million(value: float, digits: int = 2) -> str:
-    return f"{value / 1_000_000:,.{digits}f}"
+def _format_ten_thousand(value: float, digits: int = 2) -> str:
+    return f"{value / 10_000:,.{digits}f}"
 
 
 def _get_dashboard_ods_db():
@@ -130,7 +130,7 @@ def overview(
 ) -> dict:
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
-    cache_key = _sales_cache_key("dashboard-overview-v6", query_mode=query_mode)
+    cache_key = _sales_cache_key("dashboard-overview-v7", query_mode=query_mode)
     cached = _get_sales_cache(cache_key)
     if cached is not None:
         response.headers["X-BI-Response-Source"] = "ads" if query_mode == "ads" else "ods"
@@ -294,8 +294,8 @@ def overview(
         "as_of": as_of.isoformat(),
         "period": "近30天",
         "cards": [
-            {"label": "近30天订单实付金额", "value": _format_million(paid_amount), "unit": "百万", "trend": f"截至 {as_of.isoformat()}"},
-            {"label": "近30天销售", "value": _format_million(quantity), "unit": "百万", "trend": "净销售数量"},
+            {"label": "近30天订单实付金额", "value": _format_ten_thousand(paid_amount), "unit": "万", "trend": f"截至 {as_of.isoformat()}"},
+            {"label": "近30天销售", "value": _format_ten_thousand(quantity), "unit": "万", "trend": "净销售数量"},
         ],
         "trend": {
             "days": [day.strftime("%m-%d") for day in days],

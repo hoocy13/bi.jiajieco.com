@@ -26,9 +26,16 @@ const menuGroups = computed(() => [
     icon: 'DataBoard',
     children: [
       { path: '/dashboard', label: '经营总览', permission: 'dashboard.view' },
-      { path: '/ai/decisions', label: 'AI 决策中心', permission: 'ai.decision.view' },
-      { path: '/ai/text-to-sql', label: '数据智能问答', permission: 'ai.text_to_sql.use' },
-      { path: '/ai/assistant', label: 'AI 数据助手', permission: 'ai.assistant.use' },
+    ],
+  },
+  {
+    key: 'intelligence',
+    label: '数据智能',
+    icon: 'Cpu',
+    children: [
+      { path: '/ai/decisions', label: '智能洞察', permission: 'ai.decision.view' },
+      { path: '/ai/query', label: '智能问数', permissionsAny: ['ai.text_to_sql.use', 'ai.assistant.use'] },
+      { path: '/ai/analysis', label: '分析工作台', permission: 'ai.decision.view' },
     ],
   },
   {
@@ -69,7 +76,14 @@ const menuGroups = computed(() => [
       { path: '/announcements', label: '系统公告', permission: 'system.announcements.manage' },
     ],
   },
-].map(group => ({ ...group, children: group.children.filter(item => auth.hasPermission(item.permission)) }))
+].map(group => ({
+  ...group,
+  children: group.children.filter(item => (
+    item.permissionsAny
+      ? item.permissionsAny.some(permission => auth.hasPermission(permission))
+      : auth.hasPermission(item.permission)
+  )),
+}))
   .filter(group => group.children.length))
 
 function logout() {

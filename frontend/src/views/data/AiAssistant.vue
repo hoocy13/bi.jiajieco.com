@@ -431,8 +431,8 @@ onUnmounted(() => {
       <!-- 无会话时的空状态 -->
       <div v-else class="empty-state">
         <el-icon :size="64" color="var(--muted)"><ChatDotRound /></el-icon>
-        <h2>AI 数据助手</h2>
-        <p>基于 RAG 的智能问答，支持知识查询、指标分析和 SQL 查询</p>
+        <h2>深度分析助手</h2>
+        <p>支持知识查询、指标分析和连续追问</p>
         <el-button type="primary" @click="handleCreateConversation">开始新对话</el-button>
       </div>
     </main>

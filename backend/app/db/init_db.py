@@ -14,9 +14,9 @@ PERMISSION_DEFINITIONS = [
     ("dashboard.view", "经营总览", "dashboard"),
     ("sales.view", "销售分析", "sales"),
     ("inventory.view", "库存分析", "inventory"),
-    ("ai.decision.view", "AI 决策中心", "ai"),
-    ("ai.assistant.use", "AI 数据助手", "ai"),
-    ("ai.text_to_sql.use", "数据智能问答", "ai"),
+    ("ai.decision.view", "智能洞察与分析工作台", "ai"),
+    ("ai.assistant.use", "深度分析助手", "ai"),
+    ("ai.text_to_sql.use", "快捷问数", "ai"),
     ("data.export", "数据导出", "operation"),
     ("system.users.manage", "账号权限管理", "system"),
     ("system.roles.manage", "角色管理", "system"),
@@ -74,6 +74,10 @@ def seed_roles(db: Session) -> dict[str, Role]:
         if permission is None:
             permission = Permission(code=code, name=name, module=module, sort_order=order)
             db.add(permission)
+        else:
+            permission.name = name
+            permission.module = module
+            permission.sort_order = order
         permissions[code] = permission
     db.flush()
 
