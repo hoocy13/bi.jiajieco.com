@@ -1827,10 +1827,13 @@ def brand_inventory_turnover_analysis(
     if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
         try:
             with AdsSessionLocal() as ads_db:
-                sales_batch = latest_ready_sales_batch(ads_db)
-                ensure_batch_covers(sales_batch, start_date, end_date)
+                sales_batch = latest_ready_brand_turnover_batch(
+                    ads_db,
+                    start_date,
+                    end_date,
+                )
                 cache_key = _cache_key(
-                    "brand-inventory-turnover-analysis-v3",
+                    "brand-inventory-turnover-analysis-v4",
                     start_date=start_date,
                     end_date=end_date,
                     brand=normalized_brand,
@@ -1874,7 +1877,7 @@ def brand_inventory_turnover_analysis(
             ) from exc
 
     cache_key = _cache_key(
-        "brand-inventory-turnover-analysis-v3",
+        "brand-inventory-turnover-analysis-v4",
         start_date=start_date,
         end_date=end_date,
         brand=normalized_brand,

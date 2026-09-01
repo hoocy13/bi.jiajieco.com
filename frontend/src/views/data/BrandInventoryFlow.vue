@@ -29,9 +29,13 @@ async function loadBrandOptions() {
   } catch { /* silent */ }
 }
 
-const defaultYear = new Date().getFullYear()
+const today = new Date()
+const lastCompleteMonth = new Date(today.getFullYear(), today.getMonth(), 0)
+const defaultYear = lastCompleteMonth.getFullYear()
+const defaultEndMonth = `${defaultYear}-${String(lastCompleteMonth.getMonth() + 1).padStart(2, '0')}`
 const defaultStartDate = `${defaultYear}-01-01`
-const defaultEndDate = `${defaultYear}-12-31`
+const defaultEndDate = monthLastDay(defaultEndMonth)
+const defaultPeriodDays = Math.round((new Date(defaultEndDate) - new Date(defaultStartDate)) / 86400000) + 1
 const monthRange = ref([
   String(route.query.start_date || defaultStartDate).slice(0, 7),
   String(route.query.end_date || defaultEndDate).slice(0, 7),
@@ -52,7 +56,7 @@ const analysis = ref({
   end_date: defaultEndDate,
   opening_snapshot_date: `${defaultYear - 1}-12-31`,
   ending_snapshot_date: defaultEndDate,
-  period: `${defaultYear}年01月—${defaultYear}年12月`,
+  period: `${defaultYear}年01月—${defaultYear}年${String(lastCompleteMonth.getMonth() + 1).padStart(2, '0')}月`,
   summary: {
     opening_quantity: 0,
     inbound_quantity: 0,
@@ -71,7 +75,7 @@ const analysis = ref({
 })
 const flowExportColumns = [{ key: 'month', label: '月份' }, { key: 'opening_quantity', label: '期初库存', kind: 'integer' }, { key: 'inbound_quantity', label: '采购入库', kind: 'integer' }, { key: 'sales_quantity', label: '销售数量', kind: 'integer' }, { key: 'ending_quantity', label: '期末库存', kind: 'integer' }, { key: 'sell_through_rate', label: '可售消化率', kind: 'percent' }, { key: 'inbound_cost', label: '采购入库成本', kind: 'number' }, { key: 'sales_amount', label: '分摊销售额', kind: 'number' }, { key: 'ending_stock_amount', label: '期末库存金额', kind: 'number' }]
 const turnoverAnalysis = ref({
-  brand: selectedBrand.value, start_date: defaultStartDate, end_date: defaultEndDate, period: `${defaultYear}年01月—${defaultYear}年12月`, period_days: 365,
+  brand: selectedBrand.value, start_date: defaultStartDate, end_date: defaultEndDate, period: `${defaultYear}年01月—${defaultYear}年${String(lastCompleteMonth.getMonth() + 1).padStart(2, '0')}月`, period_days: defaultPeriodDays,
   summary: { sales_quantity: 0, sales_amount: 0, average_inventory: 0, ending_inventory: 0, ending_inventory_amount: 0, turnover_rate: null, turnover_days: null },
   category_summary: [], waterline: [], channel_mix: [], slow_products: [], hot_products: [], details: [],
   channel_turnover: { available: false, reason: '' },
@@ -176,8 +180,8 @@ const periodYearLabel = computed(() => {
   return startYear && startYear === endYear ? startYear : '所选期间'
 })
 const turnoverMetrics = computed(() => [
-  { label: '库存周转次数', value: turnoverRateText(turnoverAnalysis.value.summary.turnover_rate), unit: '次', note: '净销售数量 ÷ 月末平均库存', accent: true },
-  { label: '库存周转天数', value: turnoverDaysText(turnoverAnalysis.value.summary.turnover_days), unit: '天', note: `${turnoverAnalysis.value.period_days}天 ÷ 周转次数` },
+  { label: '库存周转次数', value: turnoverRateText(turnoverAnalysis.value.summary.turnover_rate), unit: '次', note: '净销售数量 ÷ 月末平均库存' },
+  { label: '库存周转天数', value: turnoverDaysText(turnoverAnalysis.value.summary.turnover_days), unit: '天', note: `${turnoverAnalysis.value.period_days}天 ÷ 周转次数`, accent: true },
   ...effectiveProductTypes.value.map((productType) => ({
     label: `${productType}周转次数`, value: turnoverRateText(categoryTurnover.value[productType]?.turnover_rate), unit: '次',
     note: `月末平均库存 ${formatNumber(categoryTurnover.value[productType]?.average_inventory)} 件`,
@@ -415,7 +419,7 @@ function syncDetailQuery() {
 
 function resetFilters() {
   selectedBrand.value = '资生堂'
-  monthRange.value = [defaultYear + '-01', defaultYear + '-12']
+  monthRange.value = [defaultYear + '-01', defaultEndMonth]
   selectedWarehouses.value = []
   selectedProductTypes.value = ['正装', '小样']
   detailType.value = 'all'
