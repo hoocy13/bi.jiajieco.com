@@ -74,6 +74,7 @@ const productDetailOptions = [
 const activeProductDetail = ref('combined')
 const productDetailPage = ref(1)
 const productDetailPageSize = ref(20)
+const productNamesExpanded = ref(false)
 const query = reactive({
   keyword: String(route.query.brand_keyword || ''),
   periodMode: routeStartDate && routeEndDate ? 'custom' : 'quarter',
@@ -189,13 +190,9 @@ function changeProductDetailPageSize(size) {
   productDetailPage.value = 1
 }
 
-function productShortName(value) {
-  const text = String(value || '未命名商品')
-  return text.length > 12 ? `${text.slice(0, 12)}...` : text
-}
-
 function productPanelChartOption(panel) {
   const rows = [...(panel.rows || [])].reverse()
+  const productLabelWidth = productNamesExpanded.value ? 250 : 128
   return {
     tooltip: {
       trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#111217', borderWidth: 0,
@@ -205,15 +202,15 @@ function productPanelChartOption(panel) {
         return `${row.product}<br/>货品编号：${row.product_code || '暂无'}<br/>${isHistoricalBasis.value ? '周转天数' : '估算周转'}：${turnoverText(row.turnover_days)}`
       },
     },
-    grid: { top: 16, left: 112, right: 64, bottom: 14 },
+    grid: { top: 16, left: productLabelWidth + 12, right: 64, bottom: 14 },
     xAxis: {
       type: 'value', axisLabel: { show: false }, axisTick: { show: false }, axisLine: { show: false },
       splitLine: { lineStyle: { color: '#f0f2f5' } },
     },
     yAxis: {
-      type: 'category', data: rows.map((row) => productShortName(row.product)),
+      type: 'category', data: rows.map((row) => String(row.product || '未命名商品')),
       axisTick: { show: false }, axisLine: { show: false },
-      axisLabel: { color: '#5f6879', width: 102, overflow: 'truncate', fontSize: 10 },
+      axisLabel: { color: '#5f6879', width: productLabelWidth, overflow: 'truncate', ellipsis: '…', fontSize: 10 },
     },
     series: [{
       name: isHistoricalBasis.value ? '期间平均库存' : '可用库存', type: 'bar', barWidth: 9,
@@ -637,8 +634,21 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
           <span class="panel-kicker">分类周转</span>
           <h2>{{ query.keyword.trim() || '品牌' }} 货品分类周转<span class="panel-source">（{{ isHistoricalBasis ? '期间平均库存' : '可用库存' }}口径）</span></h2>
         </div>
+        <el-button
+          v-if="productTurnoverPanels.length"
+          class="product-name-toggle"
+          plain
+          size="small"
+          @click="productNamesExpanded = !productNamesExpanded"
+        >
+          {{ productNamesExpanded ? '恢复紧凑' : '展开名称' }}
+        </el-button>
       </header>
-      <div v-if="productTurnoverPanels.length" class="product-type-turnover-grid">
+      <div
+        v-if="productTurnoverPanels.length"
+        class="product-type-turnover-grid"
+        :class="{ 'is-name-expanded': productNamesExpanded }"
+      >
         <article v-for="panel in productTurnoverPanels" :key="panel.label" class="product-type-chart-card">
           <div class="product-type-chart-title">
             <strong>{{ panel.label }}</strong>
@@ -869,7 +879,9 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
 .product-type-turnover-panel { min-width: 0; overflow: hidden; }
 .product-type-turnover-panel > header { min-height: 68px; }
 .product-type-turnover-panel h2 { margin-top: 5px; }
+.product-name-toggle { margin-left: auto; color: var(--turnover-primary); border-color: var(--turnover-soft-strong); background: #fff; }
 .product-type-turnover-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 18px; }
+.product-type-turnover-grid.is-name-expanded { grid-template-columns: 1fr; }
 .product-type-chart-card { min-width: 0; overflow: hidden; background: #fff; border: 1px solid #f0dfe4; border-radius: 9px; }
 .product-type-chart-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px 4px; }
 .product-type-chart-title strong { color: var(--turnover-ink); font-size: 13px; }
