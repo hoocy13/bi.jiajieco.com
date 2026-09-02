@@ -57,6 +57,7 @@ const menuGroups = computed(() => [
     icon: 'Box',
     children: [
       { path: '/inventory/overview', label: '库存概览', permission: 'inventory.view' },
+      { path: '/inventory/detail', label: '库存明细', permission: 'inventory.view' },
       { path: '/inventory/brand-arrivals', label: '品牌月度到货', permission: 'inventory.view' },
       { path: '/inventory/brand-inventory-flow', label: '品牌进销存', permission: 'inventory.view' },
       { path: '/inventory/turnover', label: '品牌周转', permission: 'inventory.view' },

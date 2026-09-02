@@ -21,6 +21,10 @@ export function getInventoryOverview(params = {}) {
   return http.get('/inventory/overview', { params: inventoryParams(params) })
 }
 
+export function getInventoryDetail(params = {}) {
+  return http.get('/inventory/health', { params: inventoryParams({ ...params, issue_type: 'any' }) })
+}
+
 export function getInventoryProductDetail(productCode, params = {}) {
   return http.get(`/inventory/product-detail/${encodeURIComponent(productCode)}`, {
     params: inventoryParams(params),

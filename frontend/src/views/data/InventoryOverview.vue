@@ -59,16 +59,27 @@ function formatDate(value) {
   return String(value).slice(0, 10)
 }
 
+const occupiedStock = computed(() => Number(overview.value.metrics.stock_quantity || 0) - Number(overview.value.metrics.available_stock || 0))
+const availableRate = computed(() => {
+  const stock = Number(overview.value.metrics.stock_quantity || 0)
+  return stock ? Number(overview.value.metrics.available_stock || 0) / stock * 100 : 0
+})
 const metrics = computed(() => [
-  { label: '库存商品', value: formatNumber(overview.value.metrics.product_count), unit: '个', trend: '按货品编号去重' },
-  { label: '可用库存', value: formatNumber(overview.value.metrics.available_stock), unit: '件', trend: `总库存 ${formatNumber(overview.value.metrics.stock_quantity)} 件` },
+  { label: '可用库存', value: formatNumber(overview.value.metrics.available_stock), unit: '件', trend: `库存总量 ${formatNumber(overview.value.metrics.stock_quantity)} 件` },
+  { label: '占用或不可用', value: formatNumber(occupiedStock.value), unit: '件', trend: '库存总量减去可用库存' },
+  { label: '库存可用率', value: formatNumber(availableRate.value, 1), unit: '%', trend: '可用库存 / 库存总量' },
   {
     label: '库存金额',
     value: overview.value.metrics.stock_amount_available ? formatNumber(overview.value.metrics.stock_amount, 2) : '暂不可用',
     unit: overview.value.metrics.stock_amount_available ? '元' : '',
     trend: overview.value.metrics.stock_amount_available ? '库存快照成本金额' : '源数据成本字段当前为空',
   },
-  { label: '临期批次', value: formatNumber(overview.value.metrics.expiring_batch_count), unit: '批', trend: `更新 ${formatDate(overview.value.updated_at)}` },
+])
+const riskMetrics = computed(() => [
+  { label: '库存商品', value: formatNumber(overview.value.metrics.product_count), unit: '个', trend: '按货品编号去重' },
+  { label: '低于库存下限', value: formatNumber(overview.value.metrics.below_min_count), unit: '项', trend: '建议优先检查补货设置' },
+  { label: '高于库存上限', value: formatNumber(overview.value.metrics.above_max_count), unit: '项', trend: '建议检查库存积压' },
+  { label: '30天内临期批次', value: formatNumber(overview.value.metrics.expiring_batch_count), unit: '批', trend: '按批次到期日期统计' },
 ])
 const warehouseExportColumns = [{ key: 'warehouse', label: '仓库' }, { key: 'records', label: '记录数', kind: 'integer' }, { key: 'stock_quantity', label: '库存数量', kind: 'integer' }, { key: 'available_stock', label: '可用库存', kind: 'integer' }, { key: 'stock_amount', label: '库存金额', kind: 'number' }]
 
@@ -187,6 +198,17 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchOverview()]))
 
 <template>
   <div class="page-stack" v-loading="loading">
+    <section class="inventory-overview-hero">
+      <div>
+        <span>库存总览</span>
+        <h2>当前库存水位与仓库分布</h2>
+        <p>库存数据来自每日同步快照，优先使用可用库存判断当前可销售数量。</p>
+      </div>
+      <div class="inventory-overview-hero__actions">
+        <el-button type="primary" @click="router.push('/inventory/detail')">查看库存明细</el-button>
+      </div>
+    </section>
+
     <section class="toolbar-panel inventory-filter-panel">
       <div class="inventory-filter-grid inventory-filter-grid--overview">
         <label class="inventory-filter-field">
@@ -222,46 +244,41 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchOverview()]))
     </div>
 
     <div class="metric-grid compact-metrics inventory-overview-metrics">
-      <MetricCard label="分仓库存记录" :value="formatNumber(overview.metrics.warehouse_records)" unit="条" trend="当前库存发布快照" />
-      <MetricCard label="批次库存记录" :value="formatNumber(overview.metrics.batch_records)" unit="条" trend="批次库存发布快照" />
-      <MetricCard label="低于下限" :value="formatNumber(overview.metrics.below_min_count)" unit="项" trend="可用库存低于库存下限" />
-      <MetricCard label="高于上限" :value="formatNumber(overview.metrics.above_max_count)" unit="项" trend="可用库存高于库存上限" />
+      <MetricCard v-for="item in riskMetrics" :key="item.label" v-bind="item" />
     </div>
 
-    <section class="panel">
+    <section class="panel inventory-warehouse-panel">
       <header>
-        <h2>仓库可用库存排行<span class="panel-source">（最新库存发布版本）</span></h2>
-        <ExportExcelButton title="库存概览_仓库排行" :rows="overview.warehouses" :columns="warehouseExportColumns" :total="overview.warehouses.length" :filters="{ 数据更新时间: overview.updated_at }" />
-        <el-button :icon="'Refresh'" circle @click="fetchOverview" />
+        <div><h2>仓库库存结构<span class="panel-source">（按可用库存排序）</span></h2><p>查看不同仓库的库存水位和可用数量。</p></div>
+        <div class="header-actions"><ExportExcelButton title="库存概览_仓库排行" :rows="overview.warehouses" :columns="warehouseExportColumns" :total="overview.warehouses.length" :filters="{ 数据更新时间: overview.updated_at }" /><el-button :icon="'Refresh'" circle @click="fetchOverview" /></div>
       </header>
-      <v-chart class="chart chart-compact" :option="warehouseBarOption" autoresize />
-      <el-table :data="overview.warehouses" height="360">
-        <el-table-column prop="warehouse" label="仓库" min-width="220" />
-        <el-table-column prop="records" label="记录数" width="120">
-          <template #default="{ row }">{{ formatNumber(row.records) }}</template>
-        </el-table-column>
-        <el-table-column prop="stock_quantity" label="库存数量" width="150">
-          <template #default="{ row }">{{ formatNumber(row.stock_quantity) }}</template>
-        </el-table-column>
-        <el-table-column prop="available_stock" label="可用库存" width="150">
-          <template #default="{ row }">{{ formatNumber(row.available_stock) }}</template>
-        </el-table-column>
-        <el-table-column prop="stock_amount" label="库存金额" width="180">
-          <template #default="{ row }">{{ formatNumber(row.stock_amount, 2) }}</template>
-        </el-table-column>
-      </el-table>
-    </section>
-
-    <section class="panel">
-      <header><h2>库存数据源</h2></header>
-      <el-table :data="overview.source_tables" height="320">
-        <el-table-column prop="table" label="数据表" width="190" />
-        <el-table-column prop="records" label="记录数" width="130">
-          <template #default="{ row }">{{ formatNumber(row.records) }}</template>
-        </el-table-column>
-        <el-table-column prop="usage" label="用途" />
-        <el-table-column prop="key_fields" label="关键字段" />
-      </el-table>
+      <div class="inventory-warehouse-content">
+        <v-chart class="chart chart-compact" :option="warehouseBarOption" autoresize />
+        <el-table :data="overview.warehouses" height="420" stripe>
+          <el-table-column prop="warehouse" label="仓库" min-width="190" show-overflow-tooltip />
+          <el-table-column prop="stock_quantity" label="库存数量" width="130" sortable><template #default="{ row }">{{ formatNumber(row.stock_quantity) }}</template></el-table-column>
+          <el-table-column prop="available_stock" label="可用库存" width="130" sortable><template #default="{ row }">{{ formatNumber(row.available_stock) }}</template></el-table-column>
+          <el-table-column prop="stock_amount" label="库存金额" width="150" sortable><template #default="{ row }">{{ formatNumber(row.stock_amount, 2) }}</template></el-table-column>
+        </el-table>
+      </div>
+      <footer class="inventory-overview-note">页面展示每日同步库存快照，不等同于吉客云实时库存。涉及调拨、锁定或采购操作时，请返回业务系统复核。</footer>
     </section>
   </div>
 </template>
+
+<style scoped>
+.inventory-overview-hero { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 118px; padding: 21px 23px; border: 1px solid var(--theme-soft-strong); border-radius: var(--radius); background: linear-gradient(120deg, var(--surface) 0%, var(--accent-soft) 100%); }
+.inventory-overview-hero > div:first-child { display: grid; gap: 6px; }
+.inventory-overview-hero span { color: var(--accent-strong); font-size: 11px; font-weight: 750; }
+.inventory-overview-hero h2 { margin: 0; color: var(--text); font-size: 24px; }
+.inventory-overview-hero p, .inventory-warehouse-panel header p { margin: 0; color: var(--muted-2); font-size: 12px; }
+.inventory-overview-hero__actions { display: flex; align-items: center; gap: 18px; }
+.inventory-warehouse-panel > header { min-height: 66px; }
+.inventory-warehouse-panel header > div:first-child { display: grid; gap: 4px; }
+.inventory-warehouse-panel h2 { margin: 0; }
+.inventory-warehouse-content { display: grid; grid-template-columns: minmax(420px, .9fr) minmax(620px, 1.1fr); min-width: 0; }
+.inventory-warehouse-content .chart { min-width: 0; height: 420px; border-right: 1px solid var(--border); }
+.inventory-overview-note { padding: 11px 18px; color: var(--muted-2); background: var(--accent-soft); border-top: 1px solid var(--theme-soft-strong); font-size: 11px; }
+@media (max-width: 1180px) { .inventory-warehouse-content { grid-template-columns: 1fr; } .inventory-warehouse-content .chart { border-right: 0; border-bottom: 1px solid var(--border); } }
+@media (max-width: 720px) { .inventory-overview-hero { align-items: flex-start; flex-direction: column; } .inventory-overview-hero__actions { width: 100%; align-items: flex-start; flex-direction: column; } }
+</style>

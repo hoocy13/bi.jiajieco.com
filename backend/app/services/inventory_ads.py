@@ -290,6 +290,10 @@ def load_inventory_health_from_ads(
             f"""
             SELECT
               COUNT(*) AS item_count,
+              COUNT(DISTINCT h.`product_code`) AS product_count,
+              SUM(h.`stock`) AS stock_quantity,
+              SUM(h.`available_stock`) AS available_stock,
+              SUM(h.`stock_amount`) AS stock_amount,
               SUM(h.`issue_type` = 'negative') AS negative_count,
               SUM(h.`issue_type` = 'missing_barcode') AS missing_barcode_count,
               SUM(h.`issue_type` = 'out_of_stock') AS out_of_stock_count,
@@ -312,8 +316,29 @@ def load_inventory_health_from_ads(
         "overstock": "h.`issue_type` = 'overstock'",
         "healthy": "h.`issue_type` = 'healthy'",
     }
-    issue_where = issue_conditions.get(issue_type, "h.`issue_type` <> 'healthy'")
+    issue_where = "1 = 1" if issue_type == "any" else issue_conditions.get(issue_type, "h.`issue_type` <> 'healthy'")
     filtered_where = f"{common_where} AND {issue_where}"
+    order_sql = (
+        "h.`available_stock` DESC, h.`stock` DESC, h.`product_code`, h.`warehouse`"
+        if issue_type == "any"
+        else """
+          CASE h.`issue_type`
+            WHEN 'negative' THEN 1
+            WHEN 'out_of_stock' THEN 2
+            WHEN 'shortage' THEN 3
+            WHEN 'missing_barcode' THEN 4
+            WHEN 'no_sales' THEN 5
+            WHEN 'overstock' THEN 6
+            ELSE 7
+          END,
+          h.`stock_amount` DESC,
+          h.`available_stock` DESC,
+          h.`product_code`,
+          h.`brand`,
+          h.`product_type`,
+          h.`warehouse`
+        """
+    )
     total = ads_db.execute(
         text(
             f"""
@@ -331,22 +356,7 @@ def load_inventory_health_from_ads(
             SELECT *
             FROM `ads_inventory_health_item` h
             WHERE {filtered_where}
-            ORDER BY
-              CASE h.`issue_type`
-                WHEN 'negative' THEN 1
-                WHEN 'out_of_stock' THEN 2
-                WHEN 'shortage' THEN 3
-                WHEN 'missing_barcode' THEN 4
-                WHEN 'no_sales' THEN 5
-                WHEN 'overstock' THEN 6
-                ELSE 7
-              END,
-              h.`stock_amount` DESC,
-              h.`available_stock` DESC,
-              h.`product_code`,
-              h.`brand`,
-              h.`product_type`,
-              h.`warehouse`
+            ORDER BY {order_sql}
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -368,7 +378,15 @@ def load_inventory_health_from_ads(
         "product_types_selected": list(product_types),
         "issue_type": issue_type,
         "pagination": {"page": page, "page_size": page_size, "total": _integer(total)},
-        "metrics": {key: _integer(value) for key, value in metrics.items()},
+        "metrics": {
+            **{key: _integer(metrics[key]) for key in (
+                "item_count", "product_count", "negative_count", "missing_barcode_count",
+                "out_of_stock_count", "no_sales_count", "shortage_count", "overstock_count", "healthy_count",
+            )},
+            "stock_quantity": _number(metrics["stock_quantity"]),
+            "available_stock": _number(metrics["available_stock"]),
+            "stock_amount": _number(metrics["stock_amount"]),
+        },
         "rows": [
             {
                 "rank": offset + index + 1,

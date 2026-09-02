@@ -774,13 +774,30 @@ def inventory_health(
         "overstock": "issue_type = 'overstock'",
         "healthy": "issue_type = 'healthy'",
     }
-    issue_where = issue_conditions.get(issue_type, "issue_type <> 'healthy'")
+    issue_where = "1 = 1" if issue_type == "any" else issue_conditions.get(issue_type, "issue_type <> 'healthy'")
+    order_sql = (
+        "available_stock DESC, stock DESC, product_code, warehouse"
+        if issue_type == "any"
+        else """
+          FIELD(issue_type, 'negative', 'out_of_stock', 'shortage', 'missing_barcode', 'no_sales', 'overstock'),
+          stock_amount DESC,
+          available_stock DESC,
+          product_code,
+          brand,
+          product_type,
+          warehouse
+        """
+    )
 
     metrics = db.execute(
         text(
             f"""
             SELECT
               COUNT(*) AS item_count,
+              COUNT(DISTINCT product_code) AS product_count,
+              SUM(stock) AS stock_quantity,
+              SUM(available_stock) AS available_stock,
+              SUM(stock_amount) AS stock_amount,
               SUM(issue_type = 'negative') AS negative_count,
               SUM(issue_type = 'missing_barcode') AS missing_barcode_count,
               SUM(issue_type = 'out_of_stock') AS out_of_stock_count,
@@ -803,14 +820,7 @@ def inventory_health(
             SELECT *
             FROM ({health_sql}) health_items
             WHERE {issue_where}
-            ORDER BY
-              FIELD(issue_type, 'negative', 'out_of_stock', 'shortage', 'missing_barcode', 'no_sales', 'overstock'),
-              stock_amount DESC,
-              available_stock DESC,
-              product_code,
-              brand,
-              product_type,
-              warehouse
+            ORDER BY {order_sql}
             LIMIT :limit OFFSET :offset
             """
         ),
@@ -833,7 +843,15 @@ def inventory_health(
         "product_types_selected": list(product_types),
         "issue_type": issue_type,
         "pagination": {"page": page, "page_size": page_size, "total": _int(total)},
-        "metrics": {key: _int(value) for key, value in metrics.items()},
+        "metrics": {
+            **{key: _int(metrics[key]) for key in (
+                "item_count", "product_count", "negative_count", "missing_barcode_count",
+                "out_of_stock_count", "no_sales_count", "shortage_count", "overstock_count", "healthy_count",
+            )},
+            "stock_quantity": _number(metrics["stock_quantity"]),
+            "available_stock": _number(metrics["available_stock"]),
+            "stock_amount": _number(metrics["stock_amount"]),
+        },
         "rows": [
             {
                 "rank": offset + index + 1,

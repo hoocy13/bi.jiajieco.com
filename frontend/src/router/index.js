@@ -12,6 +12,7 @@ const BrandChannelAnalysis = () => import('../views/data/BrandChannelAnalysis.vu
 const ChannelAnalysis = () => import('../views/data/ChannelAnalysis.vue')
 const CustomerAnalysis = () => import('../views/data/CustomerAnalysis.vue')
 const InventoryOverview = () => import('../views/data/InventoryOverview.vue')
+const InventoryDetail = () => import('../views/data/InventoryDetail.vue')
 const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
 const SlowMoving = () => import('../views/data/SlowMoving.vue')
 const BatchExpiryAnalysis = () => import('../views/data/BatchExpiryAnalysis.vue')
@@ -53,6 +54,7 @@ const routes = [
       { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析', permission: 'sales.view' } },
                     { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览', permission: 'inventory.view' } },
+      { path: 'inventory/detail', component: InventoryDetail, meta: { title: '库存明细', permission: 'inventory.view' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货', permission: 'inventory.view' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存', permission: 'inventory.view' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '品牌周转', permission: 'inventory.view' } },

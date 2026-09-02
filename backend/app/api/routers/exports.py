@@ -208,6 +208,26 @@ def _inventory_health(filters: dict[str, Any], user: User, db: Session) -> tuple
     return data, columns, _filter_summary(filters, labels), ("数据口径与库存健康度页面当前筛选条件一致。", "库存优先使用可用库存；编号和条码按文本写入。")
 
 
+def _inventory_detail(filters: dict[str, Any], user: User, db: Session) -> tuple[dict, tuple[ExportColumn, ...], dict, tuple[str, ...]]:
+    data = _unwrap(inventory.inventory_health(
+        Response(), keyword=_text(filters.get("keyword")), barcode=_text(filters.get("barcode")),
+        warehouse=_texts(filters.get("warehouse")), product_type=_texts(filters.get("product_type")),
+        issue_type="any", page=1, page_size=MAX_EXPORT_ROWS + 1,
+        current_user=user, db=db,
+    ))
+    columns = (
+        ExportColumn("product", "商品名称", width=42), ExportColumn("product_code", "货品编号", width=22),
+        ExportColumn("barcode", "货品条码", width=22), ExportColumn("brand", "品牌", width=18),
+        ExportColumn("product_type", "货品分类", width=12), ExportColumn("warehouse", "仓库", width=20),
+        ExportColumn("stock", "库存数量", "integer", 14), ExportColumn("available_stock", "可用库存", "integer", 14),
+        ExportColumn("stock_amount", "库存金额", "number", 16), ExportColumn("sales30", "近30天销量", "integer", 14),
+        ExportColumn("sales90", "近90天销量", "integer", 14),
+    )
+    labels = {"keyword": "商品关键词", "barcode": "货品条码", "warehouse": "仓库", "product_type": "货品分类"}
+    notes = ("数据口径与库存明细页面当前筛选条件一致。", "库存为每日同步快照，业务操作前请以吉客云实时库存为准。", "源数据未提供成本时，库存金额会显示为 0，请以页面可用性提示为准。", "货品编号和条码按文本写入。")
+    return data, columns, _filter_summary(filters, labels), notes
+
+
 def _inventory_turnover(filters: dict[str, Any], user: User, db: Session) -> tuple[dict, tuple[ExportColumn, ...], dict, tuple[str, ...]]:
     data = _unwrap(inventory.inventory_turnover(
         Response(), keyword=_text(filters.get("keyword")), barcode=_text(filters.get("barcode")),
@@ -295,6 +315,7 @@ EXPORTERS: dict[str, tuple[str, Callable]] = {
     "customer-churn-alerts": ("客户流失预警", _customer_churn),
     "slow-moving": ("滞销分析", _slow_moving),
     "inventory-health": ("库存健康度", _inventory_health),
+    "inventory-detail": ("库存明细", _inventory_detail),
     "inventory-turnover": ("商品周转", _inventory_turnover),
     "batch-expiry-fefo": ("批次效期_FEFO明细", _batch_expiry_fefo),
     "batch-expiry-long": ("批次效期_长效期明细", _batch_expiry_long),
