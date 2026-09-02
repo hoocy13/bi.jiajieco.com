@@ -509,6 +509,7 @@ def build_brand_inventory_turnover_analysis(
         sales_amount = sum(_decimal(row["sales_amount"]) for row in rows)
         average_inventory = sum(_decimal(row["average_inventory"]) for row in rows)
         ending_inventory = sum(_decimal(row["ending_inventory"]) for row in rows)
+        current_inventory = sum(_decimal(row["current_inventory"]) for row in rows)
         ending_amount = sum(_decimal(row["ending_inventory_amount"]) for row in rows)
         turnover_rate, turnover_days = _turnover_values(
             sales_quantity, average_inventory, period_days
@@ -518,6 +519,7 @@ def build_brand_inventory_turnover_analysis(
             "sales_amount": float(sales_amount),
             "average_inventory": float(average_inventory),
             "ending_inventory": float(ending_inventory),
+            "current_inventory": float(current_inventory),
             "ending_inventory_amount": float(ending_amount),
             "turnover_rate": round(turnover_rate, 4) if turnover_rate is not None else None,
             "turnover_days": round(turnover_days, 1) if turnover_days is not None else None,

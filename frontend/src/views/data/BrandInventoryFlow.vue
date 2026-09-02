@@ -76,7 +76,7 @@ const analysis = ref({
 const flowExportColumns = [{ key: 'month', label: '月份' }, { key: 'opening_quantity', label: '期初库存', kind: 'integer' }, { key: 'inbound_quantity', label: '采购入库', kind: 'integer' }, { key: 'sales_quantity', label: '销售数量', kind: 'integer' }, { key: 'ending_quantity', label: '期末库存', kind: 'integer' }, { key: 'sell_through_rate', label: '可售消化率', kind: 'percent' }, { key: 'inbound_cost', label: '采购入库成本', kind: 'number' }, { key: 'sales_amount', label: '分摊销售额', kind: 'number' }, { key: 'ending_stock_amount', label: '期末库存金额', kind: 'number' }]
 const turnoverAnalysis = ref({
   brand: selectedBrand.value, start_date: defaultStartDate, end_date: defaultEndDate, period: `${defaultYear}年01月—${defaultYear}年${String(lastCompleteMonth.getMonth() + 1).padStart(2, '0')}月`, period_days: defaultPeriodDays,
-  summary: { sales_quantity: 0, sales_amount: 0, average_inventory: 0, ending_inventory: 0, ending_inventory_amount: 0, turnover_rate: null, turnover_days: null },
+  summary: { sales_quantity: 0, sales_amount: 0, average_inventory: 0, ending_inventory: 0, current_inventory: 0, ending_inventory_amount: 0, turnover_rate: null, turnover_days: null },
   category_summary: [], waterline: [], channel_mix: [], slow_products: [], hot_products: [], details: [],
   channel_turnover: { available: false, reason: '' },
   freshness: { snapshot_count: 0, snapshot_expected: 0, snapshot_complete: false, source_updated_at: '' },
@@ -149,6 +149,12 @@ const metricCards = computed(() => [
     unit: '件',
     note: '库存金额 ' + formatCompact(analysis.value.summary.ending_stock_amount) + ' 元',
   },
+  {
+    label: '当前可用库存',
+    value: turnoverAnalysis.value.summary.current_inventory,
+    unit: '件',
+    note: '最新库存快照',
+  },
 
   {
     label: '入销比',
@@ -188,6 +194,7 @@ const turnoverMetrics = computed(() => [
   })),
   { label: `${periodYearLabel.value}净销售`, value: formatNumber(turnoverAnalysis.value.summary.sales_quantity), unit: '件', note: `明细分摊销售额 ${formatCompact(turnoverAnalysis.value.summary.sales_amount)} 元` },
   { label: `${periodYearLabel.value}期末库存`, value: formatNumber(turnoverAnalysis.value.summary.ending_inventory), unit: '件', note: `库存金额 ${formatCompact(turnoverAnalysis.value.summary.ending_inventory_amount)} 元` },
+  { label: '当前可用库存', value: formatNumber(turnoverAnalysis.value.summary.current_inventory), unit: '件', note: '最新库存快照' },
 ])
 
 const waterlineChartOption = computed(() => ({
@@ -326,13 +333,11 @@ async function fetchData() {
       brand: selectedBrand.value, start_date: startDate, end_date: endDate,
       warehouse: selectedWarehouses.value, product_type: effectiveProductTypes.value,
     })]
-    if (activePage.value !== 'overview') {
-      turnoverLoading.value = true
-      tasks.push(getBrandInventoryTurnoverAnalysis({
-        brand: selectedBrand.value, start_date: startDate, end_date: endDate,
-        warehouse: selectedWarehouses.value, product_type: effectiveProductTypes.value, ranking_limit: 10,
-      }))
-    }
+    turnoverLoading.value = true
+    tasks.push(getBrandInventoryTurnoverAnalysis({
+      brand: selectedBrand.value, start_date: startDate, end_date: endDate,
+      warehouse: selectedWarehouses.value, product_type: effectiveProductTypes.value, ranking_limit: 10,
+    }))
     const [flowResponse, turnoverResponse] = await Promise.all(tasks)
     analysis.value = flowResponse.data
     if (turnoverResponse) turnoverAnalysis.value = turnoverResponse.data
@@ -721,8 +726,8 @@ onMounted(() => {
 .flow-pages, .detail-tabs { display: inline-flex; padding: 3px; border-radius: 7px; background: var(--flow-soft); }
 .flow-pages button, .detail-tabs button { border: 0; border-radius: 5px; padding: 8px 12px; background: transparent; color: #657286; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .flow-pages button.active, .detail-tabs button.active { background: #fff; color: var(--flow-primary); box-shadow: 0 1px 4px rgba(16, 24, 40, .12); }
-.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
-.turnover-metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+.turnover-metric-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; }
 .metric-card { min-width: 0; min-height: 108px; padding: 17px 18px; border-radius: 8px; display: grid; align-content: center; gap: 8px; border-top: 3px solid var(--flow-soft-strong); }.metric-card > span { color: #617083; font-size: 12px; font-weight: 700; }.metric-card div { display: flex; align-items: baseline; gap: 6px; min-width: 0; }.metric-card strong { font-size: clamp(18px, 1.3vw, 24px); line-height: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }.metric-card em { color: #7d8897; font-size: 11px; font-style: normal; }.metric-card small { color: #98a2b3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .metric-card.accent { border-color: var(--flow-dark); background: linear-gradient(135deg, var(--flow-dark), var(--flow-primary)); color: #fff; }.metric-card.accent > span, .metric-card.accent em, .metric-card.accent small { color: rgba(255, 255, 255, .78); }

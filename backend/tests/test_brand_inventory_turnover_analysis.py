@@ -191,7 +191,9 @@ class BrandInventoryTurnoverAnalysisTests(unittest.TestCase):
         )
 
         self.assertEqual(data["summary"]["sales_quantity"], 10)
+        self.assertEqual(data["summary"]["current_inventory"], 18)
         self.assertEqual([row["product_type"] for row in data["category_summary"]], ["正装"])
+        self.assertEqual(data["category_summary"][0]["current_inventory"], 18)
         self.assertEqual(len(data["details"]), 1)
         self.assertEqual(data["details"][0]["product_code"], "A")
         self.assertEqual(data["details"][0]["current_inventory"], 18)
