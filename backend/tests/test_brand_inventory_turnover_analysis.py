@@ -175,6 +175,10 @@ class BrandInventoryTurnoverAnalysisTests(unittest.TestCase):
                 {"month_key": "2025-01", "warehouse": "B仓", "product_type": "小样", "product_code": "B", "product_name": "B", "sales_quantity": 99},
             ],
             "stock": [],
+            "current_stock": [
+                {"warehouse": "A仓", "product_type": "正装", "product_code": "A", "product_name": "A", "current_inventory": 18},
+                {"warehouse": "B仓", "product_type": "小样", "product_code": "B", "product_name": "B", "current_inventory": 99},
+            ],
             "batches": [],
         }
         data = build_brand_inventory_turnover_analysis(
@@ -190,6 +194,7 @@ class BrandInventoryTurnoverAnalysisTests(unittest.TestCase):
         self.assertEqual([row["product_type"] for row in data["category_summary"]], ["正装"])
         self.assertEqual(len(data["details"]), 1)
         self.assertEqual(data["details"][0]["product_code"], "A")
+        self.assertEqual(data["details"][0]["current_inventory"], 18)
 
 
 if __name__ == "__main__":

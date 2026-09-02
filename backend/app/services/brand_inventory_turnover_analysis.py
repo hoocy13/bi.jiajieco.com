@@ -237,11 +237,35 @@ def load_brand_inventory_turnover_source(
         params,
     ).mappings().all()
 
+    current_stock_rows = ods_db.execute(
+        text(
+            """
+            SELECT
+              COALESCE(NULLIF(TRIM(`仓库`), ''), '未归类') AS warehouse,
+              COALESCE(NULLIF(TRIM(`货品分类`), ''), '未归类') AS product_type,
+              COALESCE(NULLIF(TRIM(`货品编号`), ''), '') AS product_code,
+              COALESCE(NULLIF(TRIM(`货品名称`), ''), '未命名商品') AS product_name,
+              SUM(COALESCE(`可用库存`, 0)) AS current_inventory,
+              MAX(`updatetime`) AS updated_at
+            FROM `分仓库查询`
+            WHERE TRIM(`品牌`) = :brand
+              AND COALESCE(NULLIF(TRIM(`货品分类`), ''), '未归类') IN ('正装', '小样')
+            GROUP BY
+              COALESCE(NULLIF(TRIM(`仓库`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(`货品分类`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(`货品编号`), ''), ''),
+              COALESCE(NULLIF(TRIM(`货品名称`), ''), '未命名商品')
+            """
+        ),
+        params,
+    ).mappings().all()
+
     return {
         "sales": [dict(row) for row in sales_rows],
         "channel_sales": channel_sales_rows,
         "channel_sales_scope": channel_sales_scope,
         "stock": [dict(row) for row in stock_rows],
+        "current_stock": [dict(row) for row in current_stock_rows],
         "batches": [dict(row) for row in batch_rows],
     }
 
@@ -333,6 +357,7 @@ def build_brand_inventory_turnover_analysis(
                 "last_sale_date": None,
                 "sales_by_month": {},
                 "stock_by_date": {},
+                "current_inventory": Decimal(0),
             },
         )
 
@@ -398,6 +423,14 @@ def build_brand_inventory_turnover_analysis(
         if row.get("updated_at"):
             source_updates.append(row["updated_at"])
 
+    for row in source.get("current_stock", []):
+        if not included(row):
+            continue
+        bucket = product_bucket(row)
+        bucket["current_inventory"] += _decimal(row.get("current_inventory"))
+        if row.get("updated_at"):
+            source_updates.append(row["updated_at"])
+
     period_days = (normalized_end - normalized_start).days + 1
     product_rows = []
     for bucket in products.values():
@@ -456,6 +489,7 @@ def build_brand_inventory_turnover_analysis(
                 "average_inventory": float(average_inventory),
                 "average_inventory_amount": float(average_inventory_amount),
                 "ending_inventory": float(ending["quantity"]),
+                "current_inventory": float(bucket["current_inventory"]),
                 "ending_inventory_amount": float(ending["amount"]),
                 "turnover_rate": round(turnover_rate, 4) if turnover_rate is not None else None,
                 "turnover_days": round(turnover_days, 1) if turnover_days is not None else None,

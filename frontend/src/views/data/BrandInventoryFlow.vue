@@ -692,6 +692,7 @@ onMounted(() => {
           <el-table-column prop="sales_amount" label="分摊销售额" width="145" align="right" sortable><template #default="{ row }">{{ formatNumber(row.sales_amount, 2) }}</template></el-table-column>
           <el-table-column prop="average_inventory" label="月末平均库存" width="140" align="right" sortable><template #default="{ row }">{{ formatNumber(row.average_inventory) }}</template></el-table-column>
           <el-table-column prop="ending_inventory" label="期末库存" width="120" align="right" sortable><template #default="{ row }">{{ formatNumber(row.ending_inventory) }}</template></el-table-column>
+          <el-table-column prop="current_inventory" label="当前可用库存" width="140" align="right" sortable><template #default="{ row }">{{ formatNumber(row.current_inventory) }}</template></el-table-column>
           <el-table-column prop="ending_inventory_amount" label="期末库存金额" width="150" align="right" sortable><template #default="{ row }">{{ formatNumber(row.ending_inventory_amount, 2) }}</template></el-table-column>
           <el-table-column prop="turnover_rate" label="周转次数" width="115" align="right" sortable><template #default="{ row }">{{ turnoverRateText(row.turnover_rate) }}</template></el-table-column>
           <el-table-column prop="turnover_days" label="周转天数" width="115" align="right" sortable><template #default="{ row }">{{ turnoverDaysText(row.turnover_days) }}</template></el-table-column>

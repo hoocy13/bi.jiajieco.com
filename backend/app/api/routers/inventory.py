@@ -1851,7 +1851,7 @@ def brand_inventory_turnover_analysis(
                     end_date,
                 )
                 cache_key = _cache_key(
-                    "brand-inventory-turnover-analysis-v4",
+                    "brand-inventory-turnover-analysis-v5",
                     start_date=start_date,
                     end_date=end_date,
                     brand=normalized_brand,
@@ -1895,7 +1895,7 @@ def brand_inventory_turnover_analysis(
             ) from exc
 
     cache_key = _cache_key(
-        "brand-inventory-turnover-analysis-v4",
+        "brand-inventory-turnover-analysis-v5",
         start_date=start_date,
         end_date=end_date,
         brand=normalized_brand,
