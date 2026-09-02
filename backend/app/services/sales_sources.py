@@ -44,12 +44,18 @@ def is_online_sales_channel(
     category_text = str(category or "").strip() or "未分类"
     platform_text = str(platform or "").strip() or "未设置"
     channel_text = str(channel_name or "").strip() or "未归类"
+    if channel_text == "桢植线下快闪店":
+        return False
+    if "京东" in platform_text or "京东" in channel_text:
+        return True
+    if category_text == "梧颜" or any(
+        keyword in channel_text for keyword in ("梧颜", "枷美妆")
+    ):
+        return True
     if category_text == "销售部渠道":
         return False
     if category_text == "运营部线上渠道":
-        return channel_text != "桢植线下快闪店"
-    if category_text == "梧颜":
-        return platform_text != "未设置"
+        return True
     if channel_text.startswith("渠道预留"):
         return False
     if channel_text.startswith("海旅"):

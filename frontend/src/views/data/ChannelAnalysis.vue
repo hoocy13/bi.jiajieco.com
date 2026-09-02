@@ -66,6 +66,8 @@ const analysis = ref({
 })
 const channelExportColumns = [{ key: 'channel_code', label: '编号' }, { key: 'channel_name', label: '渠道名称' }, { key: 'category', label: '渠道分类' }, { key: 'platform', label: '平台归属' }, { key: 'owner', label: '负责人' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '销售占比', kind: 'percent' }]
 const customerDrawerVisible = ref(false)
+const channelDetailVisible = ref(false)
+const selectedPlatform = ref(null)
 const customerLoading = ref(false)
 const selectedOfflineChannel = ref(null)
 const customerKeyword = ref('')
@@ -105,15 +107,29 @@ function isOnlineChannel(item) {
   return Boolean(item.platform && item.platform !== '未设置')
 }
 
-function displayPlatform(platform) {
-  const value = String(platform || '')
+function isWuyanChannel(item) {
+  const channelName = String(item.channel_name || '').trim()
+  const category = String(item.category || '').trim()
+  return category === '梧颜' || ['梧颜', '枷美妆'].some((keyword) => channelName.includes(keyword))
+}
+
+function displayPlatform(item) {
+  const platform = String(item.platform || '').trim()
+  const channelName = String(item.channel_name || '').trim()
+  const value = `${platform} ${channelName}`
   const platformNames = [
     ['天猫', '天猫'], ['淘宝', '淘宝'], ['拼多多', '拼多多'], ['得物', '得物'],
     ['京东', '京东'], ['快手', '快手'], ['抖店', '抖音'], ['抖音', '抖音'],
     ['美团', '美团'], ['微信', '微信'], ['SHEIN', 'SHEIN'], ['95分', '95分'],
     ['度小店', '百度'], ['基木鱼', '百度'],
   ]
-  return platformNames.find(([keyword]) => value.includes(keyword))?.[1] || value
+  return platformNames.find(([keyword]) => value.includes(keyword))?.[1]
+    || (platform && platform !== '未设置' ? platform : '其他电商')
+}
+
+function channelKindLabel(item) {
+  if (isWuyanChannel(item)) return '梧颜'
+  return isOnlineChannel(item) ? '线上' : '线下'
 }
 
 const dateRangeLabel = computed(() => {
@@ -124,11 +140,11 @@ const dateRangeLabel = computed(() => {
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 const salesChannelCounts = computed(() => analysis.value.rows.reduce((result, item) => {
   if (Number(item.orders || 0) === 0 && Number(item.paid_amount || 0) === 0) return result
-  const key = isOnlineChannel(item) ? 'online' : 'offline'
+  const key = isWuyanChannel(item) ? 'wuyan' : isOnlineChannel(item) ? 'online' : 'offline'
   result[key] += 1
   result[`${key}Amount`] += Number(item.paid_amount || 0)
   return result
-}, { online: 0, offline: 0, onlineAmount: 0, offlineAmount: 0 }))
+}, { online: 0, offline: 0, wuyan: 0, onlineAmount: 0, offlineAmount: 0, wuyanAmount: 0 }))
 const metrics = computed(() => [
   {
     label: '周期明细分摊销售额', alias: '', value: formatNumber(analysis.value.summary.paid_amount, 2),
@@ -148,25 +164,49 @@ const metrics = computed(() => [
     label: '线下销售渠道', value: formatNumber(salesChannelCounts.value.offline), unit: '个',
     note: `销售额占比 ${formatPercent(analysis.value.summary.paid_amount ? salesChannelCounts.value.offlineAmount / analysis.value.summary.paid_amount * 100 : 0)}`,
   },
+  {
+    label: '梧颜渠道', value: formatNumber(salesChannelCounts.value.wuyan), unit: '个',
+    note: `销售额占比 ${formatPercent(analysis.value.summary.paid_amount ? salesChannelCounts.value.wuyanAmount / analysis.value.summary.paid_amount * 100 : 0)}`,
+  },
 ])
 
 const activeChannels = computed(() => analysis.value.rows.filter(
   (item) => Number(item.orders || 0) !== 0 || Number(item.paid_amount || 0) !== 0,
 ))
 const allOnlineChannels = computed(() => activeChannels.value
-  .filter(isOnlineChannel)
+  .filter((item) => isOnlineChannel(item) && !isWuyanChannel(item))
   .sort((a, b) => Number(b.paid_amount || 0) - Number(a.paid_amount || 0)))
 const allOfflineChannels = computed(() => activeChannels.value
-  .filter((item) => !isOnlineChannel(item))
+  .filter((item) => !isOnlineChannel(item) && !isWuyanChannel(item))
   .sort((a, b) => Number(b.paid_amount || 0) - Number(a.paid_amount || 0)))
-const onlineChannels = computed(() => allOnlineChannels.value.slice(0, 5))
-const offlineChannels = computed(() => allOfflineChannels.value.slice(0, 6))
+const allWuyanChannels = computed(() => activeChannels.value
+  .filter(isWuyanChannel)
+  .sort((a, b) => Number(b.paid_amount || 0) - Number(a.paid_amount || 0)))
+const onlinePlatforms = computed(() => {
+  const groups = new Map()
+  allOnlineChannels.value.forEach((item) => {
+    const platform = displayPlatform(item)
+    const current = groups.get(platform) || { platform, channels: 0, orders: 0, quantity: 0, paid_amount: 0, share: 0, channel_rows: [] }
+    current.channels += 1
+    current.orders += Number(item.orders || 0)
+    current.quantity += Number(item.quantity || 0)
+    current.paid_amount += Number(item.paid_amount || 0)
+    current.share += Number(item.share || 0)
+    current.channel_rows.push(item)
+    groups.set(platform, current)
+  })
+  return [...groups.values()].sort((a, b) => b.paid_amount - a.paid_amount)
+})
+const onlineChannels = computed(() => onlinePlatforms.value)
+const offlineChannels = computed(() => allOfflineChannels.value)
+const wuyanChannels = computed(() => allWuyanChannels.value)
 const onlineShare = computed(() => allOnlineChannels.value.reduce((sum, item) => sum + Number(item.share || 0), 0))
 const offlineShare = computed(() => allOfflineChannels.value.reduce((sum, item) => sum + Number(item.share || 0), 0))
-const onlinePlatforms = computed(() => analysis.value.platform_summary.filter((item) => item.platform !== '未设置'))
+const wuyanShare = computed(() => allWuyanChannels.value.reduce((sum, item) => sum + Number(item.share || 0), 0))
 const channelDirectionSummary = computed(() => [
   { label: '线上渠道', rows: allOnlineChannels.value },
   { label: '线下渠道', rows: allOfflineChannels.value },
+  { label: '梧颜', rows: allWuyanChannels.value },
 ].map((group) => ({
   channel_kind: group.label,
   channels: group.rows.length,
@@ -175,21 +215,32 @@ const channelDirectionSummary = computed(() => [
   share: group.rows.reduce((sum, item) => sum + Number(item.share || 0), 0),
 })))
 
+function openPlatformChannels(platform) {
+  selectedPlatform.value = platform
+  channelDetailVisible.value = true
+}
+
+function closeChannelDetail() {
+  channelDetailVisible.value = false
+}
+
 const salesContribution = computed(() => {
   const channels = activeChannels.value.filter((item) => Number(item.paid_amount || 0) !== 0)
   const summarize = (field, label, unit, digits) => {
-    const online = channels.filter(isOnlineChannel).reduce((sum, item) => sum + Number(item[field] || 0), 0)
-    const offline = channels.filter((item) => !isOnlineChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
-    const total = Math.max(online, 0) + Math.max(offline, 0)
+    const online = channels.filter((item) => isOnlineChannel(item) && !isWuyanChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
+    const offline = channels.filter((item) => !isOnlineChannel(item) && !isWuyanChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
+    const wuyan = channels.filter(isWuyanChannel).reduce((sum, item) => sum + Number(item[field] || 0), 0)
+    const total = Math.max(online, 0) + Math.max(offline, 0) + Math.max(wuyan, 0)
     return {
-      field, label, unit, digits, online, offline,
+      field, label, unit, digits, online, offline, wuyan,
       onlinePercent: total ? Math.max(online, 0) / total * 100 : 0,
       offlinePercent: total ? Math.max(offline, 0) / total * 100 : 0,
+      wuyanPercent: total ? Math.max(wuyan, 0) / total * 100 : 0,
     }
   }
   const amount = summarize('paid_amount', '分摊销售额贡献', '元', 2)
   return {
-    hasData: channels.length > 0 && (amount.online !== 0 || amount.offline !== 0),
+    hasData: channels.length > 0 && (amount.online !== 0 || amount.offline !== 0 || amount.wuyan !== 0),
     metrics: [summarize('quantity', '销售数量贡献', '件', 0), amount],
   }
 })
@@ -282,6 +333,8 @@ async function fetchAnalysis() {
     const params = buildParams()
     const result = await getSalesChannelAnalysis(params)
     analysis.value = result.data
+    channelDetailVisible.value = false
+    selectedPlatform.value = null
     dateRange.value = [analysis.value.start_date, analysis.value.end_date]
     const nextQuery = { view: activePage.value, ...params }
     router.replace({ query: nextQuery })
@@ -375,7 +428,7 @@ onMounted(fetchAnalysis)
         <div>
           <p class="hero-eyebrow">CHANNEL PERFORMANCE</p>
           <h1>渠道经营看板</h1>
-          <p>月度走势、线上线下贡献与渠道明细集中查看</p>
+          <p>月度走势、线上线下与梧颜贡献、渠道明细集中查看</p>
         </div>
       </div>
       <div class="hero-actions">
@@ -423,10 +476,11 @@ onMounted(fetchAnalysis)
 
       <article v-if="salesContribution.hasData" class="panel contribution-panel">
         <header>
-          <div><p class="section-kicker">结构洞察</p><h2>线上与线下贡献</h2></div>
+          <div><p class="section-kicker">结构洞察</p><h2>线上、线下与梧颜贡献</h2></div>
           <div class="contribution-legend" aria-label="渠道维度图例">
             <span><i class="is-online"></i>线上</span>
             <span><i class="is-offline"></i>线下</span>
+            <span><i class="is-wuyan"></i>梧颜</span>
           </div>
         </header>
         <div class="comparison-list">
@@ -436,15 +490,18 @@ onMounted(fetchAnalysis)
               <div class="comparison-percentages">
                 <span class="is-online">线上 <strong>{{ formatPercent(item.onlinePercent) }}</strong></span>
                 <span class="is-offline">线下 <strong>{{ formatPercent(item.offlinePercent) }}</strong></span>
+                <span class="is-wuyan">梧颜 <strong>{{ formatPercent(item.wuyanPercent) }}</strong></span>
               </div>
             </div>
-            <div class="comparison-bar" :aria-label="`${item.label}线上线下占比`">
+            <div class="comparison-bar" :aria-label="`${item.label}线上线下梧颜占比`">
               <i class="is-online" :style="{ width: progressWidth(item.onlinePercent) }"></i>
               <i class="is-offline" :style="{ width: progressWidth(item.offlinePercent) }"></i>
+              <i class="is-wuyan" :style="{ width: progressWidth(item.wuyanPercent) }"></i>
             </div>
             <div class="comparison-values">
               <span><i class="is-online"></i><em>线上</em><b>{{ formatNumber(item.online, item.digits) }} {{ item.unit }}</b></span>
               <span><i class="is-offline"></i><em>线下</em><b>{{ formatNumber(item.offline, item.digits) }} {{ item.unit }}</b></span>
+              <span><i class="is-wuyan"></i><em>梧颜</em><b>{{ formatNumber(item.wuyan, item.digits) }} {{ item.unit }}</b></span>
             </div>
           </div>
         </div>
@@ -453,40 +510,84 @@ onMounted(fetchAnalysis)
 
     <section v-else-if="activePage === 'channel'" class="channel-efficiency-section" data-testid="channel-efficiency">
       <div class="section-heading">
-        <div><p class="section-kicker">渠道表现</p><h2>线上与线下渠道表现</h2></div>
+        <div><p class="section-kicker">渠道表现</p><h2>线上、线下与梧颜渠道表现</h2></div>
         <span>按明细分摊销售额排序</span>
       </div>
       <div class="channel-efficiency-grid">
         <article class="panel efficiency-card">
           <header>
-            <div><h2>线上 TOP 渠道</h2><p>按业务渠道分类口径统计</p></div>
+            <div><h2>线上平台</h2></div>
             <strong class="share-total">{{ formatPercent(onlineShare) }}</strong>
           </header>
-          <div v-if="onlineChannels.length" class="ranked-channel-list">
-            <div v-for="(item, index) in onlineChannels" :key="item.channel_name" class="ranked-channel-item">
+          <div v-if="onlineChannels.length" class="ranked-channel-list is-fully-expanded">
+            <button
+              v-for="(item, index) in onlineChannels"
+              :key="item.platform"
+              type="button"
+              class="ranked-channel-item is-clickable"
+              @click="openPlatformChannels(item)"
+            >
               <span class="channel-rank">{{ index + 1 }}</span>
-              <div class="channel-main"><strong>{{ displayPlatform(item.platform === '未设置' ? '线上渠道' : item.platform) }}</strong><span>{{ item.channel_name }}</span></div>
+              <div class="channel-main"><strong>{{ item.platform }}</strong><span>{{ item.channels }} 个销售渠道</span></div>
               <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
-            </div>
+            </button>
           </div>
           <el-empty v-else description="暂无线上渠道数据" :image-size="76" />
         </article>
 
         <article class="panel efficiency-card">
           <header>
-            <div><h2>线下核心渠道</h2><p>按业务渠道分类口径统计</p></div>
+            <div><h2>线下渠道</h2></div>
             <strong class="share-total">{{ formatPercent(offlineShare) }}</strong>
           </header>
-          <div v-if="offlineChannels.length" class="offline-channel-list">
-            <div v-for="item in offlineChannels" :key="item.channel_name" class="offline-channel-item">
-              <div class="contribution-meta"><strong>{{ item.channel_name }}</strong><span>{{ formatPercent(item.share) }}</span></div>
-              <div class="progress-track"><i :style="{ width: progressWidth(item.share) }"></i></div>
-              <div class="contribution-detail"><span>{{ item.category || '未分类' }}</span><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+          <div v-if="offlineChannels.length" class="ranked-channel-list is-scrollable">
+            <div v-for="(item, index) in offlineChannels" :key="item.channel_name" class="ranked-channel-item">
+              <span class="channel-rank">{{ index + 1 }}</span>
+              <div class="channel-main"><strong>{{ item.channel_name }}</strong><span>{{ item.category || '未分类' }}</span></div>
+              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
             </div>
           </div>
           <el-empty v-else description="暂无线下渠道数据" :image-size="76" />
         </article>
+
+        <article class="panel efficiency-card">
+          <header>
+            <div><h2>梧颜</h2></div>
+            <strong class="share-total is-muted">{{ formatPercent(wuyanShare) }}</strong>
+          </header>
+          <div v-if="wuyanChannels.length" class="ranked-channel-list is-scrollable">
+            <div v-for="(item, index) in wuyanChannels" :key="item.channel_name" class="ranked-channel-item is-wuyan-row">
+              <span class="channel-rank">{{ index + 1 }}</span>
+              <div class="channel-main"><strong>{{ item.channel_name }}</strong><span>{{ item.platform && item.platform !== '未设置' ? item.platform : '梧颜渠道' }}</span></div>
+              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无梧颜渠道数据" :image-size="76" />
+        </article>
       </div>
+
+      <section v-if="channelDetailVisible" class="panel inline-channel-detail">
+        <header class="inline-detail-header">
+          <div>
+            <span>渠道明细</span>
+            <strong>{{ selectedPlatform?.platform }}</strong>
+          </div>
+          <button type="button" class="collapse-detail-button" @click="closeChannelDetail">收起明细</button>
+        </header>
+        <div v-if="selectedPlatform" class="inline-detail-content">
+          <div class="inline-detail-summary">
+            <div><span>销售渠道</span><strong>{{ selectedPlatform.channels }} 个</strong></div>
+            <div><span>销售额占比</span><strong>{{ formatPercent(selectedPlatform.share) }}</strong></div>
+            <div><span>分摊销售额</span><strong>¥ {{ formatNumber(selectedPlatform.paid_amount, 2) }}</strong></div>
+          </div>
+          <div class="inline-channel-grid">
+            <div v-for="item in selectedPlatform.channel_rows" :key="item.channel_name" class="inline-channel-item">
+              <div><strong>{{ item.channel_name }}</strong><span>{{ item.category || '未分类' }}</span></div>
+              <div><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
     </section>
 
     <template v-else>
@@ -497,7 +598,7 @@ onMounted(fetchAnalysis)
 
       <div class="content-grid detail-summary-grid">
         <section class="panel">
-          <header><h2>线上与线下渠道表现<span class="panel-source">（渠道列表 + 销售单明细账）</span></h2></header>
+          <header><h2>渠道归属表现<span class="panel-source">（线上 + 线下 + 梧颜）</span></h2></header>
           <el-table :data="channelDirectionSummary" height="300">
             <el-table-column prop="channel_kind" label="渠道归属" min-width="150" sortable />
             <el-table-column prop="channels" label="渠道数" width="120" sortable />
@@ -528,7 +629,7 @@ onMounted(fetchAnalysis)
           </el-table-column>
           <el-table-column prop="category" label="渠道分类" width="150" sortable />
           <el-table-column prop="platform" label="平台归属" width="140" sortable>
-            <template #default="{ row }">{{ isOnlineChannel(row) ? (row.platform === '未设置' ? '线上' : row.platform) : '线下' }}</template>
+            <template #default="{ row }">{{ channelKindLabel(row) === '线上' ? displayPlatform(row) : channelKindLabel(row) }}</template>
           </el-table-column>
           <el-table-column prop="owner" label="负责人" width="110" sortable />
           <el-table-column prop="authorized" label="授权" width="90" sortable>
@@ -678,7 +779,7 @@ onMounted(fetchAnalysis)
 .hero-period span { display: block; color: var(--brand-primary); font-size: 13px; font-weight: 700; }
 .hero-period strong { display: block; margin-top: 7px; color: var(--ink); font-size: 14px; }
 
-.channel-kpi-grid { display: grid; grid-template-columns: 1.28fr repeat(4, 1fr); gap: 12px; }
+.channel-kpi-grid { display: grid; grid-template-columns: 1.28fr repeat(5, 1fr); gap: 12px; }
 .channel-kpi-card { min-width: 0; padding: 20px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 3px 12px rgba(23, 32, 51, .035); }
 .kpi-label { display: block; color: var(--muted); font-size: 13px; font-weight: 650; }
 .kpi-alias { margin-left: 4px; color: #94a3b8; font-size: 11px; font-weight: 500; }
@@ -703,15 +804,17 @@ onMounted(fetchAnalysis)
 .contribution-legend i, .comparison-values i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 2px; }
 .is-online { background: var(--brand-primary); }
 .is-offline { background: var(--brand-secondary); }
+.is-wuyan { background: #a8b0bd; }
 .comparison-list { display: grid; gap: 34px; padding: 30px 24px 28px; }
 .comparison-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .comparison-title > strong { color: var(--ink); font-size: 13px; }
 .comparison-percentages { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
 .comparison-percentages span { color: #475569; font-size: 11px; }
 .comparison-percentages strong { margin-left: 2px; font-size: 14px; font-weight: 800; }
-.comparison-percentages .is-online, .comparison-percentages .is-offline { background: transparent; }
+.comparison-percentages .is-online, .comparison-percentages .is-offline, .comparison-percentages .is-wuyan { background: transparent; }
 .comparison-percentages .is-online strong { color: var(--brand-primary); }
 .comparison-percentages .is-offline strong { color: var(--theme-secondary); }
+.comparison-percentages .is-wuyan strong { color: #7b8492; }
 .comparison-bar { display: flex; width: 100%; height: 10px; margin: 13px 0 12px; overflow: hidden; background: #eef1f5; border-radius: 3px; }
 .comparison-bar i { display: block; height: 100%; }
 .comparison-values { display: grid; gap: 6px; }
@@ -722,13 +825,21 @@ onMounted(fetchAnalysis)
 .channel-efficiency-section { padding-top: 4px; }
 .section-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 14px; padding: 0 4px; }
 .section-heading > span { color: #94a3b8; font-size: 12px; }
-.channel-efficiency-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.channel-efficiency-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 14px; }
 .efficiency-card > header { display: flex; justify-content: space-between; align-items: center; }
 .efficiency-card header p { margin: 6px 0 0; color: #94a3b8; font-size: 12px; }
 .share-total { color: var(--brand-primary); font-size: 20px; }
 .ranked-channel-list, .offline-channel-list { display: grid; gap: 0; padding: 4px 20px 18px; }
-.ranked-channel-item { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 68px; border-bottom: 1px solid #edf0f4; }
+.ranked-channel-list.is-scrollable { height: 726px; padding-right: 12px; padding-bottom: 0; overflow-y: auto; scrollbar-color: #d9dee7 transparent; scrollbar-gutter: stable; scrollbar-width: thin; }
+.ranked-channel-list.is-fully-expanded { min-height: 726px; }
+.ranked-channel-list.is-scrollable::-webkit-scrollbar { width: 6px; }
+.ranked-channel-list.is-scrollable::-webkit-scrollbar-track { background: transparent; }
+.ranked-channel-list.is-scrollable::-webkit-scrollbar-thumb { background: #d9dee7; border-radius: 6px; }
+.ranked-channel-item { display: grid; width: 100%; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 68px; padding: 0; border: 0; border-bottom: 1px solid #edf0f4; color: inherit; background: transparent; font: inherit; text-align: left; }
 .ranked-channel-item:last-child { border-bottom: 0; }
+.ranked-channel-item.is-clickable { cursor: pointer; }
+.ranked-channel-item.is-clickable:hover { background: linear-gradient(90deg, transparent, var(--brand-soft)); }
+.ranked-channel-item.is-clickable:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
 .channel-rank { display: grid; width: 30px; height: 30px; place-items: center; color: var(--brand-primary); background: var(--brand-soft); border-radius: 50%; font-size: 12px; font-weight: 800; }
 .channel-main, .channel-result { display: grid; gap: 5px; min-width: 0; }
 .channel-main strong, .channel-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -736,6 +847,28 @@ onMounted(fetchAnalysis)
 .channel-main span, .channel-result span { color: #94a3b8; font-size: 11px; }
 .channel-result { text-align: right; }
 .channel-result strong { color: var(--brand-primary); font-size: 14px; }
+.share-total.is-muted, .is-wuyan-row .channel-result strong { color: #7b8492; }
+.inline-channel-detail { margin-top: 14px; overflow: hidden; }
+.inline-detail-header { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 20px; border-bottom: 1px solid #eef1f4; }
+.inline-detail-header span, .inline-detail-header strong { display: block; }
+.inline-detail-header span { margin-bottom: 6px; color: #94a3b8; font-size: 11px; }
+.inline-detail-header strong { color: var(--ink); font-size: 18px; }
+.collapse-detail-button { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; color: #64748b; background: #fff; font-size: 12px; cursor: pointer; }
+.collapse-detail-button:hover { color: var(--brand-primary); border-color: color-mix(in srgb, var(--brand-primary) 35%, white); background: var(--brand-soft); }
+.collapse-detail-button:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+.inline-detail-content { padding: 18px 20px 22px; }
+.inline-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.inline-detail-summary > div { padding: 14px 16px; background: #f8fafc; border-radius: 8px; }
+.inline-detail-summary span, .inline-detail-summary strong { display: block; }
+.inline-detail-summary span { margin-bottom: 8px; color: #94a3b8; font-size: 11px; }
+.inline-detail-summary strong { color: var(--ink); font-size: 14px; }
+.inline-channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.inline-channel-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 14px; background: #f8fafc; border-radius: 8px; }
+.inline-channel-item > div { min-width: 0; }
+.inline-channel-item > div:last-child { flex: 0 0 auto; text-align: right; }
+.inline-channel-item strong, .inline-channel-item span { display: block; }
+.inline-channel-item strong { overflow: hidden; color: var(--ink); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.inline-channel-item span { margin-top: 5px; color: #94a3b8; font-size: 11px; }
 .offline-channel-item { padding: 14px 0; border-bottom: 1px solid #edf0f4; }
 .offline-channel-item:last-child { border-bottom: 0; }
 .contribution-meta, .contribution-detail { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -775,6 +908,7 @@ onMounted(fetchAnalysis)
   .hero-actions { width: 100%; align-items: flex-start; }
   .hero-period { text-align: left; }
   .channel-efficiency-grid { grid-template-columns: 1fr; }
+  .inline-channel-grid { grid-template-columns: 1fr; }
   .customer-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
@@ -786,6 +920,8 @@ onMounted(fetchAnalysis)
   .channel-kpi-grid { grid-template-columns: 1fr; }
   .section-heading { align-items: flex-start; flex-direction: column; }
   .comparison-title { align-items: flex-start; flex-direction: column; }
+  .inline-detail-header { align-items: flex-start; }
+  .inline-detail-summary { grid-template-columns: 1fr; }
   .customer-drawer-title, .customer-drill-meta { align-items: flex-start; flex-direction: column; }
   .customer-search { width: 100%; }
   .customer-summary-grid { grid-template-columns: 1fr; }
