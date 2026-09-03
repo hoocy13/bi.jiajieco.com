@@ -225,6 +225,41 @@ def _resolve_detail_sales_period(
     return params, meta
 
 
+def _resolve_customer_ads_period(
+    range_key: str,
+    start_date: date | None,
+    end_date: date | None,
+    coverage_start: date,
+    coverage_end: date,
+) -> tuple[dict, dict]:
+    if start_date or end_date:
+        resolved_start, resolved_end, period, applied_range = _range_bounds(
+            range_key, coverage_end, start_date, end_date
+        )
+        if resolved_start < coverage_start or resolved_end > coverage_end:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"客户分析数据范围为 {coverage_start.isoformat()} 至 "
+                    f"{coverage_end.isoformat()}，请调整查询日期"
+                ),
+            )
+    else:
+        resolved_start, resolved_end, period, applied_range = _range_bounds(
+            range_key, coverage_end, None, None
+        )
+    return (
+        {"start_date": resolved_start, "end_date": resolved_end},
+        {
+            "as_of": coverage_end.isoformat(),
+            "period": period,
+            "range": applied_range,
+            "start_date": resolved_start.isoformat(),
+            "end_date": resolved_end.isoformat(),
+        },
+    )
+
+
 def _sales_query_summary(db: Session, params: dict) -> dict:
     row = db.execute(
         text(
@@ -1621,7 +1656,7 @@ def sales_customer_analysis(
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
     cache_key = _sales_cache_key(
-        "customer-analysis-v6",
+        "customer-analysis-v7",
         direction=direction,
         range=range,
         start_date=start_date,
@@ -1640,7 +1675,26 @@ def sales_customer_analysis(
     if cached is not None:
         return ok(cached)
 
-    params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
+    if query_mode in {"ads", "dual"}:
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="客户分析数据服务暂不可用")
+        try:
+            with AdsSessionLocal() as ads_db:
+                period_batch = latest_ready_sales_batch(ads_db)
+                params, meta = _resolve_customer_ads_period(
+                    range,
+                    start_date,
+                    end_date,
+                    period_batch.source_start_date,
+                    period_batch.source_end_date,
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("customer_analysis_ads_period error=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="客户分析数据服务暂不可用") from exc
+    else:
+        params, meta = _resolve_detail_sales_period(db, range, start_date, end_date)
     if params is None:
         return _query_result(cache_key, {
             **meta,
@@ -1757,7 +1811,7 @@ def sales_customer_analysis(
                     selected_channels, keyword, frequency, page, page_size,
                 )
                 ads_brands = [str(item) for item in ads_db.execute(text("""
-                    SELECT DISTINCT `brand` FROM `ads_sales_customer_daily`
+                    SELECT DISTINCT `brand` FROM `ads_sales_daily_brand_scope`
                     WHERE `data_version` = :data_version AND `brand` <> '__all__'
                     ORDER BY `brand`
                 """), {"data_version": batch.data_version}).scalars().all() if item]
@@ -1771,7 +1825,8 @@ def sales_customer_analysis(
             response.headers["X-BI-Response-Source"] = "ads"
             return _query_result(cache_key, ads_data, export_mode)
         except Exception as exc:
-            logger.warning("customer_analysis_ads_fallback error=%s", type(exc).__name__)
+            logger.warning("customer_analysis_ads_error error=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="客户分析数据服务暂不可用") from exc
 
     response.headers["X-BI-Response-Source"] = "ods"
 

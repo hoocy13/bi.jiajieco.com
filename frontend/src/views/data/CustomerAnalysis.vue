@@ -159,6 +159,7 @@ onMounted(() => { if (activeView.value === 'overview') load() })
       <div class="hero-side">
         <strong>{{ scopeText }}</strong>
         <span>{{ data.start_date || '-' }} 至 {{ data.end_date || '-' }}</span>
+        <span>数据更新至 {{ data.as_of || '-' }}</span>
       </div>
     </section>
 
