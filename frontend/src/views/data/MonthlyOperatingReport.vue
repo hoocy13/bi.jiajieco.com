@@ -5,9 +5,9 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { Download, Printer } from '@element-plus/icons-vue'
+import { Printer } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { downloadMonthlyReport, getMonthlyReport, getMonthlyReports } from '../../api/reports'
+import { getMonthlyReport, getMonthlyReports } from '../../api/reports'
 import { getSavedTheme } from '../../utils/theme'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
@@ -16,7 +16,6 @@ const route = useRoute()
 const router = useRouter()
 const chartTheme = getSavedTheme()
 const loading = ref(false)
-const downloading = ref(false)
 const months = ref([])
 const selectedMonth = ref('')
 const report = ref(null)
@@ -121,21 +120,6 @@ async function loadReport(month) {
   }
 }
 
-async function downloadReport() {
-  downloading.value = true
-  try {
-    const response = await downloadMonthlyReport(selectedMonth.value)
-    const url = URL.createObjectURL(response.data)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `${selectedMonth.value.replace('-', '年')}月经营月报.pdf`
-    link.click()
-    URL.revokeObjectURL(url)
-  } finally {
-    downloading.value = false
-  }
-}
-
 async function printReport() {
   await nextTick()
   window.print()
@@ -160,8 +144,7 @@ onMounted(async () => {
         </el-select>
       </div>
       <div class="toolbar-actions">
-        <el-button :icon="Download" :loading="downloading" @click="downloadReport">下载报告</el-button>
-        <el-button type="primary" :icon="Printer" @click="printReport">打印 / 保存PDF</el-button>
+        <el-button type="primary" :icon="Printer" @click="printReport">打印 / 保存 PDF</el-button>
       </div>
     </section>
 

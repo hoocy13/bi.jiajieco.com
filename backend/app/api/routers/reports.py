@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -16,7 +16,6 @@ from app.db.session import get_db
 from app.models.monthly_report import MonthlyOperatingReport
 from app.models.user import User
 from app.schemas.common import ok
-from app.services.report_pdf import html_to_pdf
 
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -93,23 +92,6 @@ def get_monthly_report(
     })
 
 
-@router.get("/monthly/{report_month}/download")
-def download_monthly_report_pdf(
-    report_month: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> Response:
-    row = latest_published(db, report_month)
-    if row is None or not row.pdf_content:
-        raise HTTPException(status_code=404, detail={"code": 404, "message": "该月份暂无可下载报告", "data": None})
-    filename = f"monthly_operating_report_{report_month.replace('-', '_')}.pdf"
-    return Response(
-        content=row.pdf_content,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
 @router.get("/monthly-management", dependencies=[Depends(require_permission("report.monthly.manage"))])
 def list_monthly_report_versions(db: Session = Depends(get_db)) -> dict:
     rows = db.query(MonthlyOperatingReport).order_by(
@@ -124,7 +106,6 @@ def list_monthly_report_versions(db: Session = Depends(get_db)) -> dict:
         "published_at": row.published_at,
         "sales_data_version": row.sales_data_version,
         "inventory_data_version": row.inventory_data_version,
-        "pdf_available": bool(row.pdf_content),
     } for row in rows])
 
 
@@ -164,7 +145,6 @@ def generate_monthly_report_draft(payload: GenerateMonthlyReportRequest, db: Ses
         inventory_data_version=inventory_version,
         artifact_json=json.dumps(artifact, ensure_ascii=False),
         html_content=html,
-        pdf_content=html_to_pdf(html),
         generated_at=datetime.fromisoformat(artifact["manifest"]["generatedAt"]).replace(tzinfo=None),
     )
     db.add(row)
@@ -181,19 +161,6 @@ def publish_monthly_report_version(report_month: str, revision: int, db: Session
     row.published_at = datetime.utcnow()
     db.commit()
     return ok({"month": row.report_month, "revision": row.revision, "status": row.status})
-
-
-@router.get("/monthly-management/{report_month}/{revision}/download", dependencies=[Depends(require_permission("report.monthly.manage"))])
-def download_monthly_report_version(report_month: str, revision: int, db: Session = Depends(get_db)) -> Response:
-    row = db.query(MonthlyOperatingReport).filter_by(report_month=report_month, revision=revision).first()
-    if row is None or not row.pdf_content:
-        raise HTTPException(status_code=404, detail={"code": 404, "message": "该月报版本暂无可下载文件", "data": None})
-    filename = f"monthly_operating_report_{report_month.replace('-', '_')}_v{revision}.pdf"
-    return Response(
-        content=row.pdf_content,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
 
 
 @router.delete("/monthly-management/{report_month}/{revision}", dependencies=[Depends(require_permission("report.monthly.manage"))])

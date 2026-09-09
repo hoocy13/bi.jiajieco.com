@@ -1,9 +1,9 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete, DocumentAdd, Download, Refresh, Upload, View } from '@element-plus/icons-vue'
+import { Delete, DocumentAdd, Refresh, Upload, View } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
-import { deleteMonthlyReportVersion, downloadMonthlyReportVersion, generateMonthlyReport, getMonthlyReportManagement, publishMonthlyReport } from '../../api/reports'
+import { deleteMonthlyReportVersion, generateMonthlyReport, getMonthlyReportManagement, publishMonthlyReport } from '../../api/reports'
 
 const router = useRouter()
 
@@ -71,18 +71,8 @@ function viewReport(row) {
   router.push({ path: '/reports/monthly', query: { month: row.month } })
 }
 
-async function downloadVersion(row) {
-  const response = await downloadMonthlyReportVersion(row.month, row.revision)
-  const url = URL.createObjectURL(response.data)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `${row.month.replace('-', '年')}月经营月报-V${row.revision}.pdf`
-  link.click()
-  URL.revokeObjectURL(url)
-}
-
 async function remove(row) {
-  const publishedWarning = row.status === 'published' ? '删除后，该版本将不能继续查看或下载。' : '删除后无法恢复。'
+  const publishedWarning = row.status === 'published' ? '删除后，该版本将不能继续查看或打印。' : '删除后无法恢复。'
   await ElMessageBox.confirm(
     `确认删除 ${row.month} V${row.revision}？${publishedWarning}本操作不会删除经营源数据。`,
     '删除月报版本',
@@ -101,7 +91,7 @@ onMounted(fetchRows)
     <section class="management-toolbar">
       <div>
         <h2>月报生成与发布</h2>
-        <p>生成时计算一次并保存草稿；发布、查看、PDF下载和打印不再计算指标。</p>
+        <p>生成时计算一次并保存草稿；发布、查看和浏览器打印不再计算指标。</p>
       </div>
       <div class="toolbar-actions">
         <el-date-picker
@@ -121,14 +111,13 @@ onMounted(fetchRows)
         <el-table-column prop="month" label="报告月份" width="130" sortable />
         <el-table-column prop="revision" label="版本" width="90" sortable><template #default="{ row }">V{{ row.revision }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'published' ? 'success' : 'warning'">{{ row.status === 'published' ? '已发布' : '草稿' }}</el-tag></template></el-table-column>
-        <el-table-column label="PDF" width="100"><template #default="{ row }">{{ row.pdf_available ? '已生成' : '不可用' }}</template></el-table-column>
+        <el-table-column label="输出方式" width="120">浏览器打印</el-table-column>
         <el-table-column label="生成时间" width="170"><template #default="{ row }">{{ formatTime(row.generated_at) }}</template></el-table-column>
         <el-table-column prop="sales_data_version" label="销售数据版本" min-width="260" show-overflow-tooltip />
         <el-table-column prop="inventory_data_version" label="库存数据版本" min-width="260" show-overflow-tooltip />
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status === 'published'" link type="primary" :icon="View" @click="viewReport(row)">查看</el-button>
-            <el-button v-if="row.pdf_available" link type="primary" :icon="Download" @click="downloadVersion(row)">下载</el-button>
             <el-button v-if="row.status === 'draft'" link type="primary" :icon="Upload" @click="publish(row)">发布</el-button>
             <el-button link type="danger" :icon="Delete" @click="remove(row)">删除</el-button>
           </template>

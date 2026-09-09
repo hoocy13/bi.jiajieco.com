@@ -17,7 +17,6 @@ os.chdir(BACKEND_ROOT)
 from app.db.init_db import init_db  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.monthly_report import MonthlyOperatingReport  # noqa: E402
-from app.services.report_pdf import html_to_pdf  # noqa: E402
 
 
 def main() -> None:
@@ -53,7 +52,6 @@ def main() -> None:
         row.inventory_data_version = inventory_version
         row.artifact_json = json.dumps(artifact, ensure_ascii=False)
         row.html_content = html_path.read_text(encoding="utf-8")
-        row.pdf_content = html_to_pdf(row.html_content)
         row.generated_at = generated_at
         db.commit()
         print(json.dumps({"month": args.month, "revision": args.revision, "status": row.status}, ensure_ascii=False))

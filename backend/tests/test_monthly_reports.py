@@ -7,8 +7,6 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api.routers.reports import (
     delete_monthly_report_version,
-    download_monthly_report_pdf,
-    download_monthly_report_version,
     get_monthly_report,
     list_monthly_report_versions,
     list_monthly_reports,
@@ -32,7 +30,6 @@ class MonthlyReportApiTests(unittest.TestCase):
                 inventory_data_version="inventory-v1",
                 artifact_json=json.dumps({"manifest": {"title": f"月报V{revision}"}}),
                 html_content=f"<html>V{revision}</html>",
-                pdf_content=f"%PDF-V{revision}".encode(),
                 generated_at=datetime(2026, 9, 9, 8, revision),
             ))
         self.db.commit()
@@ -50,12 +47,6 @@ class MonthlyReportApiTests(unittest.TestCase):
         self.assertEqual(result["data"]["revision"], 2)
         self.assertEqual(result["data"]["artifact"]["manifest"]["title"], "月报V2")
 
-    def test_download_uses_same_latest_snapshot(self) -> None:
-        response = download_monthly_report_pdf("2026-08", current_user=object(), db=self.db)
-        self.assertEqual(response.body, b"%PDF-V2")
-        self.assertEqual(response.media_type, "application/pdf")
-        self.assertIn("monthly_operating_report_2026_08.pdf", response.headers["content-disposition"])
-
     def test_management_lists_versions_and_can_publish_draft(self) -> None:
         draft = MonthlyOperatingReport(
             report_month="2026-09",
@@ -65,7 +56,6 @@ class MonthlyReportApiTests(unittest.TestCase):
             inventory_data_version="inventory-v2",
             artifact_json="{}",
             html_content="<html></html>",
-            pdf_content=b"%PDF-draft",
             generated_at=datetime(2026, 10, 1, 8, 0),
         )
         self.db.add(draft)
@@ -74,11 +64,6 @@ class MonthlyReportApiTests(unittest.TestCase):
         self.assertEqual(rows[0]["status"], "draft")
         result = publish_monthly_report_version("2026-09", 1, db=self.db)
         self.assertEqual(result["data"]["status"], "published")
-
-    def test_management_can_download_exact_version(self) -> None:
-        response = download_monthly_report_version("2026-08", 1, db=self.db)
-        self.assertEqual(response.body, b"%PDF-V1")
-        self.assertIn("monthly_operating_report_2026_08_v1.pdf", response.headers["content-disposition"])
 
     def test_management_can_delete_exact_version(self) -> None:
         result = delete_monthly_report_version("2026-08", 1, db=self.db)
