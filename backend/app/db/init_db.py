@@ -7,6 +7,7 @@ from app.db.session import Base, SessionLocal, engine
 from app.core.model_crypto import encrypt_api_key
 from app.models.model_setting import ModelSetting
 from app.models.announcement import Announcement  # noqa: F401
+from app.models.monthly_report import MonthlyOperatingReport  # noqa: F401
 from app.models.user import Permission, Role, User
 
 
@@ -14,6 +15,8 @@ PERMISSION_DEFINITIONS = [
     ("dashboard.view", "经营总览", "dashboard"),
     ("sales.view", "销售分析", "sales"),
     ("inventory.view", "库存分析", "inventory"),
+    ("report.monthly.view", "经营月报", "report"),
+    ("report.monthly.manage", "经营月报管理", "report"),
     ("ai.decision.view", "智能洞察与分析工作台", "ai"),
     ("ai.assistant.use", "深度分析助手", "ai"),
     ("ai.text_to_sql.use", "快捷问数", "ai"),
@@ -27,10 +30,10 @@ PERMISSION_DEFINITIONS = [
 ROLE_DEFINITIONS = [
     ("001", "pending", "待授权用户", "新注册用户的默认角色", []),
     ("002", "viewer", "普通查看者", "仅查看经营总览", ["dashboard.view"]),
-    ("003", "data_analyst", "数据分析师", "经营、销售、库存与分析工具", ["dashboard.view", "sales.view", "inventory.view", "ai.decision.view", "ai.assistant.use", "data.export"]),
+    ("003", "data_analyst", "数据分析师", "经营、销售、库存与分析工具", ["dashboard.view", "sales.view", "inventory.view", "report.monthly.view", "ai.decision.view", "ai.assistant.use", "data.export"]),
     ("004", "sales", "销售人员", "经营总览和销售分析", ["dashboard.view", "sales.view"]),
     ("005", "inventory", "库存人员", "经营总览和库存分析", ["dashboard.view", "inventory.view"]),
-    ("006", "management", "管理层", "经营、销售、库存和导出", ["dashboard.view", "sales.view", "inventory.view", "data.export"]),
+    ("006", "management", "管理层", "经营、销售、库存和导出", ["dashboard.view", "sales.view", "inventory.view", "report.monthly.view", "data.export"]),
     ("007", "admin", "系统管理员", "系统全部权限", [item[0] for item in PERMISSION_DEFINITIONS]),
 ]
 
@@ -67,6 +70,16 @@ def ensure_role_columns() -> None:
             connection.execute(text("CREATE UNIQUE INDEX ix_roles_role_no ON roles (role_no)"))
 
 
+def ensure_monthly_report_columns() -> None:
+    inspector = inspect(engine)
+    if "monthly_operating_reports" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("monthly_operating_reports")}
+    if "pdf_content" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE monthly_operating_reports ADD COLUMN pdf_content BLOB"))
+
+
 def seed_roles(db: Session) -> dict[str, Role]:
     permissions: dict[str, Permission] = {}
     for order, (code, name, module) in enumerate(PERMISSION_DEFINITIONS):
@@ -97,7 +110,7 @@ def seed_roles(db: Session) -> dict[str, Role]:
             db.add(role)
         elif role.role_no is None:
             role.role_no = role_no
-        elif code == "admin":
+        elif code in {"data_analyst", "management", "admin"}:
             role.permissions = [permissions[item] for item in permission_codes]
         roles[code] = role
     db.flush()
@@ -115,6 +128,7 @@ def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_user_columns()
     ensure_role_columns()
+    ensure_monthly_report_columns()
     db: Session = SessionLocal()
     try:
         roles = seed_roles(db)

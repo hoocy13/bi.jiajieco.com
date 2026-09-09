@@ -26,6 +26,7 @@ const menuGroups = computed(() => [
     icon: 'DataBoard',
     children: [
       { path: '/dashboard', label: '经营总览', permission: 'dashboard.view' },
+      { path: '/reports/monthly', label: '经营月报', permission: 'report.monthly.view' },
     ],
   },
   {
@@ -75,6 +76,7 @@ const menuGroups = computed(() => [
       { path: '/roles', label: '角色管理', permission: 'system.roles.manage' },
       { path: '/model-settings', label: '模型设置', permission: 'system.models.manage' },
       { path: '/announcements', label: '系统公告', permission: 'system.announcements.manage' },
+      { path: '/reports/monthly-management', label: '月报管理', permission: 'report.monthly.manage' },
     ],
   },
 ].map(group => ({

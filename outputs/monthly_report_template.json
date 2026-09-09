@@ -1,0 +1,740 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "经营月报",
+    "description": "基于已发布ADS数据形成的销售经营事实报告。",
+    "generatedAt": "",
+    "cards": [
+      {
+        "id": "sales_amount",
+        "description": "",
+        "dataset": "headline",
+        "sourceId": "sales_monthly",
+        "metrics": [
+          {
+            "label": "销售额（元）",
+            "field": "paid_amount",
+            "format": "number"
+          },
+          {
+            "label": "环比",
+            "field": "paid_amount_mom",
+            "format": "percent",
+            "signed": true
+          },
+          {
+            "label": "同比",
+            "field": "paid_amount_yoy",
+            "format": "percent",
+            "signed": true
+          }
+        ]
+      },
+      {
+        "id": "sales_orders",
+        "description": "",
+        "dataset": "headline",
+        "sourceId": "sales_monthly",
+        "metrics": [
+          {
+            "label": "订单数",
+            "field": "orders",
+            "format": "number"
+          },
+          {
+            "label": "环比",
+            "field": "orders_mom",
+            "format": "percent",
+            "signed": true
+          },
+          {
+            "label": "同比",
+            "field": "orders_yoy",
+            "format": "percent",
+            "signed": true
+          }
+        ]
+      },
+      {
+        "id": "sales_quantity",
+        "description": "",
+        "dataset": "headline",
+        "sourceId": "sales_monthly",
+        "metrics": [
+          {
+            "label": "销售数量",
+            "field": "quantity",
+            "format": "number"
+          },
+          {
+            "label": "环比",
+            "field": "quantity_mom",
+            "format": "percent",
+            "signed": true
+          },
+          {
+            "label": "同比",
+            "field": "quantity_yoy",
+            "format": "percent",
+            "signed": true
+          }
+        ]
+      },
+      {
+        "id": "average_order_amount",
+        "description": "",
+        "dataset": "headline",
+        "sourceId": "sales_monthly",
+        "metrics": [
+          {
+            "label": "平均订单金额（元）",
+            "field": "avg_order_amount",
+            "format": "number"
+          },
+          {
+            "label": "环比",
+            "field": "avg_order_amount_mom",
+            "format": "percent",
+            "signed": true
+          },
+          {
+            "label": "同比",
+            "field": "avg_order_amount_yoy",
+            "format": "percent",
+            "signed": true
+          }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "period_sales_comparison",
+        "title": "经营图表",
+        "subtitle": "",
+        "type": "bar",
+        "dataset": "periods",
+        "sourceId": "sales_monthly",
+        "encodings": {
+          "x": {
+            "field": "period",
+            "type": "ordinal",
+            "label": "比较期间"
+          },
+          "y": {
+            "field": "paid_amount",
+            "type": "quantitative",
+            "label": "销售额（元）",
+            "format": "number"
+          }
+        },
+        "yAxisTitle": "销售额（人民币元）",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "daily_sales_trend",
+        "title": "经营图表",
+        "subtitle": "",
+        "type": "line",
+        "dataset": "daily",
+        "sourceId": "sales_daily",
+        "encodings": {
+          "x": {
+            "field": "sales_date",
+            "type": "temporal",
+            "label": "日期"
+          },
+          "y": {
+            "field": "paid_amount",
+            "type": "quantitative",
+            "label": "销售额（元）",
+            "format": "number"
+          }
+        },
+        "yAxisTitle": "销售额（人民币元）",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "brand_sales_top5",
+        "title": "经营图表",
+        "subtitle": "",
+        "type": "bar",
+        "dataset": "brands",
+        "sourceId": "sales_brand",
+        "encodings": {
+          "x": {
+            "field": "brand",
+            "type": "ordinal",
+            "label": "品牌"
+          },
+          "y": {
+            "field": "paid_amount",
+            "type": "quantitative",
+            "label": "销售额（元）",
+            "format": "number"
+          }
+        },
+        "yAxisTitle": "销售额（人民币元）",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "channel_structure",
+        "title": "经营图表",
+        "subtitle": "",
+        "type": "bar",
+        "dataset": "channel_structure",
+        "sourceId": "sales_channel",
+        "encodings": {
+          "x": {
+            "field": "period",
+            "type": "ordinal",
+            "label": "期间"
+          },
+          "y": {
+            "field": "paid_amount",
+            "type": "quantitative",
+            "label": "销售额（元）",
+            "format": "number"
+          },
+          "color": {
+            "field": "channel_group",
+            "type": "nominal",
+            "label": "渠道归类"
+          }
+        },
+        "yAxisTitle": "销售额（人民币元）",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "product_type_structure",
+        "title": "经营图表",
+        "subtitle": "",
+        "type": "bar",
+        "dataset": "product_types",
+        "sourceId": "sales_product_type",
+        "encodings": {
+          "x": {
+            "field": "period",
+            "type": "ordinal",
+            "label": "期间"
+          },
+          "y": {
+            "field": "paid_amount",
+            "type": "quantitative",
+            "label": "销售额（元）",
+            "format": "number"
+          },
+          "color": {
+            "field": "product_type",
+            "type": "nominal",
+            "label": "货品分类"
+          }
+        },
+        "yAxisTitle": "销售额（人民币元）",
+        "valueFormat": "number",
+        "layout": "full"
+      }
+    ],
+    "tables": [
+      {
+        "id": "period_detail",
+        "title": "月度对比明细",
+        "subtitle": "三个期间均为完整自然月，金额保留两位小数。",
+        "dataset": "periods",
+        "sourceId": "sales_monthly",
+        "defaultSort": {
+          "field": "period",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "period",
+            "label": "期间",
+            "type": "text"
+          },
+          {
+            "field": "paid_amount",
+            "label": "销售额（元）",
+            "format": "number"
+          },
+          {
+            "field": "orders",
+            "label": "订单数",
+            "format": "number"
+          },
+          {
+            "field": "quantity",
+            "label": "销售数量",
+            "format": "number"
+          },
+          {
+            "field": "avg_order_amount",
+            "label": "平均订单金额（元）",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "customer_detail",
+        "title": "可识别客户月度汇总",
+        "subtitle": "客户数仅覆盖具有客户标识的销售明细；复购指当月订单数不少于2单。",
+        "dataset": "customers",
+        "sourceId": "sales_customer",
+        "defaultSort": {
+          "field": "period",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "period",
+            "label": "期间",
+            "type": "text"
+          },
+          {
+            "field": "customers",
+            "label": "可识别客户数",
+            "format": "number"
+          },
+          {
+            "field": "repeat_customers",
+            "label": "月内复购客户数",
+            "format": "number"
+          },
+          {
+            "field": "repeat_rate",
+            "label": "月内复购率",
+            "format": "percent"
+          },
+          {
+            "field": "identified_amount_rate",
+            "label": "明细金额识别率",
+            "format": "percent"
+          }
+        ]
+      },
+      {
+        "id": "arrival_detail",
+        "title": "月度到货汇总",
+        "subtitle": "净到货包含红冲和负数记录；入库单按docId去重；成本指标暂不可用。",
+        "dataset": "arrivals",
+        "sourceId": "inventory_arrival",
+        "defaultSort": {
+          "field": "period",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "period",
+            "label": "期间",
+            "type": "text"
+          },
+          {
+            "field": "net_quantity",
+            "label": "净到货数量",
+            "format": "number"
+          },
+          {
+            "field": "document_count",
+            "label": "入库单数",
+            "format": "number"
+          },
+          {
+            "field": "brand_count",
+            "label": "到货品牌数",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "inventory_snapshot_detail",
+        "title": "月末库存快照",
+        "subtitle": "仅使用状态为SUCCESS的历史月末快照；数量为库存量而非可用库存。",
+        "dataset": "inventory_snapshots",
+        "sourceId": "inventory_snapshot",
+        "defaultSort": {
+          "field": "period",
+          "direction": "asc"
+        },
+        "columns": [
+          {
+            "field": "period",
+            "label": "期间",
+            "type": "text"
+          },
+          {
+            "field": "snapshot_date",
+            "label": "快照日期",
+            "type": "date"
+          },
+          {
+            "field": "stock_quantity",
+            "label": "库存数量",
+            "format": "number"
+          },
+          {
+            "field": "detail_rows",
+            "label": "快照明细行",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "sales_monthly",
+        "label": "销售月度汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "同一已发布数据版本下，对三个完整自然月的销售额、订单数和销售数量求和。",
+          "sql": "SELECT period, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_daily WHERE data_version = :data_version AND sales_date IN REQUESTED_PERIODS GROUP BY period",
+          "tables_used": [
+            "ads.ads_sales_daily"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "YEAR_AGO_START至YEAR_AGO_END",
+            "PREVIOUS_START至PREVIOUS_END",
+            "REPORT_START至REPORT_END"
+          ],
+          "metric_definitions": {
+            "销售额": "按销售日期汇总订单实付金额。",
+            "订单数": "按日汇总表中的orders字段求和。",
+            "销售数量": "按日汇总表中的quantity字段求和。",
+            "平均订单金额": "销售额除以订单数。",
+            "环比": "本月相对上月的变化率。",
+            "同比": "本月相对去年同期的变化率。"
+          }
+        }
+      },
+      {
+        "id": "sales_daily",
+        "label": "销售日汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "读取报告月每日销售额、订单数和销售数量。",
+          "sql": "SELECT sales_date, paid_amount, orders, quantity FROM ads.ads_sales_daily WHERE data_version = :data_version AND sales_date BETWEEN :start_date AND :end_date ORDER BY sales_date",
+          "tables_used": [
+            "ads.ads_sales_daily"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "REPORT_START至REPORT_END"
+          ]
+        }
+      },
+      {
+        "id": "sales_brand",
+        "label": "品牌销售汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "读取报告月已归因品牌销售额，并按金额排序。",
+          "sql": "SELECT brand, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_daily_brand_scope WHERE data_version = :data_version AND product_type_scope = 'all' AND sales_date BETWEEN :start_date AND :end_date GROUP BY brand ORDER BY SUM(paid_amount) DESC",
+          "tables_used": [
+            "ads.ads_sales_daily_brand_scope"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "product_type_scope=all",
+            "REPORT_START至REPORT_END"
+          ]
+        }
+      },
+      {
+        "id": "sales_channel",
+        "label": "销售渠道归类汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "销售渠道事实按当前渠道配置归并为线上和线下；未匹配渠道使用既有兜底规则。",
+          "sql": "SELECT sales_date, channel, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_daily_channel WHERE data_version = :data_version AND sales_date IN REQUESTED_PERIODS GROUP BY sales_date, channel",
+          "tables_used": [
+            "ads.ads_sales_daily_channel",
+            "ods.渠道列表"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "三个完整自然月"
+          ]
+        }
+      },
+      {
+        "id": "sales_product_type",
+        "label": "销售货品分类汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "按已发布销售明细中的正装和小样分类汇总金额与数量。",
+          "sql": "SELECT product_type_scope, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_detail_daily_scope WHERE data_version = :data_version AND sales_date IN REQUESTED_PERIODS AND product_type_scope IN ('full_size','sample') GROUP BY product_type_scope",
+          "tables_used": [
+            "ads.ads_sales_detail_daily_scope"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "三个完整自然月"
+          ]
+        }
+      },
+      {
+        "id": "sales_customer",
+        "label": "可识别客户汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "按客户标识汇总月内订单数，统计可识别客户与月内复购客户。",
+          "sql": "SELECT customer_code, SUM(orders), SUM(paid_amount), SUM(quantity) FROM ads.ads_sales_customer_daily WHERE data_version = :data_version AND brand = '__all__' AND sales_date IN REQUESTED_PERIODS GROUP BY customer_code",
+          "tables_used": [
+            "ads.ads_sales_customer_daily",
+            "ads.ads_sales_customer_quality_daily"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=SALES_DATA_VERSION",
+            "brand=__all__",
+            "三个完整自然月"
+          ]
+        }
+      },
+      {
+        "id": "inventory_arrival",
+        "label": "月度到货汇总",
+        "query": {
+          "engine": "mysql",
+          "description": "按实际入库日期汇总净到货数量、入库单和品牌数；成本字段因业务口径尚未核准而不展示。",
+          "sql": "SELECT SUM(quantity), COUNT(DISTINCT doc_id), COUNT(DISTINCT brand) FROM ads.ads_inventory_arrival_item WHERE data_version = :data_version AND receipt_date IN REQUESTED_PERIODS",
+          "tables_used": [
+            "ads.ads_inventory_arrival_item"
+          ],
+          "executed_at": "",
+          "filters": [
+            "data_version=INVENTORY_DATA_VERSION",
+            "三个完整自然月"
+          ]
+        }
+      },
+      {
+        "id": "inventory_snapshot",
+        "label": "历史月末库存快照",
+        "query": {
+          "engine": "mysql",
+          "description": "读取指定月末且批次状态为SUCCESS的历史库存数量。",
+          "sql": "SELECT h.快照日期, COUNT(h.货品编号), SUM(h.库存量) FROM ods.历史库存 h JOIN ods.历史库存快照批次 b ON b.快照日期 = h.快照日期 WHERE UPPER(b.状态) = 'SUCCESS' AND h.快照日期 IN REQUESTED_MONTH_ENDS GROUP BY h.快照日期",
+          "tables_used": [
+            "ods.历史库存",
+            "ods.历史库存快照批次"
+          ],
+          "executed_at": "",
+          "filters": [
+            "2025-08-31",
+            "2026-07-31",
+            "2026-08-31",
+            "状态=SUCCESS"
+          ]
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# 经营月报"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "sourceId": "sales_monthly",
+        "body": ""
+      },
+      {
+        "id": "headline_metrics",
+        "type": "metric-strip",
+        "cardIds": [
+          "sales_amount",
+          "sales_orders",
+          "sales_quantity",
+          "average_order_amount"
+        ]
+      },
+      {
+        "id": "scope_definition",
+        "type": "markdown",
+        "body": ""
+      },
+      {
+        "id": "comparison_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_monthly",
+        "body": ""
+      },
+      {
+        "id": "comparison_chart",
+        "type": "chart",
+        "chartId": "period_sales_comparison",
+        "layout": "full"
+      },
+      {
+        "id": "comparison_table",
+        "type": "table",
+        "tableId": "period_detail",
+        "layout": "full"
+      },
+      {
+        "id": "daily_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_daily",
+        "body": ""
+      },
+      {
+        "id": "daily_chart",
+        "type": "chart",
+        "chartId": "daily_sales_trend",
+        "layout": "full"
+      },
+      {
+        "id": "brand_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_brand",
+        "body": ""
+      },
+      {
+        "id": "brand_chart",
+        "type": "chart",
+        "chartId": "brand_sales_top5",
+        "layout": "full"
+      },
+      {
+        "id": "channel_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_channel",
+        "body": ""
+      },
+      {
+        "id": "channel_chart",
+        "type": "chart",
+        "chartId": "channel_structure",
+        "layout": "full"
+      },
+      {
+        "id": "product_type_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_product_type",
+        "body": ""
+      },
+      {
+        "id": "product_type_chart",
+        "type": "chart",
+        "chartId": "product_type_structure",
+        "layout": "full"
+      },
+      {
+        "id": "customer_interpretation",
+        "type": "markdown",
+        "sourceId": "sales_customer",
+        "body": ""
+      },
+      {
+        "id": "customer_table",
+        "type": "table",
+        "tableId": "customer_detail",
+        "layout": "full"
+      },
+      {
+        "id": "arrival_interpretation",
+        "type": "markdown",
+        "sourceId": "inventory_arrival",
+        "body": ""
+      },
+      {
+        "id": "arrival_table",
+        "type": "table",
+        "tableId": "arrival_detail",
+        "layout": "full"
+      },
+      {
+        "id": "inventory_interpretation",
+        "type": "markdown",
+        "sourceId": "inventory_snapshot",
+        "body": ""
+      },
+      {
+        "id": "inventory_table",
+        "type": "table",
+        "tableId": "inventory_snapshot_detail",
+        "layout": "full"
+      },
+      {
+        "id": "known_limits",
+        "type": "markdown",
+        "body": ""
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "",
+    "status": "ready",
+    "datasets": {
+      "headline": [],
+      "periods": [],
+      "daily": [],
+      "brands": [],
+      "channel_structure": [],
+      "product_types": [],
+      "customers": [],
+      "arrivals": [],
+      "inventory_snapshots": []
+    }
+  },
+  "sources": [
+    {
+      "id": "sales_monthly",
+      "label": "销售月度汇总",
+      "query": {
+        "engine": "mysql",
+        "description": "同一已发布数据版本下，对三个完整自然月的销售额、订单数和销售数量求和。",
+        "sql": "SELECT period, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_daily WHERE data_version = :data_version AND sales_date IN REQUESTED_PERIODS GROUP BY period",
+        "tables_used": [
+          "ads.ads_sales_daily"
+        ],
+        "executed_at": "2026-09-08T08:00:00+08:00"
+      }
+    },
+    {
+      "id": "sales_daily",
+      "label": "销售日汇总",
+      "query": {
+        "engine": "mysql",
+        "description": "读取报告月每日销售额、订单数和销售数量。",
+        "sql": "SELECT sales_date, paid_amount, orders, quantity FROM ads.ads_sales_daily WHERE data_version = :data_version AND sales_date BETWEEN :start_date AND :end_date ORDER BY sales_date",
+        "tables_used": [
+          "ads.ads_sales_daily"
+        ],
+        "executed_at": "2026-09-08T08:00:00+08:00"
+      }
+    },
+    {
+      "id": "sales_brand",
+      "label": "品牌销售汇总",
+      "query": {
+        "engine": "mysql",
+        "description": "读取报告月已归因品牌销售额，并按金额排序。",
+        "sql": "SELECT brand, SUM(paid_amount), SUM(orders), SUM(quantity) FROM ads.ads_sales_daily_brand_scope WHERE data_version = :data_version AND product_type_scope = 'all' AND sales_date BETWEEN :start_date AND :end_date GROUP BY brand ORDER BY SUM(paid_amount) DESC",
+        "tables_used": [
+          "ads.ads_sales_daily_brand_scope"
+        ],
+        "executed_at": "2026-09-08T08:00:00+08:00"
+      }
+    }
+  ],
+  "package_info": {
+    "root": "monthly-operating-report-2026-08",
+    "manifestPath": "monthly_operating_report_2026_08_artifact.json",
+    "snapshotPath": "monthly_operating_report_2026_08_artifact.json"
+  }
+}

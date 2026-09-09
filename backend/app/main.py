@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.deps import require_permission
-from app.api.routers import ai_decisions, announcements, auth, dashboard, exports, inventory, model_settings, rag, roles, sales, text_to_sql, users
+from app.api.routers import ai_decisions, announcements, auth, dashboard, exports, inventory, model_settings, rag, reports, roles, sales, text_to_sql, users
 from app.core.config import settings
 from app.core.performance import performance_middleware
 from app.db.init_db import init_db
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix=settings.API_PREFIX)
     app.include_router(dashboard.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("dashboard.view"))])
     app.include_router(inventory.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("inventory.view"))])
+    app.include_router(reports.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("report.monthly.view"))])
     app.include_router(sales.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("sales.view"))])
     app.include_router(exports.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("data.export"))])
     app.include_router(text_to_sql.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("ai.text_to_sql.use"))])

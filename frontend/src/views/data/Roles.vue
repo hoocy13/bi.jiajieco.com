@@ -9,7 +9,7 @@ const loading = ref(false)
 const dialogVisible = ref(false)
 const editing = ref(null)
 const form = reactive({ name: '', description: '', permission_codes: [] })
-const moduleLabels = { dashboard: '经营总览', sales: '销售分析', inventory: '库存分析', ai: 'AI 功能', operation: '操作权限', system: '系统管理' }
+const moduleLabels = { dashboard: '经营总览', sales: '销售分析', inventory: '库存分析', report: '经营月报', ai: 'AI 功能', operation: '操作权限', system: '系统管理' }
 const permissionGroups = computed(() => Object.entries(permissions.value.reduce((groups, item) => { (groups[item.module] ||= []).push(item); return groups }, {})))
 
 async function fetchData() {

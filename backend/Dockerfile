@@ -5,11 +5,19 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY requirements.txt .
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir --default-timeout=120 -i https://mirrors.cloud.tencent.com/pypi/simple -r requirements.txt
 
-COPY alembic.ini ./
-COPY alembic ./alembic
-COPY app ./app
+COPY backend/alembic.ini ./
+COPY backend/alembic ./alembic
+COPY backend/app ./app
+COPY outputs ./outputs
+
+ENV BI_PROJECT_ROOT=/app \
+    BI_BACKEND_ROOT=/app
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

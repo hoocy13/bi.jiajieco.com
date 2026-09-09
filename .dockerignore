@@ -10,3 +10,8 @@
 **/.env.*
 !**/.env.example
 backend/*.db
+outputs/*
+!outputs/generate_monthly_operating_report.py
+!outputs/extract_monthly_operating_report_v2.py
+!outputs/monthly_report_template.json
+!outputs/monthly_report_shell.html

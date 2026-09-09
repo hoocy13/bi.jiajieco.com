@@ -23,6 +23,8 @@ const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
 const SmartQuery = () => import('../views/data/SmartQuery.vue')
 const AnalysisWorkspace = () => import('../views/data/AnalysisWorkspace.vue')
+const MonthlyOperatingReport = () => import('../views/data/MonthlyOperatingReport.vue')
+const MonthlyReportManagement = () => import('../views/data/MonthlyReportManagement.vue')
 const Users = () => import('../views/data/Users.vue')
 const Roles = () => import('../views/data/Roles.vue')
 const Register = () => import('../views/data/Register.vue')
@@ -39,6 +41,8 @@ const routes = [
     component: DashboardLayout,
     children: [
       { path: 'dashboard', component: Dashboard, meta: { title: '经营总览', permission: 'dashboard.view' } },
+      { path: 'reports/monthly', component: MonthlyOperatingReport, meta: { title: '经营月报', permission: 'report.monthly.view' } },
+      { path: 'reports/monthly-management', component: MonthlyReportManagement, meta: { title: '月报管理', permission: 'report.monthly.manage' } },
       { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: '智能洞察', permission: 'ai.decision.view' } },
       { path: 'ai/query', component: SmartQuery, meta: { title: '智能问数', permissionsAny: ['ai.text_to_sql.use', 'ai.assistant.use'] } },
       { path: 'ai/analysis', component: AnalysisWorkspace, meta: { title: '分析工作台', permission: 'ai.decision.view' } },
