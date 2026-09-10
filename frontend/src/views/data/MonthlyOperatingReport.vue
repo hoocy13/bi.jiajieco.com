@@ -5,7 +5,8 @@ import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
-import { Printer } from '@element-plus/icons-vue'
+import { Download, Printer } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import { getMonthlyReport, getMonthlyReports } from '../../api/reports'
 import { getSavedTheme } from '../../utils/theme'
@@ -16,9 +17,11 @@ const route = useRoute()
 const router = useRouter()
 const chartTheme = getSavedTheme()
 const loading = ref(false)
+const exporting = ref(false)
 const months = ref([])
 const selectedMonth = ref('')
 const report = ref(null)
+const reportPaper = ref(null)
 
 const artifact = computed(() => report.value?.artifact || null)
 const manifest = computed(() => artifact.value?.manifest || {})
@@ -125,6 +128,21 @@ async function printReport() {
   window.print()
 }
 
+async function downloadPdf() {
+  exporting.value = true
+  try {
+    await nextTick()
+    const { exportMonthlyReportPdf } = await import('../../utils/monthlyReportPdf')
+    const filename = `${selectedMonth.value.replace('-', '年')}月经营月报.pdf`
+    await exportMonthlyReportPdf(reportPaper.value, filename)
+    ElMessage.success('PDF 已生成并开始下载')
+  } catch (error) {
+    ElMessage.error(error?.message || 'PDF 生成失败')
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(async () => {
   const result = await getMonthlyReports()
   months.value = result.data || []
@@ -144,13 +162,14 @@ onMounted(async () => {
         </el-select>
       </div>
       <div class="toolbar-actions">
-        <el-button type="primary" :icon="Printer" @click="printReport">打印 / 保存 PDF</el-button>
+        <el-button type="primary" :icon="Download" :loading="exporting" @click="downloadPdf">下载 PDF</el-button>
+        <el-button :icon="Printer" @click="printReport">浏览器打印</el-button>
       </div>
     </section>
 
     <el-empty v-if="!loading && !artifact" description="暂无已发布经营月报" />
 
-    <article v-else-if="artifact" class="report-paper">
+    <article v-else-if="artifact" ref="reportPaper" class="report-paper">
       <header class="report-cover">
         <h1>{{ manifest.title }}</h1>
       </header>

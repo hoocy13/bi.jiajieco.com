@@ -91,7 +91,7 @@ onMounted(fetchRows)
     <section class="management-toolbar">
       <div>
         <h2>月报生成与发布</h2>
-        <p>生成时计算一次并保存草稿；发布、查看和浏览器打印不再计算指标。</p>
+        <p>生成时计算一次并保存草稿；发布、查看和前端 PDF 导出不再计算指标。</p>
       </div>
       <div class="toolbar-actions">
         <el-date-picker
@@ -111,7 +111,7 @@ onMounted(fetchRows)
         <el-table-column prop="month" label="报告月份" width="130" sortable />
         <el-table-column prop="revision" label="版本" width="90" sortable><template #default="{ row }">V{{ row.revision }}</template></el-table-column>
         <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="row.status === 'published' ? 'success' : 'warning'">{{ row.status === 'published' ? '已发布' : '草稿' }}</el-tag></template></el-table-column>
-        <el-table-column label="输出方式" width="120">浏览器打印</el-table-column>
+        <el-table-column label="输出方式" width="120">前端 PDF</el-table-column>
         <el-table-column label="生成时间" width="170"><template #default="{ row }">{{ formatTime(row.generated_at) }}</template></el-table-column>
         <el-table-column prop="sales_data_version" label="销售数据版本" min-width="260" show-overflow-tooltip />
         <el-table-column prop="inventory_data_version" label="库存数据版本" min-width="260" show-overflow-tooltip />
