@@ -338,6 +338,7 @@ def load_sales_product_rank_from_ads(
     limit: int,
     keyword: str | None = None,
     product_types: list[str] | None = None,
+    brands: list[str] | None = None,
     exact_filtered_orders: int | None = None,
 ) -> dict:
     start_date = date.fromisoformat(meta["start_date"])
@@ -350,6 +351,7 @@ def load_sales_product_rank_from_ads(
     }
 
     selected_product_types = product_types or []
+    selected_brands = brands or []
     scope = product_type_scope(selected_product_types)
     if selected_product_types:
         params["product_type_scope"] = scope
@@ -388,28 +390,34 @@ def load_sales_product_rank_from_ads(
         product_filters.append("`product_type` = '小样'")
     elif scope == "selected":
         product_filters.append("`product_type` IN ('正装', '小样')")
+    if selected_brands:
+        params["brands"] = tuple(selected_brands)
+        product_filters.append("`brand` IN :brands")
     product_filter = "".join(f" AND {item}" for item in product_filters)
 
-    product_table = "ads_sales_daily_brand_product" if selected_product_types else "ads_sales_daily_product"
+    product_table = "ads_sales_daily_brand_product" if selected_product_types or selected_brands else "ads_sales_daily_product"
+    product_statement = text(
+        f"""
+        SELECT
+          `product`,
+          SUM(`orders`) AS orders,
+          SUM(`paid_amount`) AS paid_amount,
+          SUM(`quantity`) AS quantity
+        FROM `{product_table}`
+        WHERE `data_version` = :data_version
+          AND `sales_date` BETWEEN :start_date AND :end_date
+          {product_filter}
+        GROUP BY `product`
+        """
+    )
+    if selected_brands:
+        product_statement = product_statement.bindparams(bindparam("brands", expanding=True))
     product_rows = ads_db.execute(
-        text(
-            f"""
-            SELECT
-              `product`,
-              SUM(`orders`) AS orders,
-              SUM(`paid_amount`) AS paid_amount,
-              SUM(`quantity`) AS quantity
-            FROM `{product_table}`
-            WHERE `data_version` = :data_version
-              AND `sales_date` BETWEEN :start_date AND :end_date
-              {product_filter}
-            GROUP BY `product`
-            """
-        ),
+        product_statement,
         params,
     ).mappings().all()
 
-    if keyword or selected_product_types:
+    if keyword or selected_product_types or selected_brands:
         detail_orders = (
             exact_filtered_orders
             if exact_filtered_orders is not None
@@ -448,6 +456,26 @@ def load_sales_product_rank_from_ads(
     summary_paid_amount = number(sales_summary_row["paid_amount"])
     summary_orders = integer(sales_summary_row["orders"])
     summary_quantity = integer(sales_summary_row["quantity"])
+    if keyword or selected_brands:
+        summary_paid_amount = rank_paid_amount
+        summary_orders = detail_orders
+        summary_quantity = rank_quantity
+
+    brand_options = [
+        str(item)
+        for item in ads_db.execute(
+            text(
+                """
+                SELECT DISTINCT `brand`
+                FROM `ads_sales_daily_brand_product`
+                WHERE `data_version` = :data_version
+                ORDER BY `brand`
+                """
+            ),
+            params,
+        ).scalars().all()
+        if item
+    ]
 
     def rank_payload(rows: list, share_total: float | int) -> list[dict]:
         return [
@@ -486,6 +514,7 @@ def load_sales_product_rank_from_ads(
         },
         "rows": amount_payload,
         "quantity_rows": quantity_payload,
+        "filter_options": {"brands": brand_options},
     }
 
 

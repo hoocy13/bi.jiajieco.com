@@ -45,6 +45,10 @@ RANGE_OPTIONS = {
     "last_30": "近30天",
     "this_month": "本月",
     "this_year": "本年",
+    "q1": "Q1",
+    "q2": "Q2",
+    "q3": "Q3",
+    "q4": "Q4",
 }
 
 SALES_CACHE_TTL_SECONDS = 300
@@ -161,6 +165,18 @@ def _range_bounds(
 
     if range_key == "this_year":
         return date(as_of.year, 1, 1), as_of, RANGE_OPTIONS[range_key], range_key
+
+    if range_key in {"q1", "q2", "q3", "q4"}:
+        quarter = int(range_key[1])
+        start_month = (quarter - 1) * 3 + 1
+        quarter_start = date(as_of.year, start_month, 1)
+        next_quarter_start = (
+            date(as_of.year + 1, 1, 1)
+            if quarter == 4
+            else date(as_of.year, start_month + 3, 1)
+        )
+        quarter_end = next_quarter_start - timedelta(days=1)
+        return quarter_start, min(quarter_end, as_of), RANGE_OPTIONS[range_key], range_key
 
     return date(as_of.year, as_of.month, 1), as_of, RANGE_OPTIONS[range_key], range_key
 
@@ -350,6 +366,7 @@ def _load_ads_product_rank(
     limit: int,
     keyword: str | None,
     product_types: list[str],
+    brands: list[str],
 ) -> dict:
     if AdsSessionLocal is None:
         raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
@@ -377,6 +394,7 @@ def _load_ads_product_rank(
             limit=limit,
             keyword=keyword,
             product_types=product_types,
+            brands=brands,
         )
 
 
@@ -837,6 +855,7 @@ def sales_product_rank(
     limit: int = Query(30, ge=10, le=100),
     keyword: str | None = Query(None),
     product_type: list[str] | None = Query(None),
+    brand: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
@@ -845,6 +864,7 @@ def sales_product_rank(
     selected_product_types = list(
         dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
     )
+    selected_brands = list(dict.fromkeys(item.strip() for item in brand or [] if item.strip()))
     cache_key = _sales_cache_key(
         "product-rank-v4",
         range=range,
@@ -853,6 +873,7 @@ def sales_product_rank(
         limit=limit,
         keyword=keyword,
         product_type=selected_product_types,
+        brand=selected_brands,
         query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
@@ -869,8 +890,9 @@ def sales_product_rank(
                 limit,
                 keyword,
                 selected_product_types,
+                selected_brands,
             )
-            if keyword or selected_product_types:
+            if keyword or selected_product_types or selected_brands:
                 exact_filters = [
                     "`下单时间` >= :start_date",
                     "`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)",
@@ -885,6 +907,9 @@ def sales_product_rank(
                 if selected_product_types:
                     exact_filters.append("`货品分类` IN :product_types")
                     exact_params["product_types"] = tuple(selected_product_types)
+                if selected_brands:
+                    exact_filters.append(f"{BRAND_EXPRESSION_SQL} IN :brands")
+                    exact_params["brands"] = tuple(selected_brands)
                 exact_statement = text(
                     f"""
                     SELECT COUNT(DISTINCT `订单编号`)
@@ -894,6 +919,8 @@ def sales_product_rank(
                 )
                 if selected_product_types:
                     exact_statement = exact_statement.bindparams(bindparam("product_types", expanding=True))
+                if selected_brands:
+                    exact_statement = exact_statement.bindparams(bindparam("brands", expanding=True))
                 exact_orders = db.execute(
                     exact_statement,
                     exact_params,
@@ -922,12 +949,17 @@ def sales_product_rank(
     if selected_product_types:
         params["product_types"] = tuple(selected_product_types)
         filters.append("`货品分类` IN :product_types")
+    if selected_brands:
+        params["brands"] = tuple(selected_brands)
+        filters.append(f"{BRAND_EXPRESSION_SQL} IN :brands")
 
     where_sql = " AND ".join(filters)
     def filtered_text(sql: str):
         statement = text(sql)
         if selected_product_types:
             statement = statement.bindparams(bindparam("product_types", expanding=True))
+        if selected_brands:
+            statement = statement.bindparams(bindparam("brands", expanding=True))
         return statement
     summary_row = db.execute(
         filtered_text(
@@ -950,7 +982,7 @@ def sales_product_rank(
             "orders": _int(summary_row["orders"]),
             "quantity": _int(summary_row["quantity"]),
         }
-        if selected_product_types
+        if selected_product_types or selected_brands or keyword
         else _sales_query_summary(db, params)
     )
     row_params = {**params, "limit": limit}
@@ -1027,6 +1059,22 @@ def sales_product_rank(
             for quantity in [_int(row["quantity"])]
             for amount in [_number(row["paid_amount"])]
         ],
+        "filter_options": {
+            "brands": [
+                str(item)
+                for item in db.execute(
+                    text(
+                        f"""
+                        SELECT DISTINCT {BRAND_EXPRESSION_SQL} AS brand
+                        FROM `dwd`.`销售单明细账_品牌补全`
+                        WHERE NULLIF(TRIM({BRAND_EXPRESSION_SQL}), '') IS NOT NULL
+                        ORDER BY brand
+                        """
+                    )
+                ).scalars().all()
+                if item
+            ],
+        },
     }
     return _cached_ok(cache_key, data)
 
