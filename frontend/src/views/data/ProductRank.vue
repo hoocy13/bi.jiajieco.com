@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import VChart from 'vue-echarts'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -13,17 +14,21 @@ import { getSavedTheme } from '../../utils/theme'
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
 
 const chartTheme = getSavedTheme()
+const route = useRoute()
+const router = useRouter()
 
 const loading = ref(false)
-const selectedRange = ref('last_30')
-const dateRange = ref([])
+const selectedRange = ref(route.query.start_date && route.query.end_date ? 'custom' : String(route.query.range || 'last_30'))
+const dateRange = ref(route.query.start_date && route.query.end_date ? [String(route.query.start_date), String(route.query.end_date)] : [])
 const rangeOptions = [
   { label: '近30天', value: 'last_30' },
   { label: '本月', value: 'this_month' },
 ]
 const query = reactive({
-  keyword: '',
-  limit: 30,
+  keyword: String(route.query.keyword || ''),
+  limit: [10, 30, 50, 100].includes(Number(route.query.limit)) ? Number(route.query.limit) : 30,
+  productTypes: (Array.isArray(route.query.product_type) ? route.query.product_type : route.query.product_type ? [route.query.product_type] : [])
+    .map(String).filter((item) => ['正装', '小样'].includes(item)),
 })
 const rank = ref({
   period: '近30天',
@@ -64,6 +69,7 @@ const dateRangeLabel = computed(() => {
   const end = formatDate(rank.value.end_date)
   return start === '-' || end === '-' ? '-' : `${start} 至 ${end}`
 })
+const productTypeLabel = computed(() => query.productTypes.length ? query.productTypes.join(' + ') : '全部')
 
 const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
 
@@ -135,6 +141,7 @@ function buildParams() {
     : { range: selectedRange.value }
   params.limit = query.limit
   if (query.keyword.trim()) params.keyword = query.keyword.trim()
+  if (query.productTypes.length) params.product_type = query.productTypes
   return params
 }
 
@@ -158,6 +165,13 @@ async function fetchRank() {
       quantity_rows: result.data.quantity_rows || [],
     }
     dateRange.value = [rank.value.start_date, rank.value.end_date]
+    const routeQuery = selectedRange.value === 'custom'
+      ? { start_date: rank.value.start_date, end_date: rank.value.end_date }
+      : { range: selectedRange.value }
+    if (query.keyword.trim()) routeQuery.keyword = query.keyword.trim()
+    if (query.limit !== 30) routeQuery.limit = String(query.limit)
+    if (query.productTypes.length) routeQuery.product_type = query.productTypes
+    await router.replace({ query: routeQuery })
   } finally {
     loading.value = false
   }
@@ -181,6 +195,10 @@ onMounted(fetchRank)
           :unlink-panels="true"
           @change="handleDateRangeChange"
         />
+        <el-select v-model="query.productTypes" class="filter-select multi-filter-select" clearable multiple collapse-tags :max-collapse-tags="1" placeholder="正装 / 小样">
+          <el-option label="正装" value="正装" />
+          <el-option label="小样" value="小样" />
+        </el-select>
         <el-input v-model="query.keyword" class="filter-input" clearable placeholder="商品关键字" />
         <el-select v-model="query.limit" class="filter-select" placeholder="排行数量">
           <el-option label="Top 10" :value="10" />
@@ -203,7 +221,7 @@ onMounted(fetchRank)
     <section class="panel">
       <header>
         <h2>商品销售排行榜<span class="panel-source">（按明细分摊金额）</span></h2>
-        <ExportExcelButton title="商品销售排行" :rows="rank.rows" :columns="rankExportColumns" :total="rank.rows.length" :filters="{ 统计区间: dateRangeLabel }" />
+        <ExportExcelButton title="商品销售排行" :rows="rank.rows" :columns="rankExportColumns" :total="rank.rows.length" :filters="{ 统计区间: dateRangeLabel, 货品分类: productTypeLabel }" />
         <el-button :icon="'Refresh'" circle @click="fetchRank" />
       </header>
       <v-chart class="rank-chart" :option="amountChartOption" autoresize />
@@ -244,7 +262,7 @@ onMounted(fetchRank)
     <section class="panel">
       <header>
         <h2>商品数量排行<span class="panel-source">（按销售数量）</span></h2>
-        <ExportExcelButton title="商品数量排行" :rows="rank.quantity_rows" :columns="rankExportColumns" :total="rank.quantity_rows.length" :filters="{ 统计区间: dateRangeLabel }" />
+        <ExportExcelButton title="商品数量排行" :rows="rank.quantity_rows" :columns="rankExportColumns" :total="rank.quantity_rows.length" :filters="{ 统计区间: dateRangeLabel, 货品分类: productTypeLabel }" />
       </header>
       <v-chart class="rank-chart" :option="quantityChartOption" autoresize />
       <el-table :data="rank.quantity_rows" height="520">

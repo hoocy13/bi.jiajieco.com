@@ -6,7 +6,7 @@ from threading import Lock
 from time import monotonic
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -349,6 +349,7 @@ def _load_ads_product_rank(
     end_date: date | None,
     limit: int,
     keyword: str | None,
+    product_types: list[str],
 ) -> dict:
     if AdsSessionLocal is None:
         raise AdsDataUnavailable("ADS_DATABASE_URL is not configured")
@@ -375,6 +376,7 @@ def _load_ads_product_rank(
             meta,
             limit=limit,
             keyword=keyword,
+            product_types=product_types,
         )
 
 
@@ -834,18 +836,23 @@ def sales_product_rank(
     end_date: date | None = Query(None),
     limit: int = Query(30, ge=10, le=100),
     keyword: str | None = Query(None),
+    product_type: list[str] | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
     query_mode = settings.BI_QUERY_SOURCE
     response.headers["X-BI-Query-Mode"] = query_mode
+    selected_product_types = list(
+        dict.fromkeys(item.strip() for item in product_type or [] if item.strip() in {"正装", "小样"})
+    )
     cache_key = _sales_cache_key(
-        "product-rank-v3",
+        "product-rank-v4",
         range=range,
         start_date=start_date,
         end_date=end_date,
         limit=limit,
         keyword=keyword,
+        product_type=selected_product_types,
         query_mode=query_mode,
     )
     cached = _get_sales_cache(cache_key)
@@ -861,23 +868,35 @@ def sales_product_rank(
                 end_date,
                 limit,
                 keyword,
+                selected_product_types,
             )
-            if keyword:
+            if keyword or selected_product_types:
+                exact_filters = [
+                    "`下单时间` >= :start_date",
+                    "`下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)",
+                ]
+                exact_params = {
+                    "start_date": date.fromisoformat(data["start_date"]),
+                    "end_date": date.fromisoformat(data["end_date"]),
+                }
+                if keyword:
+                    exact_filters.append("`货品名称` LIKE :keyword")
+                    exact_params["keyword"] = f"%{keyword.strip()}%"
+                if selected_product_types:
+                    exact_filters.append("`货品分类` IN :product_types")
+                    exact_params["product_types"] = tuple(selected_product_types)
+                exact_statement = text(
+                    f"""
+                    SELECT COUNT(DISTINCT `订单编号`)
+                    FROM `dwd`.`销售单明细账_品牌补全`
+                    WHERE {' AND '.join(exact_filters)}
+                    """
+                )
+                if selected_product_types:
+                    exact_statement = exact_statement.bindparams(bindparam("product_types", expanding=True))
                 exact_orders = db.execute(
-                    text(
-                        """
-                        SELECT COUNT(DISTINCT `订单编号`)
-                        FROM `dwd`.`销售单明细账_品牌补全`
-                        WHERE `下单时间` >= :start_date
-                          AND `下单时间` < DATE_ADD(:end_date, INTERVAL 1 DAY)
-                          AND `货品名称` LIKE :keyword
-                        """
-                    ),
-                    {
-                        "start_date": date.fromisoformat(data["start_date"]),
-                        "end_date": date.fromisoformat(data["end_date"]),
-                        "keyword": f"%{keyword.strip()}%",
-                    },
+                    exact_statement,
+                    exact_params,
                 ).scalar()
                 data["rank_summary"]["orders"] = _int(exact_orders)
         except AdsDataUnavailable as exc:
@@ -900,10 +919,18 @@ def sales_product_rank(
     if keyword:
         params["keyword"] = f"%{keyword.strip()}%"
         filters.append("`货品名称` LIKE :keyword")
+    if selected_product_types:
+        params["product_types"] = tuple(selected_product_types)
+        filters.append("`货品分类` IN :product_types")
 
     where_sql = " AND ".join(filters)
+    def filtered_text(sql: str):
+        statement = text(sql)
+        if selected_product_types:
+            statement = statement.bindparams(bindparam("product_types", expanding=True))
+        return statement
     summary_row = db.execute(
-        text(
+        filtered_text(
             f"""
             SELECT
               COUNT(DISTINCT `订单编号`) AS orders,
@@ -917,10 +944,18 @@ def sales_product_rank(
     ).mappings().one()
 
     rank_paid_amount = _number(summary_row["paid_amount"])
-    summary = _sales_query_summary(db, params)
+    summary = (
+        {
+            "paid_amount": _number(summary_row["paid_amount"]),
+            "orders": _int(summary_row["orders"]),
+            "quantity": _int(summary_row["quantity"]),
+        }
+        if selected_product_types
+        else _sales_query_summary(db, params)
+    )
     row_params = {**params, "limit": limit}
     rank_rows = db.execute(
-        text(
+        filtered_text(
             f"""
             SELECT
               COALESCE(NULLIF(`货品名称`, ''), '未命名商品') AS product,
@@ -937,7 +972,7 @@ def sales_product_rank(
         row_params,
     ).mappings().all()
     quantity_rank_rows = db.execute(
-        text(
+        filtered_text(
             f"""
             SELECT
               COALESCE(NULLIF(`货品名称`, ''), '未命名商品') AS product,

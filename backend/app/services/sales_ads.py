@@ -337,6 +337,7 @@ def load_sales_product_rank_from_ads(
     meta: dict,
     limit: int,
     keyword: str | None = None,
+    product_types: list[str] | None = None,
     exact_filtered_orders: int | None = None,
 ) -> dict:
     start_date = date.fromisoformat(meta["start_date"])
@@ -348,9 +349,22 @@ def load_sales_product_rank_from_ads(
         "end_date": end_date,
     }
 
-    sales_summary_row = ads_db.execute(
-        text(
-            """
+    selected_product_types = product_types or []
+    scope = product_type_scope(selected_product_types)
+    if selected_product_types:
+        params["product_type_scope"] = scope
+        sales_summary_sql = """
+            SELECT
+              COALESCE(SUM(`orders`), 0) AS orders,
+              COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
+              COALESCE(SUM(`quantity`), 0) AS quantity
+            FROM `ads_sales_detail_daily_scope`
+            WHERE `data_version` = :data_version
+              AND `sales_date` BETWEEN :start_date AND :end_date
+              AND `product_type_scope` = :product_type_scope
+        """
+    else:
+        sales_summary_sql = """
             SELECT
               COALESCE(SUM(`orders`), 0) AS orders,
               COALESCE(SUM(`paid_amount`), 0) AS paid_amount,
@@ -358,16 +372,25 @@ def load_sales_product_rank_from_ads(
             FROM `ads_sales_daily`
             WHERE `data_version` = :data_version
               AND `sales_date` BETWEEN :start_date AND :end_date
-            """
-        ),
+        """
+    sales_summary_row = ads_db.execute(
+        text(sales_summary_sql),
         params,
     ).mappings().one()
 
-    product_filter = ""
+    product_filters = []
     if keyword:
         params["keyword"] = f"%{keyword.strip()}%"
-        product_filter = "AND `product` LIKE :keyword"
+        product_filters.append("`product` LIKE :keyword")
+    if scope == "full_size":
+        product_filters.append("`product_type` = '正装'")
+    elif scope == "sample":
+        product_filters.append("`product_type` = '小样'")
+    elif scope == "selected":
+        product_filters.append("`product_type` IN ('正装', '小样')")
+    product_filter = "".join(f" AND {item}" for item in product_filters)
 
+    product_table = "ads_sales_daily_brand_product" if selected_product_types else "ads_sales_daily_product"
     product_rows = ads_db.execute(
         text(
             f"""
@@ -376,7 +399,7 @@ def load_sales_product_rank_from_ads(
               SUM(`orders`) AS orders,
               SUM(`paid_amount`) AS paid_amount,
               SUM(`quantity`) AS quantity
-            FROM `ads_sales_daily_product`
+            FROM `{product_table}`
             WHERE `data_version` = :data_version
               AND `sales_date` BETWEEN :start_date AND :end_date
               {product_filter}
@@ -386,7 +409,7 @@ def load_sales_product_rank_from_ads(
         params,
     ).mappings().all()
 
-    if keyword:
+    if keyword or selected_product_types:
         detail_orders = (
             exact_filtered_orders
             if exact_filtered_orders is not None
