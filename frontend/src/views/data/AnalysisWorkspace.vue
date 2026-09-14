@@ -1,73 +1,76 @@
 <script setup>
-import { reactive, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import VChart from 'vue-echarts'
+import { use } from 'echarts/core'
+import { LineChart, BarChart } from 'echarts/charts'
+import { CanvasRenderer } from 'echarts/renderers'
+import { GridComponent, TooltipComponent, MarkPointComponent } from 'echarts/components'
+import MetricCard from '../../components/dashboard/MetricCard.vue'
+import { getAnalysisWorkspace } from '../../api/ai'
+import { getSavedTheme } from '../../utils/theme'
 
-const route = useRoute()
+use([CanvasRenderer, LineChart, BarChart, GridComponent, TooltipComponent, MarkPointComponent])
 const router = useRouter()
-const allowed = {
-  metric: ['paid_amount', 'orders', 'quantity'],
-  method: ['trend', 'contribution', 'anomaly'],
-  dimension: ['brand', 'channel', 'customer'],
-  period: ['last_30', 'last_90', 'year'],
-}
-const pick = (key, fallback) => allowed[key].includes(String(route.query[key])) ? String(route.query[key]) : fallback
-const form = reactive({
-  metric: pick('metric', 'paid_amount'),
-  method: pick('method', 'trend'),
-  dimension: pick('dimension', 'brand'),
-  period: pick('period', 'last_90'),
-})
-
-watch(form, value => router.replace({ query: { ...value } }), { deep: true })
-
-function startAnalysis() {
-  ElMessage.info('分析模型将在下一阶段开放，当前已完成统一入口和参数框架')
-}
+const chartTheme = getSavedTheme()
+const loading = ref(false)
+const result = ref({ start_date: '', end_date: '', as_of: '', summary: {}, trend: [], brands: [], anomalies: [] })
+const money = (value, digits = 2) => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+const percent = (value) => value === null || value === undefined ? '暂无可比数据' : `${value >= 0 ? '+' : ''}${money(value, 1)}%`
+const dateText = (value) => value ? String(value).slice(0, 10) : '-'
+const metrics = computed(() => [
+  { label: '近90天销售额', value: money(result.value.summary.paid_amount), unit: '元', trend: `${dateText(result.value.start_date)} 至 ${dateText(result.value.end_date)}` },
+  { label: '较上一周期', value: percent(result.value.summary.change_rate), unit: '', trend: `上一周期 ${money(result.value.summary.previous_paid_amount)} 元` },
+  { label: '日均销售额', value: money(result.value.summary.daily_average), unit: '元', trend: '按自然日计算' },
+  { label: '异常波动', value: Number(result.value.summary.anomaly_count || 0), unit: '天', trend: '偏离均值至少 2 个标准差' },
+])
+const trendOption = computed(() => ({
+  color: [chartTheme.primary],
+  tooltip: { trigger: 'axis', backgroundColor: '#111827', borderWidth: 0, textStyle: { color: '#fff' }, formatter: ([item]) => `${item.axisValue}<br/>销售额：${money(item.value)} 元` },
+  grid: { top: 28, left: 70, right: 22, bottom: 42 },
+  xAxis: { type: 'category', data: result.value.trend.map(item => dateText(item.date).slice(5)), axisTick: { show: false }, axisLabel: { color: '#667085' } },
+  yAxis: { type: 'value', splitLine: { lineStyle: { color: '#edf1f6' } }, axisLabel: { color: '#667085', formatter: value => `${money(value / 10000, 0)}万` } },
+  series: [{ type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 3 }, areaStyle: { opacity: 0.12 }, data: result.value.trend.map(item => item.paid_amount), markPoint: { symbolSize: 48, data: result.value.anomalies.map(item => ({ coord: [dateText(item.date).slice(5), item.paid_amount], itemStyle: { color: item.direction === 'up' ? '#e61d4f' : '#16a36a' } })) } }],
+}))
+const brandOption = computed(() => ({
+  color: [chartTheme.primary],
+  tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#111827', borderWidth: 0, textStyle: { color: '#fff' }, formatter: ([item]) => { const row = result.value.brands[item.dataIndex]; return `${row.brand}<br/>销售额：${money(row.paid_amount)} 元<br/>贡献：${money(row.share, 1)}%` } },
+  grid: { top: 12, left: 100, right: 54, bottom: 24 },
+  xAxis: { type: 'value', axisLabel: { color: '#98a2b3', formatter: value => `${money(value / 10000, 0)}万` }, splitLine: { lineStyle: { color: '#edf1f6' } } },
+  yAxis: { type: 'category', inverse: true, data: result.value.brands.map(item => item.brand), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: '#475467', width: 82, overflow: 'truncate' } },
+  series: [{ type: 'bar', barWidth: 12, data: result.value.brands.map(item => item.paid_amount), itemStyle: { borderRadius: [0, 7, 7, 0] }, label: { show: true, position: 'right', color: '#667085', formatter: ({ dataIndex }) => `${money(result.value.brands[dataIndex]?.share, 1)}%` } }],
+}))
+async function fetchAnalysis() { loading.value = true; try { const response = await getAnalysisWorkspace(); result.value = response.data } finally { loading.value = false } }
+function openBrand(brand) { router.push({ path: `/sales/brand-analysis/${encodeURIComponent(brand)}`, query: { range: 'custom', start_date: result.value.start_date, end_date: result.value.end_date } }) }
+function handleBrandClick(event) { const brand = result.value.brands[event.dataIndex]?.brand; if (brand) openBrand(brand) }
+onMounted(fetchAnalysis)
 </script>
 
 <template>
-  <div class="analysis-workspace page-stack">
+  <div class="analysis-workspace page-stack" v-loading="loading">
     <section class="analysis-intro">
-      <div>
-        <h2>分析工作台</h2>
-        <p>统一承载趋势、对比、归因和预测分析。第一期先开放分析参数框架。</p>
-      </div>
-      <span>规划中</span>
+      <div><h2>销售趋势与品牌贡献</h2><p>自动比较连续两个 90 天周期，并识别明显偏离日常水平的销售日期。</p></div>
+      <div class="freshness"><span>数据截至</span><strong>{{ dateText(result.as_of) }}</strong></div>
     </section>
-    <section class="panel analysis-config">
-      <header><h2>新建分析</h2></header>
-      <el-form label-position="top">
-        <div class="analysis-fields">
-          <el-form-item label="分析指标"><el-select v-model="form.metric"><el-option label="销售额" value="paid_amount" /><el-option label="订单数" value="orders" /><el-option label="销售数量" value="quantity" /></el-select></el-form-item>
-          <el-form-item label="分析方式"><el-select v-model="form.method"><el-option label="趋势与环比" value="trend" /><el-option label="贡献度分析" value="contribution" /><el-option label="异常检测" value="anomaly" /></el-select></el-form-item>
-          <el-form-item label="分析维度"><el-select v-model="form.dimension"><el-option label="品牌" value="brand" /><el-option label="渠道" value="channel" /><el-option label="客户" value="customer" /></el-select></el-form-item>
-          <el-form-item label="分析周期"><el-select v-model="form.period"><el-option label="近30天" value="last_30" /><el-option label="近90天" value="last_90" /><el-option label="本年度" value="year" /></el-select></el-form-item>
-        </div>
-        <el-button type="primary" @click="startAnalysis">开始分析</el-button>
-      </el-form>
+    <section class="toolbar-panel analysis-scope">
+      <el-select model-value="paid_amount" disabled><el-option label="销售额" value="paid_amount" /></el-select>
+      <el-select model-value="trend" disabled><el-option label="趋势与环比" value="trend" /></el-select>
+      <el-select model-value="brand" disabled><el-option label="品牌" value="brand" /></el-select>
+      <el-select model-value="last_90" disabled><el-option label="近90天" value="last_90" /></el-select>
+      <el-button type="primary" @click="fetchAnalysis">重新分析</el-button><span class="mvp-note">首期已开放此分析组合</span>
     </section>
-    <section class="analysis-roadmap">
-      <div><strong>趋势与对比</strong><span>观察周期变化和异常拐点</span></div>
-      <div><strong>贡献度分析</strong><span>定位品牌、渠道和客户贡献</span></div>
-      <div><strong>预测分析</strong><span>后续接入销售和库存预测</span></div>
-    </section>
+    <div class="metric-grid"><MetricCard v-for="item in metrics" :key="item.label" v-bind="item" /></div>
+    <section class="panel"><header><h2>每日销售趋势</h2><span class="panel-source">异常点已标记</span></header><v-chart class="chart" :option="trendOption" autoresize /></section>
+    <div class="analysis-grid">
+      <section class="panel"><header><h2>品牌贡献 Top 10</h2><span class="panel-source">点击品牌下钻</span></header><v-chart class="brand-chart" :option="brandOption" autoresize @click="handleBrandClick" /></section>
+      <section class="panel anomaly-panel"><header><h2>异常波动日期</h2><span class="panel-source">相对日均销售额</span></header>
+        <el-empty v-if="!result.anomalies.length" description="本周期未发现明显异常" />
+        <div v-for="item in result.anomalies" :key="item.date" class="anomaly-row"><span><strong>{{ dateText(item.date) }}</strong><small>{{ item.direction === 'up' ? '显著高于日常' : '显著低于日常' }}</small></span><span :class="item.direction">{{ percent(item.deviation_rate) }}</span><b>{{ money(item.paid_amount) }} 元</b></div>
+      </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.analysis-intro { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 20px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
-.analysis-intro h2 { margin: 0; font-size: 20px; }
-.analysis-intro p { margin: 7px 0 0; color: var(--text-soft); font-size: 13px; }
-.analysis-intro > span { flex: 0 0 auto; padding: 5px 9px; color: var(--text-soft); background: var(--surface-soft); border-radius: 6px; font-size: 12px; }
-.analysis-config { padding-bottom: 18px; }
-.analysis-config .el-form { padding: 16px 18px 0; }
-.analysis-fields { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
-.analysis-fields :deep(.el-select) { width: 100%; }
-.analysis-roadmap { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 12px; }
-.analysis-roadmap div { display: grid; gap: 6px; padding: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
-.analysis-roadmap strong { font-size: 14px; }
-.analysis-roadmap span { color: var(--text-soft); font-size: 12px; }
-@media (max-width: 900px) { .analysis-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } .analysis-roadmap { grid-template-columns: 1fr; } }
-@media (max-width: 560px) { .analysis-fields { grid-template-columns: 1fr; } .analysis-intro { align-items: flex-start; flex-direction: column; } }
+.analysis-intro{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:20px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:9px}.analysis-intro h2{margin:0;font-size:20px}.analysis-intro p{margin:7px 0 0;color:var(--text-soft);font-size:13px}.freshness{display:grid;gap:3px;text-align:right}.freshness span,.mvp-note{color:var(--text-soft);font-size:12px}.analysis-scope{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.analysis-scope .el-select{width:150px}.mvp-note{margin-left:auto}.chart{height:330px}.analysis-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.8fr);gap:16px}.brand-chart{height:390px;cursor:pointer}.anomaly-panel{min-width:0}.anomaly-row{display:grid;grid-template-columns:1fr auto;gap:3px 12px;margin:0 16px;padding:13px 4px;color:var(--text);border-bottom:1px solid var(--border)}.anomaly-row span:first-child{display:grid;gap:3px}.anomaly-row small{color:var(--text-soft)}.anomaly-row span.up{color:#e61d4f;font-weight:700}.anomaly-row span.down{color:#16865c;font-weight:700}.anomaly-row b{color:var(--text-soft);font-size:12px;font-weight:500}@media(max-width:1050px){.analysis-grid{grid-template-columns:1fr}}@media(max-width:700px){.analysis-intro{align-items:flex-start;flex-direction:column}.freshness{text-align:left}.analysis-scope .el-select{width:calc(50% - 5px)}.mvp-note{width:100%;margin:0}}
 </style>

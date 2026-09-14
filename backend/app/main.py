@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.deps import require_permission
-from app.api.routers import ai_decisions, announcements, auth, dashboard, exports, inventory, model_settings, rag, reports, roles, sales, text_to_sql, users
+from app.api.routers import ai_decisions, analysis_workspace, announcements, auth, dashboard, exports, inventory, model_settings, rag, reports, roles, sales, text_to_sql, users
 from app.core.config import settings
 from app.core.performance import performance_middleware
 from app.db.init_db import init_db
@@ -73,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(model_settings.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("system.models.manage"))])
     app.include_router(announcements.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("system.announcements.manage"))])
     app.include_router(ai_decisions.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("ai.decision.view"))])
+    app.include_router(analysis_workspace.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("ai.decision.view"))])
     app.include_router(rag.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("ai.assistant.use"))])
     return app
 

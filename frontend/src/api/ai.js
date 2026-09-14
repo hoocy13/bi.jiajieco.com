@@ -15,3 +15,7 @@ function decisionParams(params = {}) {
 export function getInventoryDecisions(params = {}) {
   return http.get('/ai/inventory-decisions', { params: decisionParams(params), timeout: 90000 })
 }
+
+export function getAnalysisWorkspace() {
+  return http.get('/ai/analysis-workspace', { timeout: 90000 })
+}
