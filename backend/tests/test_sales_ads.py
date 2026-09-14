@@ -819,6 +819,30 @@ class SalesAdsReaderTests(unittest.TestCase):
         self.assertEqual(filtered["rank_summary"]["paid_amount"], 80)
         self.assertEqual([row["product"] for row in filtered["rows"]], ["商品A"])
 
+        product_type_filtered = load_sales_product_rank_from_ads(
+            self.db,
+            batch,
+            meta,
+            limit=10,
+            product_types=["正装"],
+            exact_filtered_orders=2,
+        )
+        self.assertEqual(product_type_filtered["summary"]["paid_amount"], 80)
+        self.assertEqual(product_type_filtered["rank_summary"]["orders"], 2)
+        self.assertEqual([row["product"] for row in product_type_filtered["rows"]], ["商品A"])
+        self.assertEqual(product_type_filtered["filter_options"]["brands"], ["品牌A", "品牌B"])
+
+        brand_filtered = load_sales_product_rank_from_ads(
+            self.db,
+            batch,
+            meta,
+            limit=10,
+            brands=["品牌B"],
+            exact_filtered_orders=2,
+        )
+        self.assertEqual(brand_filtered["summary"]["paid_amount"], 70)
+        self.assertEqual([row["product"] for row in brand_filtered["rows"]], ["商品B"])
+
     def test_loads_brand_analysis_and_product_type_from_ads(self) -> None:
         batch = latest_ready_sales_batch(self.db)
         meta = {
@@ -982,6 +1006,8 @@ class SalesAdsReaderTests(unittest.TestCase):
                 end_date=date(2026, 7, 2),
                 limit=10,
                 keyword=None,
+                product_type=None,
+                brand=None,
                 current_user=None,
                 db=self.db,
             )
