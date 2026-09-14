@@ -11,3 +11,4 @@ bi-deploy.tar.gz
 *.log
 docs/awesome-design-md/
 outputs/
+.codex-stage-verify-*/
