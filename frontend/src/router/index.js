@@ -19,6 +19,7 @@ const BatchExpiryAnalysis = () => import('../views/data/BatchExpiryAnalysis.vue'
 const InventoryHealth = () => import('../views/data/InventoryHealth.vue')
 const BrandMonthlyArrivals = () => import('../views/data/BrandMonthlyArrivals.vue')
 const BrandInventoryFlow = () => import('../views/data/BrandInventoryFlow.vue')
+const ReservationAnalysis = () => import('../views/data/ReservationAnalysis.vue')
 const AiDecisionCenter = () => import('../views/data/AiDecisionCenter.vue')
 const ModelSettings = () => import('../views/data/ModelSettings.vue')
 const SmartQuery = () => import('../views/data/SmartQuery.vue')
@@ -61,6 +62,7 @@ const routes = [
       { path: 'inventory/detail', component: InventoryDetail, meta: { title: '库存明细', permission: 'inventory.view' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货', permission: 'inventory.view' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存', permission: 'inventory.view' } },
+      { path: 'inventory/reservations', component: ReservationAnalysis, meta: { title: '预留单分析', permission: 'inventory.view' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '品牌周转', permission: 'inventory.view' } },
       { path: 'inventory/slow-moving', component: SlowMoving, meta: { title: '滞销分析', permission: 'inventory.view' } },
       { path: 'inventory/batch-expiry', component: BatchExpiryAnalysis, meta: { title: '批次效期分析', permission: 'inventory.view' } },

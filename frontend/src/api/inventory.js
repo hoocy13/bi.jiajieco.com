@@ -62,3 +62,7 @@ export function getBrandInventoryFlow(params = {}) {
 export function getBrandInventoryTurnoverAnalysis(params = {}) {
   return http.get('/inventory/brand-inventory-turnover-analysis', { params: inventoryParams(params) })
 }
+
+export function getReservationAnalysis(params = {}) {
+  return http.get('/reservations/analysis', { params: inventoryParams(params) })
+}
