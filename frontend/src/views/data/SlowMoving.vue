@@ -39,10 +39,14 @@ const summary = ref({
   slow_sku_count: 0,
   slow_sku_share: 0,
   no_sales_stock_quantity: 0,
+  no_sales_sku_count: 0,
+  return_anomaly_stock_quantity: 0,
+  return_anomaly_sku_count: 0,
 })
 const riskDistribution = ref([])
+const brandDistribution = ref([])
 const trend = ref([])
-const analysisMeta = ref({ snapshot_date: '', period_start: '', period_days: 90, updated_at: '' })
+const analysisMeta = ref({ snapshot_date: '', period_start: '', period_days: 90, updated_at: '', basis: 'current_available_stock' })
 const allowedPeriods = [30, 60, 90, 180]
 const routePeriod = Number(route.query.period_days || 90)
 const allowedSortFields = ['stock', 'period_sales', 'estimated_days', 'ending_stock_ratio']
@@ -50,6 +54,7 @@ const allowedRetentionScopes = ['all', 'ge90', '70_90', '50_70', 'lt50']
 const routeSortBy = String(route.query.sort_by || 'stock')
 const routeRetentionScope = String(route.query.retention_scope || 'all')
 const query = reactive({
+  viewMode: String(route.query.view_mode || 'current') === 'history' ? 'history' : 'current',
   keyword: String(route.query.keyword || ''),
   barcode: String(route.query.barcode || ''),
   warehouses: queryArray(route.query.warehouse, DEFAULT_INVENTORY_WAREHOUSES),
@@ -65,11 +70,12 @@ const query = reactive({
 })
 
 const exportFilters = computed(() => ({
+  view_mode: query.viewMode,
   keyword: query.keyword.trim() || undefined,
   barcode: query.barcode.trim() || undefined,
   warehouse: query.warehouses,
   product_type: productTypeParam(query.productTypes),
-  snapshot_date: query.snapshotDate || undefined,
+  snapshot_date: query.viewMode === 'history' ? (query.snapshotDate || undefined) : undefined,
   period_days: query.periodDays,
   risk_scope: query.riskScope,
   retention_scope: query.retentionScope,
@@ -91,6 +97,7 @@ function formatDateTime(value) {
 
 function riskTagType(code) {
   if (code === 'no_sales') return 'danger'
+  if (code === 'return_anomaly') return 'danger'
   if (code === 'critical') return 'warning'
   if (code === 'slow') return 'warning'
   return 'info'
@@ -100,10 +107,11 @@ function syncUrl() {
   return router.replace({
     query: inventoryQuery({
       keyword: query.keyword.trim(),
+      view_mode: query.viewMode,
       barcode: query.barcode.trim(),
       warehouse: query.warehouses,
       product_type: query.productTypes.length ? query.productTypes : '__all__',
-      snapshot_date: query.snapshotDate,
+      snapshot_date: query.viewMode === 'history' ? query.snapshotDate : '',
       period_days: query.periodDays,
       risk_scope: query.riskScope,
       retention_scope: query.retentionScope,
@@ -127,10 +135,11 @@ async function fetchRows(resetPage = false) {
   try {
     const result = await getSlowMovingInventory({
       keyword: query.keyword.trim(),
+      view_mode: query.viewMode,
       barcode: query.barcode.trim(),
       warehouse: query.warehouses,
       product_type: productTypeParam(query.productTypes),
-      snapshot_date: query.snapshotDate,
+      snapshot_date: query.viewMode === 'history' ? query.snapshotDate : undefined,
       period_days: query.periodDays,
       risk_scope: query.riskScope,
       retention_scope: query.retentionScope,
@@ -144,6 +153,7 @@ async function fetchRows(resetPage = false) {
     total.value = data.pagination?.total || 0
     summary.value = data.summary || summary.value
     riskDistribution.value = data.risk_distribution || []
+    brandDistribution.value = data.brand_distribution || []
     trend.value = data.trend || []
     snapshotOptions.value = data.snapshot_options || []
     analysisMeta.value = {
@@ -151,8 +161,9 @@ async function fetchRows(resetPage = false) {
       period_start: data.period_start,
       period_days: data.period_days,
       updated_at: data.updated_at,
+      basis: data.basis,
     }
-    if (!query.snapshotDate && data.snapshot_date) {
+    if (query.viewMode === 'history' && !query.snapshotDate && data.snapshot_date) {
       query.snapshotDate = data.snapshot_date
       await syncUrl()
     }
@@ -166,6 +177,7 @@ async function fetchRows(resetPage = false) {
 
 function restoreDefaults() {
   Object.assign(query, {
+    viewMode: 'current',
     keyword: '',
     barcode: '',
     warehouses: [...DEFAULT_INVENTORY_WAREHOUSES],
@@ -184,6 +196,7 @@ function restoreDefaults() {
 
 function clearFilters() {
   Object.assign(query, {
+    viewMode: 'current',
     keyword: '',
     barcode: '',
     warehouses: [],
@@ -238,10 +251,27 @@ const metrics = computed(() => [
   { label: '滞销库存数量', value: formatNumber(summary.value.slow_stock_quantity), unit: '件' },
   { label: '库存数量占比', value: `${formatNumber(summary.value.slow_stock_share, 1)}%`, accent: true },
   { label: '滞销 SKU', value: formatNumber(summary.value.slow_sku_count), unit: '项' },
-  { label: 'SKU 占比', value: `${formatNumber(summary.value.slow_sku_share, 1)}%`, accent: true },
-  { label: '无销售库存数量', value: formatNumber(summary.value.no_sales_stock_quantity), unit: '件' },
-  { label: '截止库存数量', value: formatNumber(summary.value.stock_quantity), unit: '件' },
+  { label: '真无动销', value: formatNumber(summary.value.no_sales_stock_quantity), unit: '件' },
+  { label: '净退货异常', value: formatNumber(summary.value.return_anomaly_stock_quantity), unit: '件' },
+  { label: analysisMeta.value.basis === 'current_available_stock' ? '当前可用库存' : '截止账面库存', value: formatNumber(summary.value.stock_quantity), unit: '件' },
 ])
+
+const brandOption = computed(() => ({
+  animation: false,
+  color: [chartTheme.primary],
+  grid: { left: 105, right: 55, top: 16, bottom: 28 },
+  tooltip: {
+    trigger: 'axis',
+    axisPointer: { type: 'shadow' },
+    formatter(params) {
+      const item = brandDistribution.value[params[0]?.dataIndex] || {}
+      return [`<strong>${item.brand || ''}</strong>`, `滞销库存：${formatNumber(item.slow_stock_quantity)} 件`, `滞销占比：${formatNumber(item.slow_stock_share, 1)}%`, `滞销 SKU：${formatNumber(item.slow_sku_count)}`].join('<br>')
+    },
+  },
+  xAxis: { type: 'value', axisLabel: { color: '#667085' }, splitLine: { lineStyle: { color: '#edf2ee' } } },
+  yAxis: { type: 'category', inverse: true, data: brandDistribution.value.map((item) => item.brand), axisLabel: { color: '#667085', width: 92, overflow: 'truncate' }, axisTick: { show: false }, axisLine: { show: false } },
+  series: [{ type: 'bar', barMaxWidth: 18, data: brandDistribution.value.map((item) => item.slow_stock_quantity), itemStyle: { borderRadius: [0, 3, 3, 0] } }],
+}))
 
 const trendOption = computed(() => ({
   animation: false,
@@ -312,7 +342,11 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
   <div class="page-stack slow-moving-page">
     <section class="toolbar-panel inventory-filter-panel">
       <div class="inventory-filter-grid slow-moving-filter-grid">
-        <label class="inventory-filter-field inventory-filter-field--date">
+        <label class="inventory-filter-field inventory-filter-field--compact">
+          <span>数据视角</span>
+          <el-segmented v-model="query.viewMode" :options="[{ label: '当前库存', value: 'current' }, { label: '历史复盘', value: 'history' }]" @change="fetchRows(true)" />
+        </label>
+        <label v-if="query.viewMode === 'history'" class="inventory-filter-field inventory-filter-field--date">
           <span>截止快照日</span>
           <el-select v-model="query.snapshotDate" placeholder="最新完成快照">
             <el-option v-for="item in snapshotOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -328,21 +362,12 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
           <span>风险范围</span>
           <el-select v-model="query.riskScope">
             <el-option label="全部滞销" value="slow_all" />
-            <el-option label="无销售" value="no_sales" />
+            <el-option label="真无动销" value="no_sales" />
+            <el-option label="净退货异常" value="return_anomaly" />
             <el-option label="严重滞销" value="critical" />
             <el-option label="滞销" value="slow" />
-            <el-option label="关注" value="watch" />
+            <el-option label="正常" value="watch" />
             <el-option label="全部库存" value="all" />
-          </el-select>
-        </label>
-        <label class="inventory-filter-field inventory-filter-field--compact">
-          <span>留存率</span>
-          <el-select v-model="query.retentionScope">
-            <el-option label="全部" value="all" />
-            <el-option label="90%及以上" value="ge90" />
-            <el-option label="70%-90%" value="70_90" />
-            <el-option label="50%-70%" value="50_70" />
-            <el-option label="50%以下" value="lt50" />
           </el-select>
         </label>
         <label class="inventory-filter-field">
@@ -389,17 +414,23 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
           </div>
         </div>
         <p class="slow-moving-basis-note">
-          <strong>统计口径：</strong>{{ analysisMeta.period_start }} 至 {{ analysisMeta.snapshot_date }}，采用历史月末账面库存；风险按无销售、超过 180 天、90-180 天划分。数据更新于 {{ formatDateTime(analysisMeta.updated_at) }}。
+          <strong>统计口径：</strong>{{ analysisMeta.period_start }} 至 {{ analysisMeta.snapshot_date }}，{{ analysisMeta.basis === 'current_available_stock' ? '采用当前可用库存' : '采用历史月末账面库存' }}；真无动销表示周期内没有正向销售，发生销售但净销量不大于零时单列为净退货异常。数据更新于 {{ formatDateTime(analysisMeta.updated_at) }}。
         </p>
       </section>
 
       <div class="content-grid slow-moving-analysis-grid">
-        <section class="panel trend-panel">
+        <section v-if="query.viewMode === 'history'" class="panel trend-panel">
           <header>
             <h2>滞销趋势<span class="panel-source">（最近 6 个已完成月末快照，更新于 {{ formatDateTime(analysisMeta.updated_at) }}）</span></h2>
           </header>
           <VChart v-if="trend.length" class="slow-moving-chart" :option="trendOption" autoresize />
           <el-empty v-else description="当前筛选下暂无趋势数据" :image-size="72" />
+        </section>
+
+        <section v-else class="panel trend-panel">
+          <header><h2>品牌滞销排行<span class="panel-source">（按当前滞销可用库存）</span></h2></header>
+          <VChart v-if="brandDistribution.length" class="slow-moving-chart" :option="brandOption" autoresize />
+          <el-empty v-else description="当前筛选下暂无品牌滞销数据" :image-size="72" />
         </section>
 
         <section class="panel risk-panel">
@@ -424,8 +455,8 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
       <section class="panel" v-loading="loading">
         <header class="slow-moving-detail-header">
           <div>
-            <h2>滞销分析明细<span class="panel-source">（历史库存快照 + 周期净销量）</span></h2>
-            <p>库存留存率 = 截止库存 /（截止库存 + 周期净销量），期间补货会影响该参考值。</p>
+            <h2>滞销处置明细<span class="panel-source">（{{ analysisMeta.basis === 'current_available_stock' ? '当前可用库存' : '历史账面库存' }} + 周期销售）</span></h2>
+            <p>优先处理真无动销、净退货异常和高库存商品；预计库存天数按周期净销量计算。</p>
           </div>
           <div class="header-actions">
             <ExportExcelButton dataset="slow-moving" :filters="exportFilters" :total="total" />
@@ -457,14 +488,23 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
           <el-table-column prop="warehouse_count" label="仓库数" width="90" align="right">
             <template #default="{ row }">{{ formatNumber(row.warehouse_count) }}</template>
           </el-table-column>
-          <el-table-column prop="stock" label="截止库存" width="120" align="right" sortable="custom">
+          <el-table-column prop="stock" :label="analysisMeta.basis === 'current_available_stock' ? '可用库存' : '截止库存'" width="120" align="right" sortable="custom">
             <template #default="{ row }">{{ formatNumber(row.stock) }}</template>
+          </el-table-column>
+          <el-table-column prop="positive_sales" :label="`${query.periodDays}天正向销量`" width="140" align="right">
+            <template #default="{ row }">{{ formatNumber(row.positive_sales) }}</template>
+          </el-table-column>
+          <el-table-column prop="return_quantity" label="退货数量" width="105" align="right">
+            <template #default="{ row }">{{ formatNumber(row.return_quantity) }}</template>
           </el-table-column>
           <el-table-column prop="period_sales" :label="`${query.periodDays}天净销量`" width="130" align="right" sortable="custom">
             <template #default="{ row }">{{ formatNumber(row.period_sales) }}</template>
           </el-table-column>
           <el-table-column prop="estimated_days" label="预计库存天数" width="140" align="right" sortable="custom">
-            <template #default="{ row }">{{ row.estimated_days === null ? '无销售' : formatNumber(row.estimated_days, 1) }}</template>
+            <template #default="{ row }">{{ row.estimated_days === null ? '不适用' : formatNumber(row.estimated_days, 1) }}</template>
+          </el-table-column>
+          <el-table-column prop="last_sale_at" label="最后销售时间" width="150">
+            <template #default="{ row }">{{ formatDateTime(row.last_sale_at) }}</template>
           </el-table-column>
           <el-table-column prop="ending_stock_ratio" label="库存留存率" width="130" align="right" sortable="custom">
             <template #default="{ row }"><strong class="percentage-value">{{ formatNumber(row.ending_stock_ratio, 1) }}%</strong></template>

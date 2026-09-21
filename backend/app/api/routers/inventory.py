@@ -45,6 +45,7 @@ from app.services.slow_moving_period_analysis import (
     ALLOWED_PERIOD_DAYS,
     build_slow_moving_period_analysis,
     load_completed_inventory_snapshots,
+    load_current_slow_moving_stock,
     load_slow_moving_period_source,
 )
 
@@ -1937,6 +1938,7 @@ def slow_moving_inventory(
     warehouse: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
     snapshot_date: date | None = Query(None),
+    view_mode: str = Query("current"),
     period_days: int = Query(90),
     risk_scope: str = Query("slow_all"),
     retention_scope: str = Query("all"),
@@ -1960,6 +1962,8 @@ def slow_moving_inventory(
         page, page_size, _ = _pagination(page, page_size)
     if period_days not in ALLOWED_PERIOD_DAYS:
         raise HTTPException(status_code=400, detail="观察周期仅支持30、60、90或180天")
+    if view_mode not in {"current", "history"}:
+        raise HTTPException(status_code=400, detail="数据视角仅支持current或history")
 
     snapshot_batches = load_completed_inventory_snapshots(db)
     if not snapshot_batches:
@@ -1968,11 +1972,13 @@ def slow_moving_inventory(
         value if isinstance(value := row["snapshot_date"], date) else date.fromisoformat(str(value))
         for row in snapshot_batches
     )
-    selected_snapshot = snapshot_date or available_dates[0]
-    if selected_snapshot not in available_dates:
+    selected_snapshot = date.today() if view_mode == "current" else (snapshot_date or available_dates[0])
+    if view_mode == "history" and selected_snapshot not in available_dates:
         raise HTTPException(status_code=400, detail="所选截止日不是已完成的库存快照")
-    trend_dates = tuple(sorted((value for value in available_dates if value <= selected_snapshot), reverse=True)[:6])
+    trend_cutoff = selected_snapshot if view_mode == "history" else date.today()
+    trend_dates = tuple(sorted((value for value in available_dates if value <= trend_cutoff), reverse=True)[:6])
     trend_dates = tuple(sorted(trend_dates))
+    analysis_dates = tuple(sorted(set((*trend_dates, selected_snapshot))))
 
     sales_data_version = None
     sales_source = "ods"
@@ -1982,7 +1988,7 @@ def slow_moving_inventory(
             with AdsSessionLocal() as ads_db:
                 ads_batch = latest_ready_brand_turnover_batch(
                     ads_db,
-                    min(trend_dates) - timedelta(days=period_days - 1),
+                    min(analysis_dates) - timedelta(days=period_days - 1),
                     selected_snapshot,
                 )
                 sales_data_version = ads_batch.data_version
@@ -1993,12 +1999,13 @@ def slow_moving_inventory(
             sales_source = "ods"
 
     cache_key = _cache_key(
-        "slow-moving-period-v6",
+        "slow-moving-period-v7",
         keyword=keyword,
         barcode=barcode,
         warehouses=warehouses,
         product_types=product_types,
         snapshot_date=selected_snapshot.isoformat(),
+        view_mode=view_mode,
         period_days=period_days,
         risk_scope=risk_scope,
         retention_scope=retention_scope,
@@ -2011,15 +2018,15 @@ def slow_moving_inventory(
     )
     cached = None if export_mode else _get_cache(cache_key)
     if cached is not None:
-        response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
-        response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
+        response.headers["X-BI-Query-Mode"] = f"{view_mode}-stock-period-sales"
+        response.headers["X-BI-Response-Source"] = f"ods-{view_mode}+{sales_source}-sales"
         return ok(cached)
     try:
         if sales_source == "ads" and AdsSessionLocal is not None and sales_data_version:
             with AdsSessionLocal() as ads_db:
                 source = load_slow_moving_period_source(
                     db,
-                    snapshot_dates=trend_dates,
+                    snapshot_dates=analysis_dates,
                     period_days=period_days,
                     keyword=keyword,
                     barcode=barcode,
@@ -2031,7 +2038,7 @@ def slow_moving_inventory(
         else:
             source = load_slow_moving_period_source(
                 db,
-                snapshot_dates=trend_dates,
+                snapshot_dates=analysis_dates,
                 period_days=period_days,
                 keyword=keyword,
                 barcode=barcode,
@@ -2039,7 +2046,21 @@ def slow_moving_inventory(
                 product_types=product_types,
             )
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="历史滞销分析数据暂不可用") from exc
+        raise HTTPException(status_code=503, detail="滞销分析数据暂不可用") from exc
+    if view_mode == "current":
+        source["stock"] = [
+            row for row in source.get("stock", []) if row.get("snapshot_date") != selected_snapshot
+        ]
+        source["stock"].extend(
+            load_current_slow_moving_stock(
+                db,
+                as_of_date=selected_snapshot,
+                keyword=keyword,
+                barcode=barcode,
+                warehouses=warehouses,
+                product_types=product_types,
+            )
+        )
     data = build_slow_moving_period_analysis(
         source,
         snapshot_date=selected_snapshot,
@@ -2051,11 +2072,13 @@ def slow_moving_inventory(
         page_size=page_size,
         sort_by=sort_by,
         sort_order=sort_order,
+        basis="current_available_stock" if view_mode == "current" else "historical_month_end_stock",
     )
     data.update(
         {
             "keyword": keyword,
             "barcode": barcode,
+            "view_mode": view_mode,
             "warehouses_selected": list(warehouses),
             "product_types_selected": list(product_types),
             "snapshot_options": [
@@ -2067,8 +2090,8 @@ def slow_moving_inventory(
             ],
         }
     )
-    response.headers["X-BI-Query-Mode"] = "historical-snapshot-period-sales"
-    response.headers["X-BI-Response-Source"] = f"ods-snapshot+{sales_source}-sales"
+    response.headers["X-BI-Query-Mode"] = f"{view_mode}-stock-period-sales"
+    response.headers["X-BI-Response-Source"] = f"ods-{view_mode}+{sales_source}-sales"
     return _query_result(cache_key, data, export_mode)
 
 

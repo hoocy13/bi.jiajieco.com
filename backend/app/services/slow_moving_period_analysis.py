@@ -8,12 +8,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
-SLOW_RISK_CODES = ("no_sales", "critical", "slow")
+SLOW_RISK_CODES = ("no_sales", "return_anomaly", "critical", "slow")
 RISK_META = {
-    "no_sales": {"label": "无销售", "order": 0},
-    "critical": {"label": "严重滞销", "order": 1},
-    "slow": {"label": "滞销", "order": 2},
-    "watch": {"label": "关注", "order": 3},
+    "no_sales": {"label": "真无动销", "order": 0},
+    "return_anomaly": {"label": "净退货异常", "order": 1},
+    "critical": {"label": "严重滞销", "order": 2},
+    "slow": {"label": "滞销", "order": 3},
+    "watch": {"label": "正常", "order": 4},
 }
 ALLOWED_PERIOD_DAYS = (30, 60, 90, 180)
 ALLOWED_SORT_FIELDS = {
@@ -81,6 +82,64 @@ def load_completed_inventory_snapshots(ods_db: Session, limit: int = 24) -> list
             """
         ),
         {"limit": max(1, min(limit, 60))},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def load_current_slow_moving_stock(
+    ods_db: Session,
+    *,
+    as_of_date: date,
+    keyword: str = "",
+    barcode: str = "",
+    warehouses: tuple[str, ...] = (),
+    product_types: tuple[str, ...] = (),
+) -> list[dict]:
+    params: dict[str, object] = {"snapshot_date": as_of_date.isoformat()}
+    filters = ["COALESCE(s.`可用库存`, 0) <> 0"]
+    if warehouses:
+        filters.append(
+            f"COALESCE(NULLIF(TRIM(s.`仓库`), ''), '未归类') IN ({_placeholders('current_warehouse', warehouses, params)})"
+        )
+    if product_types:
+        filters.append(
+            f"COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类') IN ({_placeholders('current_product_type', product_types, params)})"
+        )
+    if keyword:
+        params["current_keyword"] = f"%{keyword}%"
+        filters.append(
+            "(s.`货品编号` LIKE :current_keyword OR s.`货品名称` LIKE :current_keyword "
+            "OR s.`品牌` LIKE :current_keyword OR s.`条码` LIKE :current_keyword)"
+        )
+    if barcode:
+        params["current_barcode"] = f"%{barcode}%"
+        filters.append("s.`条码` LIKE :current_barcode")
+
+    rows = ods_db.execute(
+        text(
+            f"""
+            SELECT
+              CAST(:snapshot_date AS DATE) AS snapshot_date,
+              COALESCE(NULLIF(TRIM(s.`仓库`), ''), '未归类') AS warehouse,
+              COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类') AS product_type,
+              COALESCE(NULLIF(TRIM(s.`货品编号`), ''), '') AS product_code,
+              COALESCE(NULLIF(TRIM(s.`货品名称`), ''), '未命名商品') AS product_name,
+              COALESCE(NULLIF(TRIM(s.`品牌`), ''), '未归类') AS brand,
+              MAX(COALESCE(NULLIF(TRIM(s.`条码`), ''), '')) AS barcode,
+              SUM(COALESCE(s.`可用库存`, 0)) AS stock_quantity,
+              MAX(s.`updatetime`) AS updated_at
+            FROM `分仓库查询` s
+            WHERE {' AND '.join(filters)}
+            GROUP BY
+              COALESCE(NULLIF(TRIM(s.`仓库`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(s.`货品分类`), ''), '未归类'),
+              COALESCE(NULLIF(TRIM(s.`货品编号`), ''), ''),
+              COALESCE(NULLIF(TRIM(s.`货品名称`), ''), '未命名商品'),
+              COALESCE(NULLIF(TRIM(s.`品牌`), ''), '未归类')
+            HAVING SUM(COALESCE(s.`可用库存`, 0)) > 0
+            """
+        ),
+        params,
     ).mappings().all()
     return [dict(row) for row in rows]
 
@@ -221,7 +280,10 @@ def load_slow_moving_period_source(
                   COALESCE(NULLIF(TRIM(s.`product_code`), ''), '') AS product_code,
                   COALESCE(NULLIF(TRIM(s.`product`), ''), '未命名商品') AS product_name,
                   COALESCE(NULLIF(TRIM(s.`brand`), ''), '未归类') AS brand,
-                  SUM(COALESCE(s.`quantity`, 0)) AS sales_quantity
+                  SUM(COALESCE(s.`quantity`, 0)) AS sales_quantity,
+                  SUM(CASE WHEN COALESCE(s.`quantity`, 0) > 0 THEN s.`quantity` ELSE 0 END) AS positive_sales_quantity,
+                  SUM(CASE WHEN COALESCE(s.`quantity`, 0) < 0 THEN -s.`quantity` ELSE 0 END) AS return_quantity,
+                  MAX(CASE WHEN COALESCE(s.`quantity`, 0) > 0 THEN s.`sales_date` END) AS last_sale_at
                 FROM ({sales_window_sql}) w
                 INNER JOIN `ads_sales_brand_turnover_item` s
                   ON s.`sales_date` BETWEEN DATE_SUB(w.snapshot_date, INTERVAL :lookback_days DAY) AND w.snapshot_date
@@ -245,7 +307,10 @@ def load_slow_moving_period_source(
                   COALESCE(NULLIF(TRIM(s.`货品编号`), ''), '') AS product_code,
                   COALESCE(NULLIF(TRIM(s.`货品名称`), ''), '未命名商品') AS product_name,
                   COALESCE(NULLIF(TRIM(s.`品牌`), ''), '未归类') AS brand,
-                  SUM(COALESCE(s.`数量`, 0)) AS sales_quantity
+                  SUM(COALESCE(s.`数量`, 0)) AS sales_quantity,
+                  SUM(CASE WHEN COALESCE(s.`数量`, 0) > 0 THEN s.`数量` ELSE 0 END) AS positive_sales_quantity,
+                  SUM(CASE WHEN COALESCE(s.`数量`, 0) < 0 THEN -s.`数量` ELSE 0 END) AS return_quantity,
+                  MAX(CASE WHEN COALESCE(s.`数量`, 0) > 0 THEN s.`下单时间` END) AS last_sale_at
                 FROM ({sales_window_sql}) w
                 INNER JOIN `dwd`.`销售单明细账_品牌补全` s
                   ON s.`下单时间` >= DATE_SUB(w.snapshot_date, INTERVAL :lookback_days DAY)
@@ -270,10 +335,17 @@ def load_slow_moving_period_source(
     }
 
 
-def _risk(stock: Decimal, sales: Decimal, period_days: int) -> tuple[str, float | None]:
-    if sales <= 0:
+def _risk(
+    stock: Decimal,
+    net_sales: Decimal,
+    positive_sales: Decimal,
+    period_days: int,
+) -> tuple[str, float | None]:
+    if positive_sales <= 0:
         return "no_sales", None
-    estimated_days = stock / sales * Decimal(period_days)
+    if net_sales <= 0:
+        return "return_anomaly", None
+    estimated_days = stock / net_sales * Decimal(period_days)
     if estimated_days > 180:
         return "critical", float(estimated_days)
     if estimated_days > 90:
@@ -293,6 +365,7 @@ def build_slow_moving_period_analysis(
     page_size: int = 50,
     sort_by: str = "stock",
     sort_order: str = "desc",
+    basis: str = "historical_month_end_stock",
 ) -> dict:
     if period_days not in ALLOWED_PERIOD_DAYS:
         raise ValueError("Unsupported observation period")
@@ -324,17 +397,32 @@ def build_slow_moving_period_analysis(
         if isinstance(updated_at, datetime) and (latest_update is None or updated_at > latest_update):
             latest_update = updated_at
 
-    sales_by_key: dict[tuple[str, ...], list[tuple[date, Decimal]]] = defaultdict(list)
-    window_sales: dict[date, dict[tuple[str, ...], Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    sales_by_key: dict[tuple[str, ...], list[dict]] = defaultdict(list)
+    window_sales: dict[date, dict[tuple[str, ...], dict]] = defaultdict(dict)
     for raw in source.get("sales", []):
         row = dict(raw)
         key = _product_key(row)
+        sales_metrics = {
+            "net": _decimal(row.get("sales_quantity")),
+            "positive": _decimal(row.get("positive_sales_quantity", max(_decimal(row.get("sales_quantity")), Decimal(0)))),
+            "returns": _decimal(row.get("return_quantity")),
+            "last_sale_at": row.get("last_sale_at"),
+        }
         if row.get("snapshot_date") is not None:
-            window_sales[_date(row.get("snapshot_date"))][key] += _decimal(row.get("sales_quantity"))
-        else:
-            sales_by_key[key].append(
-                (_date(row.get("sales_date")), _decimal(row.get("sales_quantity")))
+            snapshot_metrics = window_sales[_date(row.get("snapshot_date"))].setdefault(
+                key,
+                {"net": Decimal(0), "positive": Decimal(0), "returns": Decimal(0), "last_sale_at": None},
             )
+            snapshot_metrics["net"] += sales_metrics["net"]
+            snapshot_metrics["positive"] += sales_metrics["positive"]
+            snapshot_metrics["returns"] += sales_metrics["returns"]
+            if sales_metrics["last_sale_at"] and (
+                snapshot_metrics["last_sale_at"] is None
+                or sales_metrics["last_sale_at"] > snapshot_metrics["last_sale_at"]
+            ):
+                snapshot_metrics["last_sale_at"] = sales_metrics["last_sale_at"]
+        else:
+            sales_by_key[key].append({"sales_date": _date(row.get("sales_date")), **sales_metrics})
 
     def snapshot_rows(value: date) -> list[dict]:
         start = value - timedelta(days=period_days - 1)
@@ -343,20 +431,32 @@ def build_slow_moving_period_analysis(
         for key, item in aggregates.items():
             if item["stock"] <= 0:
                 continue
-            period_sales = window_sales.get(value, {}).get(key)
-            if period_sales is None:
-                period_sales = sum(
-                    (quantity for sales_date, quantity in sales_by_key.get(key, []) if start <= sales_date <= value),
-                    Decimal(0),
-                )
-            risk_code, estimated_days = _risk(item["stock"], period_sales, period_days)
-            positive_sales = max(period_sales, Decimal(0))
+            metrics = window_sales.get(value, {}).get(key)
+            if metrics is None:
+                matched_sales = [
+                    sale for sale in sales_by_key.get(key, []) if start <= sale["sales_date"] <= value
+                ]
+                metrics = {
+                    "net": sum((sale["net"] for sale in matched_sales), Decimal(0)),
+                    "positive": sum((sale["positive"] for sale in matched_sales), Decimal(0)),
+                    "returns": sum((sale["returns"] for sale in matched_sales), Decimal(0)),
+                    "last_sale_at": max(
+                        (sale["last_sale_at"] for sale in matched_sales if sale["last_sale_at"] is not None),
+                        default=None,
+                    ),
+                }
+            period_sales = metrics["net"]
+            positive_sales = metrics["positive"]
+            risk_code, estimated_days = _risk(item["stock"], period_sales, positive_sales, period_days)
             ending_denominator = item["stock"] + positive_sales
             result.append(
                 {
                     **{key: value for key, value in item.items() if key != "warehouses"},
                     "warehouse_count": len(item["warehouses"]),
                     "period_sales": float(period_sales),
+                    "positive_sales": float(positive_sales),
+                    "return_quantity": float(metrics["returns"]),
+                    "last_sale_at": metrics["last_sale_at"].isoformat() if metrics["last_sale_at"] else None,
                     "estimated_days": estimated_days,
                     "risk_code": risk_code,
                     "risk_label": RISK_META[risk_code]["label"],
@@ -371,6 +471,10 @@ def build_slow_moving_period_analysis(
     slow_stock_quantity = sum((_decimal(row["stock"]) for row in slow_rows), Decimal(0))
     no_sales_stock_quantity = sum(
         (_decimal(row["stock"]) for row in current_rows if row["risk_code"] == "no_sales"),
+        Decimal(0),
+    )
+    return_anomaly_stock_quantity = sum(
+        (_decimal(row["stock"]) for row in current_rows if row["risk_code"] == "return_anomaly"),
         Decimal(0),
     )
 
@@ -392,7 +496,7 @@ def build_slow_moving_period_analysis(
     for trend_date in sorted(trend_dates):
         rows = snapshot_rows(trend_date)
         stock_quantity = sum((_decimal(row["stock"]) for row in rows), Decimal(0))
-        slow_stock_quantity = sum(
+        trend_slow_stock_quantity = sum(
             (_decimal(row["stock"]) for row in rows if row["risk_code"] in SLOW_RISK_CODES),
             Decimal(0),
         )
@@ -402,13 +506,33 @@ def build_slow_moving_period_analysis(
             {
                 "snapshot_date": trend_date.isoformat(),
                 "stock_quantity": float(stock_quantity),
-                "slow_stock_quantity": float(slow_stock_quantity),
-                "slow_stock_share": float(slow_stock_quantity / stock_quantity * 100) if stock_quantity else 0,
+                "slow_stock_quantity": float(trend_slow_stock_quantity),
+                "slow_stock_share": float(trend_slow_stock_quantity / stock_quantity * 100) if stock_quantity else 0,
                 "stock_sku_count": stock_sku_count,
                 "slow_sku_count": slow_sku_count,
                 "slow_sku_share": float(Decimal(slow_sku_count) / Decimal(stock_sku_count) * 100) if stock_sku_count else 0,
             }
         )
+
+    brand_distribution = []
+    brands = sorted({row["brand"] for row in current_rows})
+    for brand in brands:
+        items = [row for row in current_rows if row["brand"] == brand]
+        brand_stock = sum((_decimal(row["stock"]) for row in items), Decimal(0))
+        brand_slow = [row for row in items if row["risk_code"] in SLOW_RISK_CODES]
+        slow_stock = sum((_decimal(row["stock"]) for row in brand_slow), Decimal(0))
+        if slow_stock <= 0:
+            continue
+        brand_distribution.append(
+            {
+                "brand": brand,
+                "stock_quantity": float(brand_stock),
+                "slow_stock_quantity": float(slow_stock),
+                "slow_stock_share": float(slow_stock / brand_stock * 100) if brand_stock else 0,
+                "slow_sku_count": len(brand_slow),
+            }
+        )
+    brand_distribution.sort(key=lambda row: (row["slow_stock_quantity"], row["slow_sku_count"]), reverse=True)
 
     if risk_scope == "slow_all":
         filtered_rows = slow_rows
@@ -447,7 +571,7 @@ def build_slow_moving_period_analysis(
         "period_days": period_days,
         "retention_scope": retention_scope,
         "period_start": (snapshot_date - timedelta(days=period_days - 1)).isoformat(),
-        "basis": "historical_month_end_stock",
+        "basis": basis,
         "updated_at": latest_update.isoformat() if latest_update else None,
         "summary": {
             "stock_quantity": float(all_stock_quantity),
@@ -457,8 +581,12 @@ def build_slow_moving_period_analysis(
             "slow_sku_count": len(slow_rows),
             "slow_sku_share": float(Decimal(len(slow_rows)) / Decimal(len(current_rows)) * 100) if current_rows else 0,
             "no_sales_stock_quantity": float(no_sales_stock_quantity),
+            "no_sales_sku_count": sum(1 for row in current_rows if row["risk_code"] == "no_sales"),
+            "return_anomaly_stock_quantity": float(return_anomaly_stock_quantity),
+            "return_anomaly_sku_count": sum(1 for row in current_rows if row["risk_code"] == "return_anomaly"),
         },
         "risk_distribution": distribution,
+        "brand_distribution": brand_distribution[:10],
         "trend": trend,
         "pagination": {"page": page, "page_size": page_size, "total": len(filtered_rows)},
         "rows": paged_rows,

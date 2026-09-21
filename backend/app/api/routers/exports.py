@@ -171,6 +171,7 @@ def _slow_moving(filters: dict[str, Any], user: User, db: Session) -> tuple[dict
         Response(), keyword=_text(filters.get("keyword")), barcode=_text(filters.get("barcode")),
         warehouse=_texts(filters.get("warehouse")), product_type=_texts(filters.get("product_type")),
         snapshot_date=_date(filters.get("snapshot_date")), period_days=_int(filters.get("period_days"), 90),
+        view_mode=str(filters.get("view_mode") or "current"),
         risk_scope=str(filters.get("risk_scope") or "slow_all"), retention_scope=str(filters.get("retention_scope") or "all"),
         sort_by=str(filters.get("sort_by") or "stock"), sort_order=str(filters.get("sort_order") or "desc"),
         page=1, page_size=MAX_EXPORT_ROWS + 1, current_user=user, db=db, _export=True,
@@ -180,12 +181,14 @@ def _slow_moving(filters: dict[str, Any], user: User, db: Session) -> tuple[dict
         ExportColumn("risk_label", "风险", width=14), ExportColumn("product", "商品", width=42),
         ExportColumn("product_code", "货品编号", width=22), ExportColumn("barcode", "货品条码", width=22),
         ExportColumn("brand", "品牌", width=18), ExportColumn("product_type", "分类", width=12),
-        ExportColumn("warehouse_count", "仓库数", "integer", 12), ExportColumn("stock", "截止库存", "integer", 14),
+        ExportColumn("warehouse_count", "仓库数", "integer", 12), ExportColumn("stock", "可用库存", "integer", 14),
+        ExportColumn("positive_sales", "周期正向销量", "integer", 16), ExportColumn("return_quantity", "周期退货数量", "integer", 16),
         ExportColumn("period_sales", "周期净销量", "integer", 14), ExportColumn("estimated_days", "预计库存天数", "number", 16),
+        ExportColumn("last_sale_at", "最后销售时间", width=20),
         ExportColumn("ending_stock_ratio", "库存留存率", "percent", 16),
     )
-    labels = {"keyword": "商品关键词", "barcode": "货品条码", "warehouse": "仓库", "product_type": "货品分类", "snapshot_date": "截止日期", "period_days": "观察周期（天）", "risk_scope": "风险范围", "retention_scope": "留存率范围", "sort_by": "排序字段", "sort_order": "排序方向"}
-    notes = ("数据口径与滞销分析页面当前筛选条件一致。", "截止库存使用所选已完成库存快照；周期净销量按截止日前观察周期统计。", "库存留存率 = 截止库存 ÷（截止库存 + 周期正向销量）。金额暂不纳入滞销分析。", "货品编号和条码按文本写入。")
+    labels = {"view_mode": "数据视角", "keyword": "商品关键词", "barcode": "货品条码", "warehouse": "仓库", "product_type": "货品分类", "snapshot_date": "截止日期", "period_days": "观察周期（天）", "risk_scope": "风险范围", "retention_scope": "留存率范围", "sort_by": "排序字段", "sort_order": "排序方向"}
+    notes = ("数据口径与滞销分析页面当前筛选条件一致。", "当前视角使用当前可用库存；历史视角使用所选已完成月末账面库存。", "真无动销表示周期正向销量为零；发生过销售但净销量不大于零时单列为净退货异常。", "货品编号和条码按文本写入。")
     return data, columns, _filter_summary(filters, labels), notes
 
 

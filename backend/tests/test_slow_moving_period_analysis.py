@@ -167,6 +167,72 @@ class SlowMovingPeriodAnalysisTests(unittest.TestCase):
         self.assertEqual(result["rows"][0]["period_sales"], 40.0)
         self.assertAlmostEqual(result["rows"][0]["ending_stock_ratio"], 60.0)
 
+    def test_separates_true_no_sales_from_return_anomaly(self) -> None:
+        source = {
+            "stock": [
+                {
+                    "snapshot_date": self.snapshot,
+                    "warehouse": "上海仓",
+                    "product_type": "正装",
+                    "product_code": "NO-SALES",
+                    "product_name": "真无动销商品",
+                    "brand": "品牌A",
+                    "stock_quantity": Decimal("30"),
+                },
+                {
+                    "snapshot_date": self.snapshot,
+                    "warehouse": "上海仓",
+                    "product_type": "正装",
+                    "product_code": "RETURNS",
+                    "product_name": "净退货商品",
+                    "brand": "品牌B",
+                    "stock_quantity": Decimal("80"),
+                },
+            ],
+            "sales": [
+                {
+                    "snapshot_date": self.snapshot,
+                    "product_code": "RETURNS",
+                    "product_name": "净退货商品",
+                    "brand": "品牌B",
+                    "sales_quantity": Decimal("-5"),
+                    "positive_sales_quantity": Decimal("10"),
+                    "return_quantity": Decimal("15"),
+                    "last_sale_at": datetime(2026, 7, 20, 12, 0),
+                }
+            ],
+        }
+
+        result = build_slow_moving_period_analysis(
+            source,
+            snapshot_date=self.snapshot,
+            trend_dates=(),
+            period_days=90,
+            risk_scope="slow_all",
+            basis="current_available_stock",
+        )
+
+        by_code = {row["product_code"]: row for row in result["rows"]}
+        self.assertEqual(by_code["NO-SALES"]["risk_code"], "no_sales")
+        self.assertEqual(by_code["RETURNS"]["risk_code"], "return_anomaly")
+        self.assertEqual(by_code["RETURNS"]["positive_sales"], 10.0)
+        self.assertEqual(by_code["RETURNS"]["return_quantity"], 15.0)
+        self.assertEqual(result["summary"]["return_anomaly_stock_quantity"], 80.0)
+        self.assertEqual(result["basis"], "current_available_stock")
+
+    def test_current_summary_is_not_overwritten_by_historical_trend(self) -> None:
+        result = build_slow_moving_period_analysis(
+            self.source,
+            snapshot_date=self.snapshot,
+            trend_dates=(self.previous,),
+            period_days=90,
+            risk_scope="slow_all",
+            basis="current_available_stock",
+        )
+
+        self.assertEqual(result["summary"]["slow_stock_quantity"], 400.0)
+        self.assertEqual(result["trend"][0]["slow_stock_quantity"], 120.0)
+
 
 if __name__ == "__main__":
     unittest.main()
