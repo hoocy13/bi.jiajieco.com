@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart } from 'echarts/charts'
@@ -901,6 +901,25 @@ onMounted(() => Promise.all([fetchOptions(), fetchRows()]))
 
 :deep(.el-button--primary) { --el-button-bg-color: var(--turnover-primary); --el-button-border-color: var(--turnover-primary); --el-button-hover-bg-color: var(--turnover-dark); --el-button-hover-border-color: var(--turnover-dark); }
 :deep(.el-segmented__item-selected) { color: var(--turnover-primary); }
+
+:global(:root[data-appearance='dark'] .brand-turnover-hero) { background: linear-gradient(108deg, var(--surface) 0%, var(--surface) 68%, var(--turnover-soft) 100%); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .turnover-pages) { background: var(--surface-muted); }
+:global(:root[data-appearance='dark'] .turnover-pages button.active),
+:global(:root[data-appearance='dark'] .brand-turnover-metrics article:not(.accent)),
+:global(:root[data-appearance='dark'] .product-type-chart-card),
+:global(:root[data-appearance='dark'] .product-name-toggle) { background: var(--surface); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .brand-turnover-hero h1),
+:global(:root[data-appearance='dark'] .turnover-period strong),
+:global(:root[data-appearance='dark'] .brand-turnover-metrics article:not(.accent) > strong),
+:global(:root[data-appearance='dark'] .product-type-chart-title strong),
+:global(:root[data-appearance='dark'] .insight-focus > strong),
+:global(:root[data-appearance='dark'] .insight-stat-list > div:last-child strong) { color: var(--text); }
+:global(:root[data-appearance='dark'] .metric-label span),
+:global(:root[data-appearance='dark'] .insight-stat-list span) { color: var(--muted); }
+:global(:root[data-appearance='dark'] .turnover-basis-card),
+:global(:root[data-appearance='dark'] .brand-turnover-guide > div:first-child) { background: color-mix(in srgb, var(--turnover-primary) 12%, var(--surface)); }
+:global(:root[data-appearance='dark'] .turnover-basis-card strong),
+:global(:root[data-appearance='dark'] .turnover-basis-card span) { color: var(--text); }
 
 @media (max-width: 1280px) {
   .brand-filter-controls { flex-wrap: wrap; }

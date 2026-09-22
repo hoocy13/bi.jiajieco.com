@@ -251,6 +251,34 @@ class SlowMovingPeriodAnalysisTests(unittest.TestCase):
             (sales_end - timedelta(days=89)).isoformat(),
         )
 
+    def test_detail_exposes_inventory_and_available_stock_separately(self) -> None:
+        source = {
+            "stock": [
+                {
+                    "snapshot_date": self.snapshot,
+                    "warehouse": "上海仓",
+                    "product_type": "正装",
+                    "product_code": "A",
+                    "product_name": "商品A",
+                    "brand": "品牌A",
+                    "inventory_stock_quantity": Decimal("150"),
+                    "stock_quantity": Decimal("120"),
+                }
+            ],
+            "sales": [],
+        }
+
+        result = build_slow_moving_period_analysis(
+            source,
+            snapshot_date=self.snapshot,
+            trend_dates=(),
+            period_days=90,
+            basis="current_available_stock",
+        )
+
+        self.assertEqual(result["rows"][0]["inventory_stock"], 150.0)
+        self.assertEqual(result["rows"][0]["stock"], 120.0)
+
 
 if __name__ == "__main__":
     unittest.main()

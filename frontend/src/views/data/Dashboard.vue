@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/auth'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { registerMap, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { CustomChart, LineChart, PieChart } from 'echarts/charts'

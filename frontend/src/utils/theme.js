@@ -1,4 +1,5 @@
 export const THEME_STORAGE_KEY = 'jjc_theme'
+export const APPEARANCE_STORAGE_KEY = 'jjc_appearance'
 
 export const THEMES = {
   indigo: { name: 'indigo', label: '默认靛蓝', primary: '#5e6ad2', strong: '#4f5bc4', soft: '#eef0ff', softStrong: '#d8dbfb', secondary: '#8b93e8', pale: '#cdd1ff' },
@@ -7,5 +8,10 @@ export const THEMES = {
 }
 
 export const THEME_OPTIONS = Object.values(THEMES)
+export const APPEARANCE_OPTIONS = [
+  { name: 'light', label: '浅色外观', icon: 'Sunny' },
+  { name: 'dark', label: '深色外观', icon: 'Moon' },
+  { name: 'system', label: '跟随系统', icon: 'Monitor' },
+]
 export const getTheme = (name) => THEMES[name] || THEMES.indigo
 export const getSavedTheme = () => getTheme(localStorage.getItem(THEME_STORAGE_KEY))

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart } from 'echarts/charts'
@@ -423,6 +423,7 @@ onMounted(() => {
     auto;
 }
 .is-brand-turnover .inventory-turnover-tabs { border-top: 3px solid var(--accent); }
+:global(:root[data-appearance='dark'] .inventory-turnover-tabs) { background: var(--surface); border-color: var(--border); }
 @media (max-width: 1180px) {
   .inventory-filter-grid--turnover { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }

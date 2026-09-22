@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { LineChart, BarChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
@@ -22,7 +22,7 @@ const metrics = computed(() => [
   { label: '近90天销售额', value: money(result.value.summary.paid_amount), unit: '元', trend: `${dateText(result.value.start_date)} 至 ${dateText(result.value.end_date)}` },
   { label: '较上一周期', value: percent(result.value.summary.change_rate), unit: '', trend: `上一周期 ${money(result.value.summary.previous_paid_amount)} 元` },
   { label: '日均销售额', value: money(result.value.summary.daily_average), unit: '元', trend: '按自然日计算' },
-  { label: '异常波动', value: Number(result.value.summary.anomaly_count || 0), unit: '天', trend: '偏离均值至少 2 个标准差' },
+  { label: '异常波动', value: String(Number(result.value.summary.anomaly_count || 0)), unit: '天', trend: '偏离均值至少 2 个标准差' },
 ])
 const trendOption = computed(() => ({
   color: [chartTheme.primary],

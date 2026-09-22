@@ -98,6 +98,10 @@ function logout() {
 function selectTheme(name) {
   theme.apply(name)
 }
+
+function selectAppearance(name) {
+  theme.applyAppearance(name)
+}
 </script>
 
 <template>
@@ -153,6 +157,22 @@ function selectTheme(name) {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-dropdown trigger="click" @command="selectAppearance">
+            <button class="theme-button" aria-label="选择外观模式">
+              <el-icon><component :is="theme.isDark ? 'Moon' : 'Sunny'" /></el-icon>
+              <span>{{ theme.appearanceOptions.find(option => option.name === theme.appearance)?.label }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="option in theme.appearanceOptions" :key="option.name" :command="option.name" :class="{ 'is-selected-theme': option.name === theme.appearance }">
+                  <el-icon><component :is="option.icon" /></el-icon>
+                  {{ option.label }}
+                  <el-icon v-if="option.name === theme.appearance"><Check /></el-icon>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button :icon="'Refresh'" circle />
           <el-dropdown>
             <button class="user-button">
@@ -170,7 +190,7 @@ function selectTheme(name) {
       </el-header>
 
       <el-main class="main-content">
-        <router-view :key="`${$route.fullPath}-${theme.name}`" />
+        <router-view :key="`${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
       </el-main>
     </el-container>
   </el-container>

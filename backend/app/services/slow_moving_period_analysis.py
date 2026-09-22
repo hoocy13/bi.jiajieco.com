@@ -126,6 +126,7 @@ def load_current_slow_moving_stock(
               COALESCE(NULLIF(TRIM(s.`货品名称`), ''), '未命名商品') AS product_name,
               COALESCE(NULLIF(TRIM(s.`品牌`), ''), '未归类') AS brand,
               MAX(COALESCE(NULLIF(TRIM(s.`条码`), ''), '')) AS barcode,
+              SUM(COALESCE(s.`库存数量`, 0)) AS inventory_stock_quantity,
               SUM(COALESCE(s.`可用库存`, 0)) AS stock_quantity,
               MAX(s.`updatetime`) AS updated_at
             FROM `分仓库查询` s
@@ -390,10 +391,14 @@ def build_slow_moving_period_analysis(
                 "product_type": _dimension(row.get("product_type")),
                 "barcode": str(row.get("barcode") or "").strip(),
                 "warehouses": set(),
+                "inventory_stock": Decimal(0),
                 "stock": Decimal(0),
             },
         )
         aggregate["warehouses"].add(_dimension(row.get("warehouse")))
+        aggregate["inventory_stock"] += _decimal(
+            row.get("inventory_stock_quantity", row.get("stock_quantity"))
+        )
         aggregate["stock"] += _decimal(row.get("stock_quantity"))
         updated_at = row.get("updated_at")
         if isinstance(updated_at, datetime) and (latest_update is None or updated_at > latest_update):
@@ -566,6 +571,7 @@ def build_slow_moving_period_analysis(
     paged_rows = filtered_rows[offset : offset + page_size]
     for index, row in enumerate(paged_rows):
         row["rank"] = offset + index + 1
+        row["inventory_stock"] = float(row["inventory_stock"])
         row["stock"] = float(row["stock"])
 
     return {

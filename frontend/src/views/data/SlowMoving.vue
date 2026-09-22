@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
@@ -488,6 +488,9 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
           <el-table-column prop="product_type" label="分类" width="90" />
           <el-table-column prop="warehouse_count" label="仓库数" width="90" align="right">
             <template #default="{ row }">{{ formatNumber(row.warehouse_count) }}</template>
+          </el-table-column>
+          <el-table-column prop="inventory_stock" label="库存数量" width="110" align="right">
+            <template #default="scope">{{ formatNumber(scope.row.inventory_stock) }}</template>
           </el-table-column>
           <el-table-column prop="stock" :label="analysisMeta.basis === 'current_available_stock' ? '可用库存' : '截止库存'" width="120" align="right" sortable="custom">
             <template #default="{ row }">{{ formatNumber(row.stock) }}</template>

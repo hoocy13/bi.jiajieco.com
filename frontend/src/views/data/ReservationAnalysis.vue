@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'
@@ -74,6 +74,14 @@ const activeBrandRows = computed(() => analysis.value.brands.filter((item) => Nu
 const applicantRows = computed(() => analysis.value.applicants.filter((item) => Number(item.remaining_quantity) > 0).slice(0, 12))
 const selectedApplicantLabel = computed(() => applicants.value.length === 1 ? applicants.value[0] : applicants.value.length > 1 ? `${applicants.value.length} 位申请人` : '')
 
+const expiryAxisLabel = (value) => ({
+  已过使用结束日: '已过\n使用结束日',
+  '7日内到期': '7日内\n到期',
+  '8-30日到期': '8–30日\n到期',
+  '31日后到期': '31日后\n到期',
+  未设置使用结束日: '未设置\n使用结束日',
+}[value] || value)
+
 const statusOption = computed(() => ({
   color: [chartTheme.primary, '#9aa8b5'],
   tooltip: {
@@ -96,9 +104,9 @@ const brandOption = computed(() => ({
       return row ? `<strong>${row.name}</strong><br/>当前剩余：${formatNumber(row.remaining_quantity)} 件<br/>预留单：${formatNumber(row.order_count)} 单` : ''
     },
   },
-  grid: { top: 14, left: 88, right: 42, bottom: 28 },
-  xAxis: { type: 'value', axisLabel: { color: '#98a2b3', formatter: compactNumber }, splitLine: { lineStyle: { color: '#edf1f4', type: 'dashed' } } },
-  yAxis: { type: 'category', inverse: true, data: activeBrandRows.value.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: '#475467' } },
+  grid: { top: 14, left: 18, right: 68, bottom: 28, containLabel: true },
+  xAxis: { type: 'value', min: 0, splitNumber: 4, axisLabel: { color: '#98a2b3', formatter: compactNumber, hideOverlap: true }, splitLine: { lineStyle: { color: '#edf1f4', type: 'dashed' } } },
+  yAxis: { type: 'category', inverse: true, data: activeBrandRows.value.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: '#475467', width: 88, overflow: 'truncate', ellipsis: '…', margin: 12 } },
   series: [{
     type: 'bar', barWidth: 14, data: activeBrandRows.value.map((item) => item.remaining_quantity),
     itemStyle: { borderRadius: [0, 8, 8, 0], color: chartTheme.primary },
@@ -114,9 +122,9 @@ const applicantOption = computed(() => ({
       return row ? `<strong>${row.name}</strong><br/>当前剩余：${formatNumber(row.remaining_quantity)} 件<br/>涉及预留单：${formatNumber(row.order_count)} 单<br/>预留总量：${formatNumber(row.reserved_quantity)} 件` : ''
     },
   },
-  grid: { top: 12, left: 108, right: 54, bottom: 28 },
-  xAxis: { type: 'value', axisLabel: { color: '#98a2b3', formatter: compactNumber }, splitLine: { lineStyle: { color: '#edf1f4', type: 'dashed' } } },
-  yAxis: { type: 'category', inverse: true, data: applicantRows.value.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: '#475467', width: 96, overflow: 'truncate' } },
+  grid: { top: 12, left: 18, right: 72, bottom: 28, containLabel: true },
+  xAxis: { type: 'value', min: 0, splitNumber: 4, axisLabel: { color: '#98a2b3', formatter: compactNumber, hideOverlap: true }, splitLine: { lineStyle: { color: '#edf1f4', type: 'dashed' } } },
+  yAxis: { type: 'category', inverse: true, data: applicantRows.value.map((item) => item.name), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: '#475467', width: 96, overflow: 'truncate', ellipsis: '…', margin: 12 } },
   series: [{
     type: 'bar', barWidth: 13, data: applicantRows.value.map((item) => item.remaining_quantity),
     itemStyle: { borderRadius: [0, 7, 7, 0], color: chartTheme.secondary },
@@ -142,8 +150,8 @@ const trendOption = computed(() => ({
 
 const expiryOption = computed(() => ({
   tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#172033', borderWidth: 0, textStyle: { color: '#fff' }, formatter: (items) => `${items[0]?.marker || ''}${items[0]?.name}：${formatNumber(items[0]?.value)} 件` },
-  grid: { top: 18, left: 64, right: 24, bottom: 42 },
-  xAxis: { type: 'category', data: analysis.value.expiry.map((item) => item.name), axisTick: { show: false }, axisLabel: { color: '#667085', interval: 0 } },
+  grid: { top: 24, left: 64, right: 24, bottom: 58 },
+  xAxis: { type: 'category', data: analysis.value.expiry.map((item) => item.name), axisTick: { show: false }, axisLabel: { color: '#667085', interval: 0, fontSize: 11, lineHeight: 16, formatter: expiryAxisLabel } },
   yAxis: { type: 'value', axisLabel: { color: '#98a2b3', formatter: compactNumber }, splitLine: { lineStyle: { color: '#edf1f4', type: 'dashed' } } },
   series: [{
     type: 'bar', barMaxWidth: 42, data: analysis.value.expiry.map((item, index) => ({ value: item.remaining_quantity, itemStyle: { color: index === 0 ? '#d96b73' : index === 1 ? '#d99b4d' : chartTheme.primary, borderRadius: [7, 7, 0, 0] } })),
@@ -376,6 +384,13 @@ onMounted(() => fetchData())
 .remaining-value { color: var(--reservation); }
 .retention-rate { color: #7a9f35; }
 .table-footer { display: flex; justify-content: flex-end; padding-top: 16px; }
+:global(:root[data-appearance='dark'] .page-tabs-panel),
+:global(:root[data-appearance='dark'] .metric-card:not(.accent)) { background: var(--surface); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .metric-card.accent) { background: linear-gradient(135deg, color-mix(in srgb, var(--reservation) 16%, var(--surface)), var(--surface)); border-color: color-mix(in srgb, var(--reservation) 55%, var(--border)); }
+:global(:root[data-appearance='dark'] .metric-card:not(.accent) strong) { color: var(--text); }
+:global(:root[data-appearance='dark'] .metric-card > span),
+:global(:root[data-appearance='dark'] .metric-card strong small) { color: var(--muted); }
+:global(:root[data-appearance='dark'] .formula-note) { background: color-mix(in srgb, var(--reservation) 12%, var(--surface)); border-color: color-mix(in srgb, var(--reservation) 42%, var(--border)); color: var(--text-soft); }
 @media (max-width: 1280px) { .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .reservation-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) { .filter-grid, .reservation-metrics, .chart-grid, .chart-grid--top { grid-template-columns: 1fr; } .keyword-field { grid-column: auto; } .formula-note { align-items: flex-start; flex-direction: column; } }
 </style>

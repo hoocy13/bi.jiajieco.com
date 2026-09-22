@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, LineChart } from 'echarts/charts'
@@ -749,6 +749,39 @@ onMounted(() => {
 .segment-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 12px; overflow: hidden; border: 1px solid #e5eae3; border-radius: 6px; background: #e5eae3; }.segment-metrics div { min-width: 0; padding: 9px 8px; background: #fff; }.segment-metrics span { display: block; margin-bottom: 5px; color: #8994a2; font-size: 9px; white-space: nowrap; }.segment-metrics strong { display: block; overflow: hidden; color: #293548; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.segment-chart { height: 230px; }
 .note-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 12px 16px 16px; }.note-grid div { padding: 11px 13px; border-radius: 6px; background: #fffafb; }.note-grid strong { display: block; margin-bottom: 4px; color: var(--flow-dark); font-size: 12px; }.note-grid span { color: #687586; font-size: 11px; line-height: 1.55; }
 .table-panel :deep(.el-table) { --el-table-header-bg-color: #fffafb; --el-table-row-hover-bg-color: var(--flow-soft); }.table-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 12px; font-weight: 700; }
+:global(:root[data-appearance='dark'] .flow-page) { color: var(--text); }
+:global(:root[data-appearance='dark'] .flow-toolbar),
+:global(:root[data-appearance='dark'] .flow-panel),
+:global(:root[data-appearance='dark'] .metric-card:not(.accent)) { background: var(--surface); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .metric-card:not(.accent) > span) { color: var(--muted); }
+:global(:root[data-appearance='dark'] .metric-card:not(.accent) strong) { color: var(--text); }
+:global(:root[data-appearance='dark'] .metric-card:not(.accent) em),
+:global(:root[data-appearance='dark'] .metric-card:not(.accent) small) { color: var(--muted-2); }
+:global(:root[data-appearance='dark'] .flow-hero) { background: linear-gradient(105deg, var(--surface) 62%, var(--flow-soft)); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .hero-title small),
+:global(:root[data-appearance='dark'] .hero-meta small),
+:global(:root[data-appearance='dark'] .flow-pages button),
+:global(:root[data-appearance='dark'] .detail-tabs button) { color: var(--muted); }
+:global(:root[data-appearance='dark'] .flow-pages button.active),
+:global(:root[data-appearance='dark'] .detail-tabs button.active) { background: var(--surface); color: var(--flow-primary); }
+:global(:root[data-appearance='dark'] .flow-panel header) { border-bottom-color: var(--border); }
+:global(:root[data-appearance='dark'] .segment-card),
+:global(:root[data-appearance='dark'] .category-turnover-list > div),
+:global(:root[data-appearance='dark'] .note-grid div) { background: var(--surface-soft); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .segment-metrics) { background: var(--border); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .segment-metrics div) { background: var(--surface); }
+:global(:root[data-appearance='dark'] .segment-metrics strong),
+:global(:root[data-appearance='dark'] .category-turnover-list b) { color: var(--text); }
+:global(:root[data-appearance='dark'] .segment-metrics span),
+:global(:root[data-appearance='dark'] .category-turnover-list > div > span),
+:global(:root[data-appearance='dark'] .category-turnover-list small),
+:global(:root[data-appearance='dark'] .channel-mix-list > div > span),
+:global(:root[data-appearance='dark'] .channel-mix-list small),
+:global(:root[data-appearance='dark'] .note-grid span) { color: var(--muted); }
+:global(:root[data-appearance='dark'] .ranking-panel .el-table),
+:global(:root[data-appearance='dark'] .product-detail-panel .el-table),
+:global(:root[data-appearance='dark'] .table-panel .el-table) { --el-table-header-bg-color: var(--surface-soft); }
+:global(:root[data-appearance='dark'] :is(.ranking-panel, .product-detail-panel, .table-panel) .el-table th.el-table__cell) { color: var(--muted); }
 @media (max-width: 1180px) { .flow-toolbar { flex-wrap: wrap; }.segment-grid, .ranking-grid { grid-template-columns: 1fr; }.segment-chart { height: 260px; }.turnover-metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }.note-grid, .turnover-section-grid { grid-template-columns: 1fr; }.flow-hero { align-items: flex-start; flex-direction: column; gap: 18px; }.hero-meta { justify-items: start; }.detail-controls { align-items: stretch; flex-direction: column; }.detail-search { width: 100%; } }
 @media (max-width: 680px) { .flow-toolbar { align-items: stretch; }.brand-input, .product-type-select, .warehouse-select, .flow-toolbar :deep(.month-picker) { width: 100% !important; flex: 1 1 100% !important; }.metric-grid, .turnover-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.flow-pages { max-width: 100%; overflow-x: auto; }.category-turnover-list > div { grid-template-columns: 1fr 1fr; }.category-turnover-list > div > strong { grid-column: 1 / -1; } }

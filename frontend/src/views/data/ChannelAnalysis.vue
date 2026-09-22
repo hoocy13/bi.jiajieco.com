@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import VChart from 'vue-echarts'
+import VChart from '../../components/common/ThemedChart.vue'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
@@ -888,6 +888,19 @@ onMounted(fetchAnalysis)
 .customer-search { display: flex; width: min(380px, 100%); gap: 8px; }
 .customer-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .customer-summary-grid article { display: grid; gap: 10px; min-height: 88px; align-content: center; padding: 16px 18px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+
+:global(:root[data-appearance='dark'] .channel-overview-hero) { background: linear-gradient(110deg, var(--surface) 0%, var(--surface) 64%, var(--theme-soft) 100%); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .hero-title-group h1),
+:global(:root[data-appearance='dark'] .channel-insight-grid h2),
+:global(:root[data-appearance='dark'] .section-heading h2),
+:global(:root[data-appearance='dark'] .efficiency-card h2) { color: var(--text); }
+:global(:root[data-appearance='dark'] .hero-pages) { background: var(--surface-muted); }
+:global(:root[data-appearance='dark'] .hero-pages button.is-active),
+:global(:root[data-appearance='dark'] .channel-kpi-card),
+:global(:root[data-appearance='dark'] .customer-summary-grid article),
+:global(:root[data-appearance='dark'] .collapse-detail-button) { background: var(--surface); border-color: var(--border); }
+:global(:root[data-appearance='dark'] .channel-kpi-card:not(.accent) strong),
+:global(:root[data-appearance='dark'] .customer-summary-grid article strong) { color: var(--text); }
 .customer-summary-grid article > span { color: var(--muted); font-size: 12px; }
 .customer-summary-grid article > strong { color: var(--ink); font-size: 22px; }
 .customer-summary-grid article small { color: var(--muted); font-size: 11px; }
