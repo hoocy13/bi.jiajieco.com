@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import unittest
 
@@ -232,6 +232,24 @@ class SlowMovingPeriodAnalysisTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["slow_stock_quantity"], 400.0)
         self.assertEqual(result["trend"][0]["slow_stock_quantity"], 120.0)
+
+    def test_current_view_can_report_sales_through_previous_ready_day(self) -> None:
+        sales_end = self.snapshot - timedelta(days=1)
+        result = build_slow_moving_period_analysis(
+            self.source,
+            snapshot_date=self.snapshot,
+            trend_dates=(self.previous,),
+            period_days=90,
+            basis="current_available_stock",
+            sales_end_date=sales_end,
+        )
+
+        self.assertEqual(result["snapshot_date"], self.snapshot.isoformat())
+        self.assertEqual(result["sales_end_date"], sales_end.isoformat())
+        self.assertEqual(
+            result["period_start"],
+            (sales_end - timedelta(days=89)).isoformat(),
+        )
 
 
 if __name__ == "__main__":

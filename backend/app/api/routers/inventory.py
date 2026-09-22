@@ -1978,7 +1978,7 @@ def slow_moving_inventory(
     trend_cutoff = selected_snapshot if view_mode == "history" else date.today()
     trend_dates = tuple(sorted((value for value in available_dates if value <= trend_cutoff), reverse=True)[:6])
     trend_dates = tuple(sorted(trend_dates))
-    analysis_dates = tuple(sorted(set((*trend_dates, selected_snapshot))))
+    sales_snapshot = selected_snapshot
 
     sales_data_version = None
     sales_source = "ods"
@@ -1986,10 +1986,13 @@ def slow_moving_inventory(
     if settings.BI_QUERY_SOURCE == "ads" and AdsSessionLocal is not None:
         try:
             with AdsSessionLocal() as ads_db:
+                latest_sales_batch = latest_ready_sales_batch(ads_db)
+                sales_snapshot = min(selected_snapshot, latest_sales_batch.source_end_date)
+                sales_analysis_dates = tuple(sorted(set((*trend_dates, sales_snapshot))))
                 ads_batch = latest_ready_brand_turnover_batch(
                     ads_db,
-                    min(analysis_dates) - timedelta(days=period_days - 1),
-                    selected_snapshot,
+                    min(sales_analysis_dates) - timedelta(days=period_days - 1),
+                    sales_snapshot,
                 )
                 sales_data_version = ads_batch.data_version
                 sales_source = "ads"
@@ -1997,6 +2000,9 @@ def slow_moving_inventory(
             ads_batch = None
             sales_data_version = None
             sales_source = "ods"
+            sales_snapshot = selected_snapshot
+
+    sales_analysis_dates = tuple(sorted(set((*trend_dates, sales_snapshot))))
 
     cache_key = _cache_key(
         "slow-moving-period-v7",
@@ -2015,6 +2021,7 @@ def slow_moving_inventory(
         page_size=page_size,
         sales_source=sales_source,
         sales_data_version=sales_data_version or "",
+        sales_snapshot=sales_snapshot.isoformat(),
     )
     cached = None if export_mode else _get_cache(cache_key)
     if cached is not None:
@@ -2026,7 +2033,7 @@ def slow_moving_inventory(
             with AdsSessionLocal() as ads_db:
                 source = load_slow_moving_period_source(
                     db,
-                    snapshot_dates=analysis_dates,
+                    snapshot_dates=sales_analysis_dates,
                     period_days=period_days,
                     keyword=keyword,
                     barcode=barcode,
@@ -2038,7 +2045,7 @@ def slow_moving_inventory(
         else:
             source = load_slow_moving_period_source(
                 db,
-                snapshot_dates=analysis_dates,
+                snapshot_dates=sales_analysis_dates,
                 period_days=period_days,
                 keyword=keyword,
                 barcode=barcode,
@@ -2048,6 +2055,15 @@ def slow_moving_inventory(
     except Exception as exc:
         raise HTTPException(status_code=503, detail="滞销分析数据暂不可用") from exc
     if view_mode == "current":
+        if sales_snapshot != selected_snapshot:
+            source["sales"].extend(
+                {
+                    **row,
+                    "snapshot_date": selected_snapshot,
+                }
+                for row in list(source.get("sales", []))
+                if row.get("snapshot_date") == sales_snapshot
+            )
         source["stock"] = [
             row for row in source.get("stock", []) if row.get("snapshot_date") != selected_snapshot
         ]
@@ -2073,6 +2089,7 @@ def slow_moving_inventory(
         sort_by=sort_by,
         sort_order=sort_order,
         basis="current_available_stock" if view_mode == "current" else "historical_month_end_stock",
+        sales_end_date=sales_snapshot,
     )
     data.update(
         {

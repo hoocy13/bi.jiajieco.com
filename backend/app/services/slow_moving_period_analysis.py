@@ -366,9 +366,11 @@ def build_slow_moving_period_analysis(
     sort_by: str = "stock",
     sort_order: str = "desc",
     basis: str = "historical_month_end_stock",
+    sales_end_date: date | None = None,
 ) -> dict:
     if period_days not in ALLOWED_PERIOD_DAYS:
         raise ValueError("Unsupported observation period")
+    sales_end_date = sales_end_date or snapshot_date
     all_dates = tuple(sorted(set((*trend_dates, snapshot_date))))
 
     stock_by_date: dict[date, dict[tuple[str, str, str], dict]] = defaultdict(dict)
@@ -568,9 +570,10 @@ def build_slow_moving_period_analysis(
 
     return {
         "snapshot_date": snapshot_date.isoformat(),
+        "sales_end_date": sales_end_date.isoformat(),
         "period_days": period_days,
         "retention_scope": retention_scope,
-        "period_start": (snapshot_date - timedelta(days=period_days - 1)).isoformat(),
+        "period_start": (sales_end_date - timedelta(days=period_days - 1)).isoformat(),
         "basis": basis,
         "updated_at": latest_update.isoformat() if latest_update else None,
         "summary": {

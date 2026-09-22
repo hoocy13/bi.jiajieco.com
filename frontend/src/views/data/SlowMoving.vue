@@ -46,7 +46,7 @@ const summary = ref({
 const riskDistribution = ref([])
 const brandDistribution = ref([])
 const trend = ref([])
-const analysisMeta = ref({ snapshot_date: '', period_start: '', period_days: 90, updated_at: '', basis: 'current_available_stock' })
+const analysisMeta = ref({ snapshot_date: '', sales_end_date: '', period_start: '', period_days: 90, updated_at: '', basis: 'current_available_stock' })
 const allowedPeriods = [30, 60, 90, 180]
 const routePeriod = Number(route.query.period_days || 90)
 const allowedSortFields = ['stock', 'period_sales', 'estimated_days', 'ending_stock_ratio']
@@ -158,6 +158,7 @@ async function fetchRows(resetPage = false) {
     snapshotOptions.value = data.snapshot_options || []
     analysisMeta.value = {
       snapshot_date: data.snapshot_date,
+      sales_end_date: data.sales_end_date || data.snapshot_date,
       period_start: data.period_start,
       period_days: data.period_days,
       updated_at: data.updated_at,
@@ -414,7 +415,7 @@ onMounted(() => Promise.all([fetchWarehouses(), fetchRows()]))
           </div>
         </div>
         <p class="slow-moving-basis-note">
-          <strong>统计口径：</strong>{{ analysisMeta.period_start }} 至 {{ analysisMeta.snapshot_date }}，{{ analysisMeta.basis === 'current_available_stock' ? '采用当前可用库存' : '采用历史月末账面库存' }}；真无动销表示周期内没有正向销售，发生销售但净销量不大于零时单列为净退货异常。数据更新于 {{ formatDateTime(analysisMeta.updated_at) }}。
+          <strong>统计口径：</strong>销售统计 {{ analysisMeta.period_start }} 至 {{ analysisMeta.sales_end_date }}，{{ analysisMeta.basis === 'current_available_stock' ? `库存采用 ${analysisMeta.snapshot_date} 当前可用库存` : '采用历史月末账面库存' }}；真无动销表示周期内没有正向销售，发生销售但净销量不大于零时单列为净退货异常。数据更新于 {{ formatDateTime(analysisMeta.updated_at) }}。
         </p>
       </section>
 
