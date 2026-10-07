@@ -270,12 +270,15 @@ def build_artifact(month: str, raw: dict) -> dict:
             f"最低为{wan(lowest['paid_amount'])}，出现在{lowest['sales_date']}。报告只标记客观高低点，不自动解释原因。"
         )
     brand_total = sum(row["paid_amount"] for row in brands_all)
-    brand_coverage = brand_total / current["paid_amount"] if current["paid_amount"] else 0
+    current_scopes = {row["product_type_scope"]: row for row in current_raw["product_scopes"]}
+    detail_total = float(current_scopes["all"]["paid_amount"] or 0)
+    brand_coverage = brand_total / detail_total if detail_total else 0
+    detail_difference = detail_total - current["paid_amount"]
     brand_text = "、".join(f"{row['brand']}{wan(row['paid_amount'])}" for row in brands)
     blocks["brand_interpretation"]["body"] = (
         "## 五、品牌销售表现\n\n"
-        f"已归入品牌分析表的销售额为{yi(brand_total)}，占销售总额{brand_coverage * 100:.1f}%。"
-        f"销售额前五品牌为：{brand_text}。未覆盖部分保留为明确的数据缺口。"
+        f"品牌分析金额为{yi(brand_total)}，占销售明细口径金额{brand_coverage * 100:.1f}%。"
+        f"销售额前五品牌为：{brand_text}。品牌分析与订单汇总采用不同数据口径，不能直接计算覆盖率。"
     )
     current_channels = {row["channel_group"]: row for row in channel_rows[-2:]}
     previous_channels = {row["channel_group"]: row for row in channel_rows[-4:-2]}
@@ -293,24 +296,23 @@ def build_artifact(month: str, raw: dict) -> dict:
     previous_products = {row["product_type"]: row for row in product_rows[-4:-2]}
     yoy_products = {row["product_type"]: row for row in product_rows[:2]}
     classified_amount = sum(row["paid_amount"] for row in current_products.values())
-    product_coverage = classified_amount / current["paid_amount"] if current["paid_amount"] else 0
+    product_coverage = classified_amount / detail_total if detail_total else 0
     blocks["product_type_interpretation"]["body"] = (
         "## 七、正装与小样销售结构\n\n"
         f"正装销售额为{wan(current_products['正装']['paid_amount'])}，环比{movement(ratio(current_products['正装']['paid_amount'], previous_products['正装']['paid_amount']))}、"
         f"同比{movement(ratio(current_products['正装']['paid_amount'], yoy_products['正装']['paid_amount']))}；"
         f"小样销售额为{wan(current_products['小样']['paid_amount'])}，环比{movement(ratio(current_products['小样']['paid_amount'], previous_products['小样']['paid_amount']))}、"
         f"同比{movement(ratio(current_products['小样']['paid_amount'], yoy_products['小样']['paid_amount']))}。"
-        f"两类合计覆盖销售总额{product_coverage * 100:.1f}%。"
+        f"两类合计占销售明细口径金额{product_coverage * 100:.1f}%，其余货品分类单独保留。"
     )
     current_customer = customer_rows[-1]
     previous_customer = customer_rows[-2]
-    identified_sales_share = float(current_raw["customer_summary"]["paid_amount"] or 0) / current["paid_amount"] if current["paid_amount"] else 0
     blocks["customer_interpretation"]["body"] = (
         "## 八、客户情况\n\n"
         f"可识别客户为{current_customer['customers']:,}个，较上月{movement(ratio(current_customer['customers'], previous_customer['customers']))}；"
         f"月内订单数不少于2单的客户为{current_customer['repeat_customers']:,}个，较上月{movement(ratio(current_customer['repeat_customers'], previous_customer['repeat_customers']))}，"
-        f"占可识别客户{current_customer['repeat_rate'] * 100:.1f}%。客户识别金额占客户分析明细金额{current_customer['identified_amount_rate'] * 100:.1f}%，"
-        f"占销售总额{identified_sales_share * 100:.1f}%；本节不代表全部客户。"
+        f"占可识别客户{current_customer['repeat_rate'] * 100:.1f}%。客户识别金额占销售明细口径金额{current_customer['identified_amount_rate'] * 100:.1f}%；"
+        "本节不代表全部客户，也不与订单汇总销售额直接计算覆盖率。"
     )
     current_arrival, previous_arrival, yoy_arrival = arrival_rows[-1], arrival_rows[-2], arrival_rows[0]
     blocks["arrival_interpretation"]["body"] = (
@@ -331,7 +333,8 @@ def build_artifact(month: str, raw: dict) -> dict:
     )
     blocks["known_limits"]["body"] = (
         "## 十一、数据口径与限制\n\n"
-        f"- 品牌分析覆盖销售总额{brand_coverage * 100:.1f}%，正装与小样分类覆盖{product_coverage * 100:.1f}%；未覆盖部分均保留为明确缺口。\n"
+        f"- 品牌分析金额占销售明细口径金额{brand_coverage * 100:.1f}%，正装与小样合计占同一明细口径{product_coverage * 100:.1f}%。\n"
+        f"- 销售明细口径金额为{wan(detail_total)}，与订单汇总销售额{wan(current['paid_amount'])}相差{wan(abs(detail_difference))}；两套口径的金额不可互作覆盖率的分子、分母。\n"
         f"- 去年同期有{yoy_raw['channel_summary']['unmatched_channels']}个渠道未匹配当前渠道配置，渠道同比不用于结构结论。\n"
         "- 客户指标只覆盖具有客户标识的销售明细，月内复购不等同于跨月复购。\n"
         "- 到货成本依赖源入库成本字段，目前业务口径尚未核准，因此不展示金额及同比、环比。\n"
@@ -359,6 +362,9 @@ def build_artifact(month: str, raw: dict) -> dict:
             item.replace("REPORT_START至REPORT_END", f"{current_raw['start_date']}至{current_raw['end_date']}")
                 .replace("PREVIOUS_START至PREVIOUS_END", f"{previous_raw['start_date']}至{previous_raw['end_date']}")
                 .replace("YEAR_AGO_START至YEAR_AGO_END", f"{yoy_raw['start_date']}至{yoy_raw['end_date']}")
+                .replace("YEAR_AGO_END", yoy_raw["end_date"])
+                .replace("PREVIOUS_END", previous_raw["end_date"])
+                .replace("REPORT_END", current_raw["end_date"])
                 .replace("SALES_DATA_VERSION", raw["sales_batch"]["data_version"])
                 .replace("INVENTORY_DATA_VERSION", raw["inventory_batch"]["data_version"])
             for item in filters

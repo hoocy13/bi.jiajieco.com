@@ -524,16 +524,16 @@
         "query": {
           "engine": "mysql",
           "description": "读取指定月末且批次状态为SUCCESS的历史库存数量。",
-          "sql": "SELECT h.快照日期, COUNT(h.货品编号), SUM(h.库存量) FROM ods.历史库存 h JOIN ods.历史库存快照批次 b ON b.快照日期 = h.快照日期 WHERE UPPER(b.状态) = 'SUCCESS' AND h.快照日期 IN REQUESTED_MONTH_ENDS GROUP BY h.快照日期",
+          "sql": "SELECT b.快照日期, COUNT(h.货品编号), SUM(COALESCE(h.库存量, 0)) FROM ods.历史库存快照批次 b LEFT JOIN ods.历史库存 h ON h.快照日期 = b.快照日期 WHERE b.快照日期 = :end_date AND UPPER(COALESCE(b.状态, '')) = 'SUCCESS' GROUP BY b.快照日期",
           "tables_used": [
             "ods.历史库存",
             "ods.历史库存快照批次"
           ],
           "executed_at": "",
           "filters": [
-            "2025-08-31",
-            "2026-07-31",
-            "2026-08-31",
+            "YEAR_AGO_END",
+            "PREVIOUS_END",
+            "REPORT_END",
             "状态=SUCCESS"
           ]
         }
