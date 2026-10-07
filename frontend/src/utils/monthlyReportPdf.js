@@ -40,6 +40,7 @@ export async function exportMonthlyReportPdf(root, filename) {
   if (!blocks.length) throw new Error('月报中没有可导出的内容')
 
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4', compress: true })
+  const captureScale = 3
   const contentWidth = A4_WIDTH - PAGE_MARGIN * 2
   const contentTop = HEADER_HEIGHT + 10
   const contentBottom = A4_HEIGHT - FOOTER_HEIGHT - 10
@@ -52,7 +53,7 @@ export async function exportMonthlyReportPdf(root, filename) {
   for (const block of blocks) {
     const canvas = await html2canvas(block, {
       backgroundColor: '#ffffff',
-      scale: Math.min(window.devicePixelRatio || 1, 2),
+      scale: captureScale,
       logging: false,
       useCORS: true,
       windowWidth: root.scrollWidth,
@@ -67,7 +68,7 @@ export async function exportMonthlyReportPdf(root, filename) {
         addPageFrame(pdf, pageNumber)
         cursorY = contentTop
       }
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.94), 'JPEG', PAGE_MARGIN, cursorY, contentWidth, renderedHeight, undefined, 'FAST')
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', PAGE_MARGIN, cursorY, contentWidth, renderedHeight, undefined, 'FAST')
       cursorY += renderedHeight + BLOCK_GAP
       continue
     }
@@ -84,7 +85,7 @@ export async function exportMonthlyReportPdf(root, filename) {
       const sliceHeight = Math.min(canvas.height - sourceY, Math.max(1, Math.floor(availablePoints / ratio)))
       const slice = createSlice(canvas, sourceY, sliceHeight)
       const sliceRenderedHeight = sliceHeight * ratio
-      pdf.addImage(slice.toDataURL('image/jpeg', 0.94), 'JPEG', PAGE_MARGIN, cursorY, contentWidth, sliceRenderedHeight, undefined, 'FAST')
+      pdf.addImage(slice.toDataURL('image/png'), 'PNG', PAGE_MARGIN, cursorY, contentWidth, sliceRenderedHeight, undefined, 'FAST')
       sourceY += sliceHeight
       cursorY += sliceRenderedHeight + BLOCK_GAP
       if (sourceY < canvas.height) cursorY = contentBottom
