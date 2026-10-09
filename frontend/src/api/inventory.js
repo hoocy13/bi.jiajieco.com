@@ -25,6 +25,47 @@ export function getInventoryDetail(params = {}) {
   return http.get('/inventory/health', { params: inventoryParams({ ...params, issue_type: 'any' }) })
 }
 
+export function getInventoryValuation(params = {}) {
+  return http.get('/inventory/valuation', { params: inventoryParams(params) })
+}
+
+export function exportInventoryValuation(params = {}) {
+  return http.get('/inventory/valuation/export', { params: inventoryParams(params), responseType: 'blob' })
+}
+
+export function getCoreCostPrices(params = {}) {
+  return http.get('/inventory/valuation/prices', { params: inventoryParams(params) })
+}
+
+export function exportCoreCostPrices(params = {}) {
+  return http.get('/inventory/valuation/prices/export', { params: inventoryParams(params), responseType: 'blob' })
+}
+
+export function getCoreCostHistory(code) {
+  return http.get(`/inventory/valuation/prices/${encodeURIComponent(code)}/history`)
+}
+
+export function saveCoreCostPrice(payload) {
+  return http.post('/inventory/valuation/prices', payload)
+}
+export function deleteCoreCostPrice(code) {
+  return http.delete(`/inventory/valuation/prices/${encodeURIComponent(code)}`)
+}
+
+export function restoreCoreCostPrice(code, revisionId) {
+  return http.post(`/inventory/valuation/prices/${encodeURIComponent(code)}/restore`, null, { params: { revision_id: revisionId } })
+}
+
+export function previewCoreCostImport(file) {
+  const form = new FormData()
+  form.append('file', file)
+  return http.post('/inventory/valuation/prices/import-preview', form)
+}
+
+export function importCoreCostPrices(rows) {
+  return http.post('/inventory/valuation/prices/import', { rows })
+}
+
 export function getInventoryProductDetail(productCode, params = {}) {
   return http.get(`/inventory/product-detail/${encodeURIComponent(productCode)}`, {
     params: inventoryParams(params),

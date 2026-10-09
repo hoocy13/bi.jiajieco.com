@@ -8,6 +8,7 @@ from app.core.model_crypto import encrypt_api_key
 from app.models.model_setting import ModelSetting
 from app.models.announcement import Announcement  # noqa: F401
 from app.models.monthly_report import MonthlyOperatingReport  # noqa: F401
+from app.models.core_cost_price import CoreCostPriceRevision  # noqa: F401
 from app.models.user import Permission, Role, User
 
 
@@ -15,6 +16,7 @@ PERMISSION_DEFINITIONS = [
     ("dashboard.view", "经营总览", "dashboard"),
     ("sales.view", "销售分析", "sales"),
     ("inventory.view", "库存分析", "inventory"),
+    ("inventory.price.manage", "核心成本价维护", "inventory"),
     ("report.monthly.view", "经营月报", "report"),
     ("report.monthly.manage", "经营月报管理", "report"),
     ("ai.decision.view", "智能洞察与分析工作台", "ai"),
