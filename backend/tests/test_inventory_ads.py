@@ -846,6 +846,23 @@ class InventoryAdsTests(unittest.TestCase):
         self.assertEqual(filtered["pagination"]["total"], 2)
         self.assertEqual(filtered["product_type_summary"][0]["product_type"], "正装")
 
+        supplier_filtered = load_brand_monthly_arrivals_from_ads(
+            self.db,
+            batch,
+            selected_start=date(2026, 1, 1),
+            selected_end=date(2026, 2, 28),
+            brands=("品牌A",),
+            product_types=("正装",),
+            warehouses=("仓库A",),
+            supplier_keyword="供应商A",
+            detail_product_type="正装",
+            page=1,
+            page_size=20,
+        )
+        self.assertEqual(supplier_filtered["summary"]["net_quantity"], 90)
+        self.assertEqual(supplier_filtered["pagination"]["total"], 2)
+        self.assertTrue(all(row["supplier"] == "供应商A" for row in supplier_filtered["details"]))
+
     def test_reconciliation_detects_mismatch(self) -> None:
         source = {
             "warehouse_records": 4,

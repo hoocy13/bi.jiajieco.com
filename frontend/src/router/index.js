@@ -62,7 +62,7 @@ const routes = [
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览', permission: 'inventory.view' } },
       { path: 'inventory/valuation', component: InventoryValuation, meta: { title: '库存价格估算', permission: 'inventory.view' } },
       { path: 'inventory/detail', component: InventoryDetail, meta: { title: '库存明细', permission: 'inventory.view' } },
-      { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '品牌月度到货', permission: 'inventory.view' } },
+      { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '采购入库分析', permission: 'inventory.view' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存', permission: 'inventory.view' } },
       { path: 'inventory/reservations', component: ReservationAnalysis, meta: { title: '预留单分析', permission: 'inventory.view' } },
       { path: 'inventory/turnover', component: InventoryTurnover, meta: { title: '品牌周转', permission: 'inventory.view' } },

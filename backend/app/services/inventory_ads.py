@@ -663,6 +663,7 @@ def load_brand_monthly_arrivals_from_ads(
     brands: tuple[str, ...],
     product_types: tuple[str, ...],
     warehouses: tuple[str, ...],
+    supplier_keyword: str = "",
     detail_product_type: str,
     page: int,
     page_size: int,
@@ -700,6 +701,9 @@ def load_brand_monthly_arrivals_from_ads(
         prefix="product_type",
     )
     add_multi_filter(warehouses, column="warehouse", prefix="warehouse")
+    if supplier_keyword:
+        conditions.append("INSTR(COALESCE(a.`supplier`, ''), :supplier_keyword) > 0")
+        params["supplier_keyword"] = supplier_keyword
     common_where = " AND ".join(conditions)
 
     option_rows = ads_db.execute(
@@ -913,6 +917,7 @@ def load_brand_monthly_arrivals_from_ads(
         "brands_selected": list(brands),
         "product_types_selected": list(product_types),
         "warehouses_selected": list(warehouses),
+        "supplier_keyword": supplier_keyword,
         "detail_product_type": detail_product_type,
         "updated_at": _date_text(summary["updated_at"]),
         "filter_options": {

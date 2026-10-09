@@ -2120,6 +2120,7 @@ def brand_monthly_arrivals(
     brand: list[str] | None = Query(None),
     product_type: list[str] | None = Query(None),
     warehouse: list[str] | None = Query(None),
+    supplier_keyword: str = "",
     detail_product_type: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=10, le=100),
@@ -2131,6 +2132,9 @@ def brand_monthly_arrivals(
     brands = tuple(sorted({value.strip() for value in brand or [] if value.strip()}))
     product_types = tuple(sorted({value.strip() for value in product_type or [] if value.strip()}))
     warehouses = tuple(sorted({value.strip() for value in warehouse or [] if value.strip()}))
+    supplier_keyword = supplier_keyword.strip()
+    if len(supplier_keyword) > 100:
+        raise HTTPException(status_code=422, detail="往来单位关键词不能超过100个字符")
     detail_product_type = (detail_product_type or "").strip()
     page, page_size, offset = _pagination(page, page_size)
 
@@ -2153,12 +2157,13 @@ def brand_monthly_arrivals(
                         "Inventory ADS does not contain reconciled arrival details"
                     )
                 cache_key = _cache_key(
-                    "brand-monthly-arrivals-v4",
+                    "brand-monthly-arrivals-v5",
                     start_date=selected_start.isoformat(),
                     end_date=selected_end.isoformat(),
                     brands=brands,
                     product_types=product_types,
                     warehouses=warehouses,
+                    supplier_keyword=supplier_keyword,
                     detail_product_type=detail_product_type,
                     page=page,
                     page_size=page_size,
@@ -2177,6 +2182,7 @@ def brand_monthly_arrivals(
                     brands=brands,
                     product_types=product_types,
                     warehouses=warehouses,
+                    supplier_keyword=supplier_keyword,
                     detail_product_type=detail_product_type,
                     page=page,
                     page_size=page_size,
@@ -2194,12 +2200,13 @@ def brand_monthly_arrivals(
     response.headers["X-BI-Response-Source"] = "ods"
     end_exclusive = selected_end + timedelta(days=1)
     cache_key = _cache_key(
-        "brand-monthly-arrivals-v4",
+        "brand-monthly-arrivals-v5",
         start_date=selected_start.isoformat(),
         end_date=selected_end.isoformat(),
         brands=brands,
         product_types=product_types,
         warehouses=warehouses,
+        supplier_keyword=supplier_keyword,
         detail_product_type=detail_product_type,
         page=page,
         page_size=page_size,
@@ -2213,6 +2220,10 @@ def brand_monthly_arrivals(
         "start_date": selected_start,
         "end_date": end_exclusive,
     }
+    supplier_sql = ""
+    if supplier_keyword:
+        params["supplier_keyword"] = supplier_keyword
+        supplier_sql = "AND INSTR(COALESCE(h.`往来单位`, ''), :supplier_keyword) > 0"
     brand_sql = ""
     if brands:
         placeholders = []
@@ -2247,6 +2258,7 @@ def brand_monthly_arrivals(
       {brand_sql}
       {product_type_sql}
       {warehouse_sql}
+      {supplier_sql}
     """
 
     option_rows = db.execute(
@@ -2434,6 +2446,7 @@ def brand_monthly_arrivals(
         "brands_selected": list(brands),
         "product_types_selected": list(product_types),
         "warehouses_selected": list(warehouses),
+        "supplier_keyword": supplier_keyword,
         "detail_product_type": detail_product_type,
         "updated_at": summary["updated_at"].isoformat() if summary["updated_at"] else None,
         "filter_options": {

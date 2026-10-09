@@ -20,10 +20,25 @@ const loading = ref(false)
 const today = new Date()
 const todayText = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 const yearStartText = `${today.getFullYear()}-01-01`
+const currentYear = today.getFullYear()
+const currentQuarter = Math.floor(today.getMonth() / 3) + 1
+const routeYear = Number(route.query.year)
+const routeQuarter = Number(route.query.quarter)
+const selectedYear = ref(Number.isInteger(routeYear) && routeYear >= 2000 && routeYear <= currentYear ? routeYear : currentYear)
+const selectedQuarter = ref(Number.isInteger(routeQuarter) && routeQuarter >= 1 && routeQuarter <= 4 ? routeQuarter : currentQuarter)
+if (selectedYear.value === currentYear && selectedQuarter.value > currentQuarter) selectedQuarter.value = currentQuarter
 const activePage = ref(route.query.view === 'detail' ? 'detail' : 'overview')
-const selectedRange = ref(route.query.start_date && route.query.end_date ? 'custom' : 'this_year')
+const selectedRange = ref(route.query.range === 'quarter' ? 'quarter' : route.query.start_date && route.query.end_date ? 'custom' : 'this_year')
+function quarterDateRange(year, quarter) {
+  const start = `${year}-${String((quarter - 1) * 3 + 1).padStart(2, '0')}-01`
+  const quarterEnd = new Date(year, quarter * 3, 0)
+  const end = `${year}-${String(quarterEnd.getMonth() + 1).padStart(2, '0')}-${String(quarterEnd.getDate()).padStart(2, '0')}`
+  return [start, year === currentYear && quarter === currentQuarter ? todayText : end]
+}
 const dateRange = ref(
-  route.query.start_date && route.query.end_date
+  selectedRange.value === 'quarter'
+    ? quarterDateRange(selectedYear.value, selectedQuarter.value)
+    : route.query.start_date && route.query.end_date
     ? [String(route.query.start_date), String(route.query.end_date)]
     : [yearStartText, todayText],
 )
@@ -40,6 +55,7 @@ const selectedWarehouses = ref(
     ? route.query.warehouse.map(String)
     : route.query.warehouse ? [String(route.query.warehouse)] : [],
 )
+const supplierKeyword = ref(String(route.query.supplier_keyword || ''))
 const detailType = ref(['正装', '小样'].includes(String(route.query.detail_type)) ? String(route.query.detail_type) : 'all')
 const page = ref(Number(route.query.page || 1))
 const pageSize = ref(20)
@@ -50,7 +66,7 @@ const analysis = ref({
   trend: [], product_type_summary: [], products: [], brands: [],
   pagination: { page: 1, page_size: 20, total: 0 }, details: [],
 })
-const exportFilters = computed(() => ({ start_date: dateRange.value[0], end_date: dateRange.value[1], brand: selectedBrands.value, product_type: selectedProductTypes.value, warehouse: selectedWarehouses.value, detail_product_type: detailType.value === 'all' ? undefined : detailType.value }))
+const exportFilters = computed(() => ({ start_date: dateRange.value[0], end_date: dateRange.value[1], brand: selectedBrands.value, product_type: selectedProductTypes.value, warehouse: selectedWarehouses.value, supplier_keyword: supplierKeyword.value.trim(), detail_product_type: detailType.value === 'all' ? undefined : detailType.value }))
 
 function formatNumber(value, digits = 0) {
   return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
@@ -69,10 +85,19 @@ function formatDate(value, withTime = false) {
   return text.slice(0, withTime ? 16 : 10)
 }
 
-const canSearch = computed(() => selectedRange.value === 'this_year' || dateRange.value.length === 2)
+const canSearch = computed(() => selectedRange.value !== 'custom' || dateRange.value.length === 2)
+const yearOptions = computed(() => [...new Set([currentYear, selectedYear.value, ...analysis.value.filter_options.years])].filter((year) => year <= currentYear).sort((a, b) => b - a))
+const quarterOptions = computed(() => [1, 2, 3, 4].map((quarter) => ({
+  value: quarter,
+  disabled: selectedYear.value === currentYear && quarter > currentQuarter,
+  label: `Q${quarter}${selectedYear.value === currentYear && quarter === currentQuarter ? ' 进行中' : ''}`,
+})))
+const periodLabel = computed(() => selectedRange.value === 'quarter'
+  ? `${selectedYear.value} Q${selectedQuarter.value}${selectedYear.value === currentYear && selectedQuarter.value === currentQuarter ? ' · 进行中' : ''}`
+  : analysis.value.period)
 const metrics = computed(() => [
-  { label: '净到货成本金额', value: formatNumber(analysis.value.summary.net_cost_amount, 2), unit: '元', note: '按入库明细成本金额汇总', accent: true },
-  { label: '净到货数量', value: formatNumber(analysis.value.summary.net_quantity), unit: '件', note: analysis.value.period },
+  { label: '净到货成本金额', value: formatNumber(analysis.value.summary.net_cost_amount, 2), unit: '元', note: Number(analysis.value.summary.net_quantity) !== 0 && Number(analysis.value.summary.net_cost_amount) === 0 ? '有到货记录，成本金额为0，请核查源数据' : '按入库明细成本金额汇总', accent: true },
+  { label: '净到货数量', value: formatNumber(analysis.value.summary.net_quantity), unit: '件', note: periodLabel.value },
   { label: '入库单数', value: formatNumber(analysis.value.summary.document_count), unit: '单', note: `涉及 ${formatNumber(analysis.value.summary.sku_count)} 个 SKU` },
   { label: '到货品牌', value: formatNumber(analysis.value.summary.brand_count), unit: '个', note: `涉及 ${formatNumber(analysis.value.summary.supplier_count)} 个供应商` },
 ])
@@ -174,6 +199,7 @@ const typeTrendOption = computed(() => ({
 
 function resolveDateRange() {
   if (selectedRange.value === 'this_year') return [yearStartText, todayText]
+  if (selectedRange.value === 'quarter') return quarterDateRange(selectedYear.value, selectedQuarter.value)
   return dateRange.value
 }
 
@@ -187,6 +213,7 @@ async function fetchData(resetPage = false) {
       start_date: startDate, end_date: endDate, brand: selectedBrands.value,
       product_type: selectedProductTypes.value,
       warehouse: selectedWarehouses.value,
+      supplier_keyword: supplierKeyword.value.trim(),
       detail_product_type: detailType.value === 'all' ? undefined : detailType.value,
       page: page.value, page_size: pageSize.value,
     })
@@ -194,9 +221,11 @@ async function fetchData(resetPage = false) {
     router.replace({ query: {
       view: activePage.value,
       ...(selectedRange.value === 'custom' ? { start_date: startDate, end_date: endDate } : {}),
+      ...(selectedRange.value === 'quarter' ? { range: 'quarter', year: String(selectedYear.value), quarter: String(selectedQuarter.value) } : {}),
       ...(selectedBrands.value.length ? { brand: selectedBrands.value } : {}),
       ...(selectedProductTypes.value.length ? { product_type: selectedProductTypes.value } : {}),
       ...(selectedWarehouses.value.length ? { warehouse: selectedWarehouses.value } : {}),
+      ...(supplierKeyword.value.trim() ? { supplier_keyword: supplierKeyword.value.trim() } : {}),
       ...(detailType.value !== 'all' ? { detail_type: detailType.value } : {}),
       ...(page.value > 1 ? { page: page.value } : {}),
     } })
@@ -210,7 +239,24 @@ function setRange(value) {
   if (value === 'this_year') {
     dateRange.value = [yearStartText, todayText]
     fetchData(true)
+  } else if (value === 'quarter') {
+    dateRange.value = quarterDateRange(selectedYear.value, selectedQuarter.value)
+    fetchData(true)
   }
+}
+
+function setQuarter(value) {
+  selectedQuarter.value = value
+  selectedRange.value = 'quarter'
+  dateRange.value = quarterDateRange(selectedYear.value, value)
+  fetchData(true)
+}
+
+function setYear(value) {
+  selectedYear.value = value
+  if (value === currentYear && selectedQuarter.value > currentQuarter) selectedQuarter.value = currentQuarter
+  dateRange.value = quarterDateRange(selectedYear.value, selectedQuarter.value)
+  fetchData(true)
 }
 
 function setPage(value) {
@@ -230,6 +276,7 @@ function resetFilters() {
   selectedBrands.value = []
   selectedProductTypes.value = []
   selectedWarehouses.value = []
+  supplierKeyword.value = ''
   detailType.value = 'all'
   fetchData(true)
 }
@@ -247,8 +294,17 @@ onMounted(() => fetchData())
     <section class="arrival-toolbar">
       <div class="range-switch">
         <button :class="{ active: selectedRange === 'this_year' }" @click="setRange('this_year')">本年</button>
+        <button :class="{ active: selectedRange === 'quarter' }" @click="setRange('quarter')">季度</button>
         <button :class="{ active: selectedRange === 'custom' }" @click="setRange('custom')">自定义</button>
       </div>
+      <template v-if="selectedRange === 'quarter'">
+        <el-select v-model="selectedYear" class="year-select" aria-label="入库年份" @change="setYear">
+          <el-option v-for="year in yearOptions" :key="year" :label="`${year}年`" :value="year" />
+        </el-select>
+        <div class="quarter-switch" aria-label="入库季度">
+          <button v-for="item in quarterOptions" :key="item.value" :class="{ active: selectedQuarter === item.value }" :disabled="item.disabled" @click="setQuarter(item.value)">{{ item.label }}</button>
+        </div>
+      </template>
       <div class="date-picker-shell">
         <el-date-picker
           v-model="dateRange" type="daterange" value-format="YYYY-MM-DD" format="YYYY-MM-DD"
@@ -265,6 +321,7 @@ onMounted(() => fetchData())
       <el-select v-model="selectedWarehouses" multiple filterable collapse-tags collapse-tags-tooltip clearable placeholder="全部入库仓库" class="warehouse-select">
         <el-option v-for="item in analysis.filter_options.warehouses" :key="item" :label="item" :value="item" />
       </el-select>
+      <el-input v-model="supplierKeyword" clearable maxlength="100" placeholder="往来单位（模糊匹配）" class="supplier-input" @keyup.enter="fetchData(true)" />
       <el-button type="primary" :icon="'Search'" :disabled="!canSearch" @click="fetchData(true)">查询</el-button>
       <el-tooltip content="恢复默认筛选" placement="top"><el-button :icon="'RefreshLeft'" circle @click="resetFilters" /></el-tooltip>
     </section>
@@ -272,14 +329,14 @@ onMounted(() => fetchData())
     <section class="arrival-hero">
       <div class="hero-title-group">
         <span class="hero-mark" aria-hidden="true"></span>
-        <div><p>INBOUND PERFORMANCE</p><h1>品牌月度到货看板</h1><span>品牌、货品分类与入库日期一屏掌握</span></div>
+        <div><p>INBOUND PERFORMANCE</p><h1>采购入库分析</h1><span>品牌、往来单位、货品分类与入库日期一屏掌握</span></div>
       </div>
       <div class="hero-side">
-        <nav class="hero-pages" aria-label="品牌月度到货分页">
+        <nav class="hero-pages" aria-label="采购入库分析分页">
           <button :class="{ active: activePage === 'overview' }" @click="setPage('overview')">到货看板</button>
           <button :class="{ active: activePage === 'detail' }" @click="setPage('detail')">数据明细</button>
         </nav>
-        <strong>{{ analysis.period }}</strong><span>{{ analysis.start_date }} 至 {{ analysis.end_date }}</span>
+        <strong>{{ periodLabel }}</strong><span>{{ analysis.start_date }} 至 {{ analysis.end_date }}</span><span>数据更新：{{ formatDate(analysis.updated_at, true) }}</span>
       </div>
     </section>
 
@@ -355,10 +412,12 @@ onMounted(() => fetchData())
 .arrival-page { display: grid; gap: 14px; color: #172033; }
 .arrival-toolbar, .arrival-hero, .arrival-panel, .arrival-metric { border: 1px solid #e4e9ed; background: #fff; box-shadow: 0 1px 2px rgba(16, 24, 40, .03); }
 .arrival-toolbar { display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 8px; }
-.range-switch, .hero-pages, .detail-tabs { display: inline-flex; padding: 3px; border-radius: 7px; background: #f1f4f2; }
+.range-switch, .quarter-switch, .hero-pages, .detail-tabs { display: inline-flex; padding: 3px; border-radius: 7px; background: #f1f4f2; }
 .range-switch { flex: 0 0 auto; }
-.range-switch button, .hero-pages button, .detail-tabs button { border: 0; border-radius: 5px; padding: 8px 13px; background: transparent; color: #64748b; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
-.range-switch button.active, .hero-pages button.active, .detail-tabs button.active { background: #fff; color: var(--theme-primary); box-shadow: 0 1px 4px rgba(16, 24, 40, .12); }
+.range-switch button, .quarter-switch button, .hero-pages button, .detail-tabs button { border: 0; border-radius: 5px; padding: 8px 13px; background: transparent; color: #64748b; font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.range-switch button.active, .quarter-switch button.active, .hero-pages button.active, .detail-tabs button.active { background: #fff; color: var(--theme-primary); box-shadow: 0 1px 4px rgba(16, 24, 40, .12); }
+.quarter-switch button:disabled { color: #b8c0c9; cursor: not-allowed; }
+.year-select { width: 105px; flex: 0 0 105px; }
 .date-picker-shell {
   flex: 0 0 280px !important;
   width: 280px !important;
@@ -369,7 +428,7 @@ onMounted(() => fetchData())
   width: 100% !important;
   max-width: 100% !important;
 }
-.brand-select { width: min(250px, 20vw); }.type-select { width: min(190px, 16vw); }.warehouse-select { width: min(220px, 18vw); }
+.brand-select { width: min(250px, 20vw); }.type-select { width: min(190px, 16vw); }.warehouse-select { width: min(220px, 18vw); }.supplier-input { width: min(200px, 18vw); }
 .arrival-hero { min-height: 116px; padding: 22px 28px; border-top: 3px solid var(--theme-primary); border-radius: 8px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(105deg, #fff 65%, var(--theme-soft)); }
 .hero-title-group { display: flex; align-items: center; gap: 15px; }.hero-mark { width: 4px; height: 52px; border-radius: 2px; background: var(--theme-primary); }
 .hero-title-group p, .arrival-panel header small { margin: 0 0 4px; color: var(--theme-primary); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
@@ -389,6 +448,6 @@ onMounted(() => fetchData())
 .type-metric em { color: #667085; font-size: 11px; font-style: normal; }
 .type-metric small { color: #98a2b3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .table-panel :deep(.el-table), .detail-panel :deep(.el-table) { --el-table-header-bg-color: color-mix(in srgb, var(--theme-soft) 35%, white); --el-table-row-hover-bg-color: var(--theme-soft); }.table-panel :deep(.el-table th.el-table__cell), .detail-panel :deep(.el-table th.el-table__cell) { color: #526070; font-size: 12px; font-weight: 700; }.share-value { color: var(--theme-primary); }.pagination-row { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; color: #98a2b3; font-size: 12px; }
-@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics, .type-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select, .warehouse-select { width: 220px; } }
-@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .brand-select, .type-select, .warehouse-select { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-metrics-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1180px) { .arrival-toolbar { flex-wrap: wrap; }.arrival-metrics, .type-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.brand-select, .type-select, .warehouse-select, .supplier-input { width: 220px; } }
+@media (max-width: 760px) { .arrival-toolbar { align-items: stretch; }.date-picker-shell, .year-select, .brand-select, .type-select, .warehouse-select, .supplier-input { flex-basis: 100% !important; width: 100% !important; max-width: 100% !important; }.quarter-switch { width: 100%; justify-content: space-between; }.quarter-switch button { flex: 1 1 auto; }.arrival-hero { align-items: flex-start; gap: 20px; flex-direction: column; }.hero-side { justify-items: start; }.arrival-metrics, .type-metrics-grid { grid-template-columns: 1fr; } }
 </style>

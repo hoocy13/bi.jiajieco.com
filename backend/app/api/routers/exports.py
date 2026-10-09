@@ -296,7 +296,8 @@ def _brand_arrivals(filters: dict[str, Any], user: User, db: Session) -> tuple[d
     data = _unwrap(inventory.brand_monthly_arrivals(
         Response(), start_date=_date(filters.get("start_date")), end_date=_date(filters.get("end_date")),
         brand=_texts(filters.get("brand")), product_type=_texts(filters.get("product_type")),
-        warehouse=_texts(filters.get("warehouse")), detail_product_type=_text(filters.get("detail_product_type")),
+        warehouse=_texts(filters.get("warehouse")), supplier_keyword=_text(filters.get("supplier_keyword")) or "",
+        detail_product_type=_text(filters.get("detail_product_type")),
         page=1, page_size=MAX_EXPORT_ROWS + 1, current_user=user, db=db,
     ))
     data["rows"] = data.get("details") or []
@@ -309,8 +310,8 @@ def _brand_arrivals(filters: dict[str, Any], user: User, db: Session) -> tuple[d
         ExportColumn("cost_amount", "到货成本金额", "number", 18), ExportColumn("batch", "批次", width=18),
         ExportColumn("expiry_date", "到期日期", "date", 16),
     )
-    labels = {"start_date": "开始日期", "end_date": "结束日期", "brand": "品牌", "product_type": "货品分类", "warehouse": "入库仓库", "detail_product_type": "明细分类"}
-    return data, columns, _filter_summary(filters, labels), ("数据口径与品牌月度到货明细当前筛选条件一致。", "红冲和负数记录纳入净数量、净成本计算；入库单号、货品编号和批次按文本写入。")
+    labels = {"start_date": "开始日期", "end_date": "结束日期", "brand": "品牌", "product_type": "货品分类", "warehouse": "入库仓库", "supplier_keyword": "往来单位包含", "detail_product_type": "明细分类"}
+    return data, columns, _filter_summary(filters, labels), ("数据口径与采购入库分析明细当前筛选条件一致。", "红冲和负数记录纳入净数量、净成本计算；入库单号、货品编号和批次按文本写入。")
 
 
 EXPORTERS: dict[str, tuple[str, Callable]] = {
@@ -323,7 +324,7 @@ EXPORTERS: dict[str, tuple[str, Callable]] = {
     "inventory-turnover": ("商品周转", _inventory_turnover),
     "batch-expiry-fefo": ("批次效期_FEFO明细", _batch_expiry_fefo),
     "batch-expiry-long": ("批次效期_长效期明细", _batch_expiry_long),
-    "brand-arrivals": ("品牌月度到货明细", _brand_arrivals),
+    "brand-arrivals": ("采购入库分析明细", _brand_arrivals),
 }
 
 
