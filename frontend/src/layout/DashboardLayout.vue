@@ -112,11 +112,7 @@ function selectAppearance(name) {
   >
     <el-aside width="252px" class="sidebar">
       <div class="brand">
-        <div class="brand-mark">J</div>
-        <div>
-          <strong>Jiajieco BI</strong>
-          <span>bi.jiajieco.com</span>
-        </div>
+        <div class="brand-mark">BI</div>
       </div>
       <el-menu :default-active="activeMenuPath" router class="side-menu">
         <el-sub-menu v-for="group in menuGroups" :key="group.key" :index="group.key">

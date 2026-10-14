@@ -24,7 +24,7 @@ async function submit() {
 <template>
   <main class="login-hero register-page">
     <div class="login-hero__shell">
-      <header class="login-nav login-nav--simple"><div class="login-nav__logo">Jiajieco BI</div></header>
+      <header class="login-nav login-nav--simple"><div class="login-nav__logo">BI</div></header>
       <section class="register-shell">
         <section class="login-card register-card">
           <div class="login-card__head"><h2>注册 BI 账号</h2><p>注册后由管理员分配访问角色</p></div>

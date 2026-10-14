@@ -63,10 +63,6 @@ async function submit() {
     />
 
     <div class="login-hero__shell">
-      <header class="login-nav login-nav--simple">
-        <div class="login-nav__logo">Jiajieco BI</div>
-      </header>
-
       <section class="login-hero__content">
         <div class="login-hero__grid">
           <div class="login-hero__copy">
@@ -90,9 +86,6 @@ async function submit() {
 
           <div class="login-card-wrap">
             <section class="login-card liquid-glass" aria-label="登录">
-              <div class="login-card__head">
-                <h2>登录枷捷 BI</h2>
-              </div>
               <el-form class="login-form login-form--glass" label-position="top" @submit.prevent="submit">
                 <el-form-item label="邮箱或账号">
                   <el-input v-model="form.username" size="large" autocomplete="username" placeholder="请输入注册邮箱" />
