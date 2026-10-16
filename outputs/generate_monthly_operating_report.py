@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -82,6 +83,11 @@ def validate_raw(raw: dict) -> None:
         snapshot = item["inventory_snapshot"]
         if not snapshot.get("snapshot_date") or snapshot.get("stock_quantity") is None:
             raise ValueError(f"缺少成功的月末库存快照，停止生成：{item['end_date']}")
+        for field in ("paid_amount", "orders", "quantity"):
+            actual = sum((Decimal(str(row[field] or 0)) for row in item["channels"]), Decimal("0"))
+            expected = Decimal(str(summary[field] or 0))
+            if abs(actual - expected) > Decimal("0.01"):
+                raise ValueError(f"渠道{field}与销售总体不一致，停止生成：{item['start_date']}")
 
 
 def block_map(artifact: dict) -> dict[str, dict]:
@@ -94,6 +100,88 @@ def chart_map(artifact: dict) -> dict[str, dict]:
 
 def source_map(artifact: dict) -> dict[str, dict]:
     return {item["id"]: item for item in artifact["manifest"]["sources"]}
+
+
+def add_channel_analysis(artifact: dict, raw: dict) -> None:
+    """Freeze actual channel names and compare them within the same report sales version."""
+    current, previous = raw["periods"][-1], raw["periods"][-2]
+    current_channels = {row["channel"]: row for row in current["channels"]}
+    previous_channels = {row["channel"]: row for row in previous["channels"]}
+    total = float(current["summary"]["paid_amount"] or 0)
+    rows = []
+    for name in current_channels.keys() | previous_channels.keys():
+        values = current_channels.get(name)
+        base = previous_channels.get(name)
+        amount = float(values["paid_amount"] or 0) if values else 0
+        previous_amount = float(base["paid_amount"] or 0) if base else 0
+        dimension = values or base
+        rows.append({
+            "channel": name,
+            "channel_group": dimension["channel_group"],
+            "category": dimension.get("category", "未分类"),
+            "platform": dimension["platform"],
+            "paid_amount": amount,
+            "paid_amount_wan": amount / 10000,
+            "share": amount / total if total else None,
+            "paid_amount_mom": ratio(amount, previous_amount),
+            "paid_amount_change": amount - previous_amount,
+            "orders": int(values["orders"] or 0) if values else 0,
+            "quantity": float(values["quantity"] or 0) if values else 0,
+        })
+    rows.sort(key=lambda row: (-row["paid_amount"], row["channel"]))
+    datasets = artifact["snapshot"]["datasets"]
+    datasets["channel_sales"] = rows
+    datasets["channel_sales_top10"] = rows[:10]
+    datasets.pop("daily", None)
+    charts = artifact["manifest"]["charts"]
+    charts[:] = [item for item in charts if item["id"] not in {"daily_sales_trend", "channel_sales_rank"}]
+    charts.append({
+        "id": "channel_sales_rank", "title": "渠道销售额前十（万元）", "type": "bar",
+        "dataset": "channel_sales_top10", "sourceId": "sales_channel",
+        "encodings": {
+            "x": {"field": "channel", "type": "ordinal", "label": "渠道"},
+            "y": {"field": "paid_amount_wan", "type": "quantitative", "label": "销售额（万元）", "format": "number"},
+        },
+    })
+    tables = artifact["manifest"]["tables"]
+    tables[:] = [item for item in tables if item["id"] != "channel_detail"]
+    tables.append({
+        "id": "channel_detail", "title": "渠道销售明细", "dataset": "channel_sales", "sourceId": "sales_channel",
+        "columns": [
+            {"field": "channel", "label": "渠道", "minWidth": 250},
+            {"field": "channel_group", "label": "类型", "minWidth": 80},
+            {"field": "paid_amount_wan", "label": "销售额（万元）", "format": "number", "minWidth": 160},
+            {"field": "share", "label": "总销售占比", "format": "percent", "minWidth": 110},
+            {"field": "paid_amount_mom", "label": "环比", "format": "percent", "signed": True, "minWidth": 110},
+            {"field": "orders", "label": "订单数", "format": "number", "minWidth": 110},
+            {"field": "quantity", "label": "销量", "format": "number", "minWidth": 130},
+        ],
+    })
+    blocks = artifact["manifest"]["blocks"]
+    blocks[:] = [block for block in blocks if block["id"] != "channel_detail_table"]
+    index = next(index for index, block in enumerate(blocks) if block["id"] == "daily_chart")
+    blocks[index:index + 1] = [
+        {"id": "daily_chart", "type": "chart", "chartId": "channel_sales_rank"},
+        {"id": "channel_detail_table", "type": "table", "tableId": "channel_detail"},
+    ]
+    compact_report(artifact)
+
+
+def compact_report(artifact: dict) -> None:
+    manifest = artifact["manifest"]
+    manifest["blocks"] = [block for block in manifest["blocks"] if block["id"] not in {"scope_definition", "known_limits"}]
+    headings = {
+        "executive_summary": "一、经营摘要", "comparison_interpretation": "二、销售总体",
+        "daily_interpretation": "三、渠道销售分析", "brand_interpretation": "四、品牌销售",
+        "channel_interpretation": "五、线上与线下", "product_type_interpretation": "六、正装与小样",
+        "customer_interpretation": "七、客户情况", "arrival_interpretation": "八、采购到货",
+        "inventory_interpretation": "九、月末库存",
+    }
+    for block in manifest["blocks"]:
+        if block["id"] in headings:
+            block["body"] = f"## {headings[block['id']]}"
+    for item in manifest["charts"] + manifest["tables"]:
+        item.pop("subtitle", None)
 
 
 def build_artifact(month: str, raw: dict) -> dict:
@@ -221,6 +309,10 @@ def build_artifact(month: str, raw: dict) -> dict:
     datasets["daily"] = daily
     datasets["brands"] = brands
     datasets["channel_structure"] = channel_rows
+    datasets["channels"] = [
+        {"period": month_text(item["start_date"]), **row}
+        for item in periods for row in item["channels"]
+    ]
     datasets["product_types"] = product_rows
     datasets["customers"] = customer_rows
     datasets["arrivals"] = arrival_rows
@@ -373,6 +465,7 @@ def build_artifact(month: str, raw: dict) -> dict:
     artifact["package_info"]["root"] = f"monthly-operating-report-{month}"
     artifact["package_info"]["manifestPath"] = f"monthly_operating_report_{month.replace('-', '_')}_artifact.json"
     artifact["package_info"]["snapshotPath"] = artifact["package_info"]["manifestPath"]
+    add_channel_analysis(artifact, raw)
     return artifact
 
 

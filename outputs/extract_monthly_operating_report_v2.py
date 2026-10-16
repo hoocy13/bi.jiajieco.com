@@ -15,17 +15,19 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 os.chdir(BACKEND_ROOT)
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.db.ads import AdsSessionLocal
 from app.db.ods import OdsSessionLocal
 from app.services.inventory_ads import latest_ready_inventory_batch
 from app.services.sales_ads import latest_ready_sales_batch
 from app.services.sales_sources import is_online_sales_channel
+from app.models.ads import AdsPublishBatch
 
 
 parser = argparse.ArgumentParser(description="提取经营月报的本月、上月和去年同期数据。")
 parser.add_argument("--month", default="2026-08", help="报告月份，格式 YYYY-MM。")
+parser.add_argument("--sales-version", help="指定已发布销售版本，保持历史月报口径。")
 args = parser.parse_args()
 
 
@@ -64,6 +66,14 @@ ads = AdsSessionLocal()
 ods = OdsSessionLocal()
 try:
     sales_batch = latest_ready_sales_batch(ads)
+    if args.sales_version:
+        sales_batch = ads.scalars(select(AdsPublishBatch).where(
+            AdsPublishBatch.dataset == sales_batch.dataset,
+            AdsPublishBatch.data_version == args.sales_version,
+            AdsPublishBatch.status == "ready",
+        )).first()
+        if sales_batch is None:
+            raise ValueError("指定的已发布销售版本不可用")
     inventory_batch = latest_ready_inventory_batch(ads)
     output = {
         "sales_batch": {
@@ -140,6 +150,7 @@ try:
             "offline": {"paid_amount": Decimal("0"), "orders": 0, "quantity": Decimal("0"), "channels": 0},
             "unmatched_channels": 0,
         }
+        channel_details = []
         for row in channel_rows:
             name = str(row["channel"])
             dimension = dimensions.get(name)
@@ -153,6 +164,15 @@ try:
             target["orders"] += int(row["orders"] or 0)
             target["quantity"] += row["quantity"] or 0
             target["channels"] += 1
+            channel_details.append({
+                "channel": name,
+                "channel_group": "线上" if online else "线下",
+                "category": dimension["category"] if dimension else "未分类",
+                "platform": dimension["platform"] if dimension else "未设置",
+                "paid_amount": row["paid_amount"] or 0,
+                "orders": int(row["orders"] or 0),
+                "quantity": row["quantity"] or 0,
+            })
 
         customer_row = dict(ads.execute(text("""
             SELECT COUNT(*) AS customers,
@@ -211,6 +231,7 @@ try:
             "summary": summary,
             "product_scopes": scope_rows,
             "channel_summary": channel_summary,
+            "channels": channel_details,
             "customer_summary": customer_row,
             "customer_quality": quality_row,
             "arrivals": arrival_row,

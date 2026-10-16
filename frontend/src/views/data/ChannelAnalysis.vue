@@ -9,6 +9,7 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import { getSalesChannelAnalysis, getSalesChannelCustomerAnalysis } from '../../api/sales'
 import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSavedTheme } from '../../utils/theme'
+import { isOnlineChannel, isWuyanChannel, displayPlatform } from '../../utils/salesChannelClassification'
 
 use([CanvasRenderer, LineChart, GridComponent, LegendComponent, TooltipComponent])
 
@@ -100,31 +101,6 @@ function formatPercent(value) {
 
 function progressWidth(value) {
   return `${Math.min(Math.max(Number(value || 0), 0), 100)}%`
-}
-
-function isOnlineChannel(item) {
-  if (typeof item.is_online === 'boolean') return item.is_online
-  return Boolean(item.platform && item.platform !== '未设置')
-}
-
-function isWuyanChannel(item) {
-  const channelName = String(item.channel_name || '').trim()
-  const category = String(item.category || '').trim()
-  return category === '梧颜' || ['梧颜', '枷美妆'].some((keyword) => channelName.includes(keyword))
-}
-
-function displayPlatform(item) {
-  const platform = String(item.platform || '').trim()
-  const channelName = String(item.channel_name || '').trim()
-  const value = `${platform} ${channelName}`
-  const platformNames = [
-    ['天猫', '天猫'], ['淘宝', '淘宝'], ['拼多多', '拼多多'], ['得物', '得物'],
-    ['京东', '京东'], ['快手', '快手'], ['抖店', '抖音'], ['抖音', '抖音'],
-    ['美团', '美团'], ['微信', '微信'], ['SHEIN', 'SHEIN'], ['95分', '95分'],
-    ['度小店', '百度'], ['基木鱼', '百度'],
-  ]
-  return platformNames.find(([keyword]) => value.includes(keyword))?.[1]
-    || (platform && platform !== '未设置' ? platform : '其他电商')
 }
 
 function channelKindLabel(item) {
@@ -225,7 +201,7 @@ function closeChannelDetail() {
 }
 
 const salesContribution = computed(() => {
-  const channels = activeChannels.value.filter((item) => Number(item.paid_amount || 0) !== 0)
+  const channels = analysis.value.rows
   const summarize = (field, label, unit, digits) => {
     const online = channels.filter((item) => isOnlineChannel(item) && !isWuyanChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
     const offline = channels.filter((item) => !isOnlineChannel(item) && !isWuyanChannel(item)).reduce((sum, item) => sum + Number(item[field] || 0), 0)
