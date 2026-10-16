@@ -83,6 +83,7 @@ class AdsSchemaTests(unittest.TestCase):
                 set(AdsBase.metadata.tables),
                 {
                     "ads_publish_batch",
+                    "ads_sales_profit_daily",
                     "ads_inventory_batch_summary",
                     "ads_inventory_batch_item",
                     "ads_inventory_arrival_item",

@@ -15,6 +15,7 @@ from app.models.user import Permission, Role, User
 PERMISSION_DEFINITIONS = [
     ("dashboard.view", "经营总览", "dashboard"),
     ("sales.view", "销售分析", "sales"),
+    ("sales.profit.view", "销售毛利与价格分析", "sales"),
     ("inventory.view", "库存分析", "inventory"),
     ("inventory.price.manage", "核心成本价维护", "inventory"),
     ("report.monthly.view", "经营月报", "report"),
@@ -32,10 +33,10 @@ PERMISSION_DEFINITIONS = [
 ROLE_DEFINITIONS = [
     ("001", "pending", "待授权用户", "新注册用户的默认角色", []),
     ("002", "viewer", "普通查看者", "仅查看经营总览", ["dashboard.view"]),
-    ("003", "data_analyst", "数据分析师", "经营、销售、库存与分析工具", ["dashboard.view", "sales.view", "inventory.view", "report.monthly.view", "ai.decision.view", "ai.assistant.use", "data.export"]),
+    ("003", "data_analyst", "数据分析师", "经营、销售、库存与分析工具", ["dashboard.view", "sales.view", "sales.profit.view", "inventory.view", "report.monthly.view", "ai.decision.view", "ai.assistant.use", "data.export"]),
     ("004", "sales", "销售人员", "经营总览和销售分析", ["dashboard.view", "sales.view"]),
     ("005", "inventory", "库存人员", "经营总览和库存分析", ["dashboard.view", "inventory.view"]),
-    ("006", "management", "管理层", "经营、销售、库存和导出", ["dashboard.view", "sales.view", "inventory.view", "report.monthly.view", "data.export"]),
+    ("006", "management", "管理层", "经营、销售、库存和导出", ["dashboard.view", "sales.view", "sales.profit.view", "inventory.view", "report.monthly.view", "data.export"]),
     ("007", "admin", "系统管理员", "系统全部权限", [item[0] for item in PERMISSION_DEFINITIONS]),
 ]
 

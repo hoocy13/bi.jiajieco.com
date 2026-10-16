@@ -10,7 +10,7 @@ if ! flock -n 9; then
   exit 75
 fi
 
-if pgrep -af 'app.jobs.build_(sales|inventory)_ads|refresh_sales_ads' >/dev/null; then
+if pgrep -af 'app.jobs.build_(sales|sales_profit|inventory)_ads|refresh_sales_ads' >/dev/null; then
   echo "ADS build process detected; abort retention." >&2
   exit 75
 fi

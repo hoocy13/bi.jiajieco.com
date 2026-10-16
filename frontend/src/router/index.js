@@ -11,10 +11,11 @@ const BrandAnalysis = () => import('../views/data/BrandAnalysis.vue')
 const BrandChannelAnalysis = () => import('../views/data/BrandChannelAnalysis.vue')
 const ChannelAnalysis = () => import('../views/data/ChannelAnalysis.vue')
 const CustomerAnalysis = () => import('../views/data/CustomerAnalysis.vue')
+const SalesProfitAnalysis = () => import('../views/data/SalesProfitAnalysis.vue')
 const InventoryOverview = () => import('../views/data/InventoryOverview.vue')
 const InventoryDetail = () => import('../views/data/InventoryDetail.vue')
-const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
 const InventoryValuation = () => import('../views/data/InventoryValuation.vue')
+const InventoryTurnover = () => import('../views/data/InventoryTurnover.vue')
 const SlowMoving = () => import('../views/data/SlowMoving.vue')
 const BatchExpiryAnalysis = () => import('../views/data/BatchExpiryAnalysis.vue')
 const InventoryHealth = () => import('../views/data/InventoryHealth.vue')
@@ -58,10 +59,11 @@ const routes = [
       { path: 'sales/brand-analysis/:brand', component: BrandChannelAnalysis, meta: { title: '品牌销售分析', permission: 'sales.view' } },
       { path: 'sales/channel-analysis', component: ChannelAnalysis, meta: { title: '渠道分析', permission: 'sales.view' } },
       { path: 'sales/customer-analysis', component: CustomerAnalysis, meta: { title: '客户分析', permission: 'sales.view' } },
+      { path: 'sales/profit-analysis', component: SalesProfitAnalysis, meta: { title: '销售毛利与价格分析', permission: 'sales.profit.view' } },
                     { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览', permission: 'inventory.view' } },
-      { path: 'inventory/valuation', component: InventoryValuation, meta: { title: '库存价格估算', permission: 'inventory.view' } },
       { path: 'inventory/detail', component: InventoryDetail, meta: { title: '库存明细', permission: 'inventory.view' } },
+      { path: 'inventory/valuation', component: InventoryValuation, meta: { title: '库存价格估算', permission: 'inventory.view' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '采购入库分析', permission: 'inventory.view' } },
       { path: 'inventory/brand-inventory-flow', component: BrandInventoryFlow, meta: { title: '品牌进销存', permission: 'inventory.view' } },
       { path: 'inventory/reservations', component: ReservationAnalysis, meta: { title: '预留单分析', permission: 'inventory.view' } },

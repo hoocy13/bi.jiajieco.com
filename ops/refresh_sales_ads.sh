@@ -28,3 +28,5 @@ run_ads_build "Sales ADS build" \
   docker compose exec -T backend python -m app.jobs.build_sales_ads
 run_ads_build "Inventory ADS build" \
   docker compose exec -T backend python -m app.jobs.build_inventory_ads
+run_ads_build "Sales profit ADS build" \
+  docker compose exec -T backend python -m app.jobs.build_sales_profit_ads --prune

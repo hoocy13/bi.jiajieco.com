@@ -22,11 +22,56 @@ const activeMenuPath = computed(() => (
 const menuGroups = computed(() => [
   {
     key: 'guide',
-    label: '引导看板',
+    label: '经营分析',
     icon: 'DataBoard',
     children: [
       { path: '/dashboard', label: '经营总览', permission: 'dashboard.view' },
       { path: '/reports/monthly', label: '经营月报', permission: 'report.monthly.view' },
+    ],
+  },
+  {
+    key: 'sales',
+    label: '销售分析',
+    icon: 'TrendCharts',
+    children: [
+      { path: '/sales/overview', label: '销售概览', permission: 'sales.view' },
+      { path: '/sales/brand-analysis', label: '品牌销售分析', permission: 'sales.view' },
+      { path: '/sales/product-rank', label: '商品销售排行', permission: 'sales.view' },
+      { path: '/sales/channel-analysis', label: '渠道分析', permission: 'sales.view' },
+      { path: '/sales/customer-analysis', label: '客户分析', permission: 'sales.view' },
+      { path: '/sales/detail', label: '销售明细', permission: 'sales.view' },
+    ],
+  },
+  {
+    key: 'procurement',
+    label: '采购分析',
+    icon: 'ShoppingCart',
+    children: [
+      { path: '/inventory/brand-arrivals', label: '采购入库分析', permission: 'inventory.view' },
+    ],
+  },
+  {
+    key: 'inventory',
+    label: '库存分析',
+    icon: 'Box',
+    children: [
+      { path: '/inventory/overview', label: '库存概览', permission: 'inventory.view' },
+      { path: '/inventory/brand-inventory-flow', label: '品牌进销存', permission: 'inventory.view' },
+      { path: '/inventory/turnover', label: '品牌周转', permission: 'inventory.view' },
+      { path: '/inventory/health', label: '库存健康度', permission: 'inventory.view' },
+      { path: '/inventory/slow-moving', label: '滞销分析', permission: 'inventory.view' },
+      { path: '/inventory/batch-expiry', label: '批次效期分析', permission: 'inventory.view' },
+      { path: '/inventory/reservations', label: '预留单分析', permission: 'inventory.view' },
+      { path: '/inventory/detail', label: '库存明细', permission: 'inventory.view' },
+    ],
+  },
+  {
+    key: 'finance',
+    label: '财务分析',
+    icon: 'Wallet',
+    children: [
+      { path: '/sales/profit-analysis', label: '销售毛利与价格分析', permission: 'sales.profit.view' },
+      { path: '/inventory/valuation', label: '库存价格估算', permission: 'inventory.view' },
     ],
   },
   {
@@ -40,38 +85,8 @@ const menuGroups = computed(() => [
     ],
   },
   {
-    key: 'sales',
-    label: '销售分析',
-    icon: 'TrendCharts',
-    children: [
-      { path: '/sales/overview', label: '销售概览', permission: 'sales.view' },
-      { path: '/sales/detail', label: '销售明细', permission: 'sales.view' },
-      { path: '/sales/product-rank', label: '商品销售排行', permission: 'sales.view' },
-      { path: '/sales/brand-analysis', label: '品牌销售分析', permission: 'sales.view' },
-      { path: '/sales/channel-analysis', label: '渠道分析', permission: 'sales.view' },
-      { path: '/sales/customer-analysis', label: '客户分析', permission: 'sales.view' },
-    ],
-  },
-  {
-    key: 'inventory',
-    label: '库存分析',
-    icon: 'Box',
-    children: [
-      { path: '/inventory/overview', label: '库存概览', permission: 'inventory.view' },
-      { path: '/inventory/detail', label: '库存明细', permission: 'inventory.view' },
-      { path: '/inventory/valuation', label: '库存价格估算', permission: 'inventory.view' },
-      { path: '/inventory/brand-arrivals', label: '采购入库分析', permission: 'inventory.view' },
-      { path: '/inventory/brand-inventory-flow', label: '品牌进销存', permission: 'inventory.view' },
-      { path: '/inventory/reservations', label: '预留单分析', permission: 'inventory.view' },
-      { path: '/inventory/turnover', label: '品牌周转', permission: 'inventory.view' },
-      { path: '/inventory/slow-moving', label: '滞销分析', permission: 'inventory.view' },
-      { path: '/inventory/batch-expiry', label: '批次效期分析', permission: 'inventory.view' },
-      { path: '/inventory/health', label: '库存健康度', permission: 'inventory.view' },
-    ],
-  },
-  {
     key: 'system',
-    label: '系统设置',
+    label: '系统管理',
     icon: 'Setting',
     children: [
       { path: '/users', label: '账号权限', permission: 'system.users.manage' },
@@ -91,6 +106,10 @@ const menuGroups = computed(() => [
 }))
   .filter(group => group.children.length))
 
+const defaultOpenGroups = computed(() => menuGroups.value
+  .filter(group => group.key !== 'system')
+  .map(group => group.key))
+
 function logout() {
   auth.logout()
   router.push('/login')
@@ -108,13 +127,13 @@ function selectAppearance(name) {
 <template>
   <el-container
     class="app-shell"
-    :class="{ 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis') }"
+    :class="{ 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis'), 'is-sales-profit': $route.path === '/sales/profit-analysis' }"
   >
     <el-aside width="252px" class="sidebar">
       <div class="brand">
         <div class="brand-mark">BI</div>
       </div>
-      <el-menu :default-active="activeMenuPath" router class="side-menu">
+      <el-menu :default-active="activeMenuPath" :default-openeds="defaultOpenGroups" router class="side-menu">
         <el-sub-menu v-for="group in menuGroups" :key="group.key" :index="group.key">
           <template #title>
             <el-icon><component :is="group.icon" /></el-icon>
@@ -199,6 +218,14 @@ function selectAppearance(name) {
 .theme-swatch, .theme-option-swatch { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: 0 0 0 1px rgb(23 24 28 / 12%); }
 .theme-option-swatch { margin-right: 8px; }
 :global(.el-dropdown-menu__item.is-selected-theme) { color: var(--accent-strong); font-weight: 700; background: var(--accent-soft); }
+@media (max-width: 960px) {
+  .is-sales-profit .topbar { height: auto; min-height: 68px; flex-wrap: wrap; gap: 10px; padding: 12px 18px; }
+  .is-sales-profit .topbar > div:first-child { flex-basis: 100%; min-width: 0; }
+  .is-sales-profit .topbar h1 { font-size: 17px; line-height: 1.5; }
+  .is-sales-profit .top-actions { flex-wrap: wrap; gap: 6px; max-width: 100%; }
+  .is-sales-profit .top-actions > * { flex-shrink: 0; }
+  .is-sales-profit .theme-button, .is-sales-profit .user-button { white-space: nowrap; }
+}
 </style>
 
 

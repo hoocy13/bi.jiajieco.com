@@ -30,6 +30,35 @@ class AdsPublishBatch(AdsBase):
     published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AdsSalesProfitDaily(AdsBase):
+    __tablename__ = "ads_sales_profit_daily"
+    __table_args__ = (
+        Index("idx_ads_sales_profit_date", "data_version", "sales_date"),
+        Index("idx_ads_sales_profit_channel", "data_version", "channel", "sales_date"),
+        Index("idx_ads_sales_profit_brand", "data_version", "brand", "sales_date"),
+        Index("idx_ads_sales_profit_product", "data_version", "product_code", "sales_date"),
+        Index("idx_ads_sales_profit_customer", "data_version", "customer_code", "sales_date"),
+    )
+
+    data_version: Mapped[str] = mapped_column(String(64), primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    sales_date: Mapped[date] = mapped_column(Date, nullable=False)
+    brand: Mapped[str] = mapped_column(String(128), nullable=False)
+    channel: Mapped[str] = mapped_column(String(255), nullable=False)
+    customer_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    customer_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    product_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    product_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    product_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    paid_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    sale_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    sale_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    return_quantity: Mapped[Decimal] = mapped_column(Numeric(24, 4), nullable=False)
+    return_amount: Mapped[Decimal] = mapped_column(Numeric(24, 6), nullable=False)
+    source_rows: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class AdsSalesDaily(AdsBase):
     __tablename__ = "ads_sales_daily"
 
