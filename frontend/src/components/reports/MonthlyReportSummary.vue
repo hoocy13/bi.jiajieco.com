@@ -8,7 +8,12 @@ const props = defineProps({ artifact: Object, month: String })
 const data = computed(() => props.artifact?.snapshot?.datasets || {})
 const comparison = computed(() => buildMonthlyComparison(data.value.periods || [], data.value.channel_structure || [], props.month))
 const headline = computed(() => data.value.headline?.[0] || {})
-const directions = computed(() => summarizeReportChannels(data.value.channel_sales || [], Number(headline.value.paid_amount || 0)))
+const directions = computed(() => data.value.channel_sales?.length
+  ? summarizeReportChannels(data.value.channel_sales, Number(headline.value.paid_amount || 0))
+  : comparison.value.channels.map(row => ({
+    name: `${row.channel_group}渠道`, paid_amount: row.paid_amount, share: row.share,
+    mom: row.paid_amount_mom, rows: [], available: row.paid_amount != null,
+  })))
 const contributors = computed(() => salesContributors(data.value.channel_sales || []))
 const metrics = [
   { label: '销售额（万元）', field: 'paid_amount', wan: true },
@@ -77,7 +82,7 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
           <h3>{{ group.name }}</h3>
           <table><thead><tr><th>{{ group.name === '线上平台' ? '平台' : '渠道' }}</th><th>万元</th><th>环比</th></tr></thead><tbody>
             <tr v-for="row in group.rows" :key="row.name"><td>{{ row.name }}</td><td>{{ money(row.paid_amount) }}</td><td :class="tone(row.mom)">{{ percent(row.mom, true) }}</td></tr>
-            <tr v-if="!group.available"><td colspan="3">暂无渠道明细</td></tr>
+            <tr v-if="!group.rows.length"><td colspan="3">暂无具体渠道明细</td></tr>
           </tbody></table>
         </section>
       </div>
