@@ -20,10 +20,39 @@ export async function exportMonthlyReportPdf(root, filename) {
       const rect = element.getBoundingClientRect()
       return { start: Math.floor((rect.top - rootTop) * ratio), end: Math.ceil((rect.bottom - rootTop) * ratio) }
     }
-    const blocks = [...pageRoot.querySelectorAll('tr, .summary-metrics, svg, .mini-metrics')].map(bounds)
+    const blocks = [...pageRoot.querySelectorAll('tr, .summary-metrics, svg, .mini-metrics, .driver-block, .brand-mix, .report-bar-chart, .decision-finding, figure, caption, h2, h3, h4')].map(bounds)
     for (const element of pageRoot.querySelectorAll('.summary-panel')) {
       const block = bounds(element)
       if (block.end - block.start < capacity * 0.8) blocks.push(block)
+    }
+    // Keep compact visual groups and tables together. The full channel table
+    // is deliberately excluded: it spans pages and repeats its header below.
+    for (const element of pageRoot.querySelectorAll('table:not(.channel-detail-table), .brand-product-columns, .brand-mixes, .stock-columns > section')) {
+      const block = bounds(element)
+      if (block.end - block.start < capacity * 0.85) blocks.push(block)
+    }
+    for (const heading of pageRoot.querySelectorAll('h2, h3, h4')) {
+      const next = heading.nextElementSibling
+      if (!next) continue
+      const title = bounds(heading)
+      let content = bounds(next)
+      if (next.classList.contains('scope-tags') && next.nextElementSibling?.classList.contains('stock-columns')) {
+        const firstGroup = next.nextElementSibling.firstElementChild
+        if (firstGroup) content = bounds(firstGroup)
+      }
+      const end = content.end - title.start < capacity * 0.85
+        ? content.end : Math.min(content.end, content.start + 80 * ratio)
+      if (end - title.start < capacity) blocks.push({ start: title.start, end })
+    }
+    // A bottom caption must stay with the final row, including long tables.
+    for (const caption of pageRoot.querySelectorAll('table > caption')) {
+      const lastRow = caption.parentElement.querySelector('tbody tr:last-child')
+      if (!lastRow) continue
+      const row = bounds(lastRow)
+      const title = bounds(caption)
+      if (title.end > row.start && title.end - row.start < capacity) {
+        blocks.push({ start: row.start, end: title.end })
+      }
     }
     const header = pageRoot.querySelector('.channel-detail-table thead')
     const head = header ? bounds(header) : null

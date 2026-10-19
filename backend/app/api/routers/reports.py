@@ -133,6 +133,22 @@ def generate_monthly_report_draft(payload: GenerateMonthlyReportRequest, db: Ses
     html_path = PROJECT_ROOT / "outputs" / f"monthly_operating_report_{stem}.html"
     artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
     html = html_path.read_text(encoding="utf-8")
+    from app.db.ads import require_ads_session_factory
+    from app.db.ods import OdsSessionLocal
+    from app.services.monthly_operating_analysis import build_operating_analysis
+    sales_version_for_analysis = next(
+        item.split("=", 1)[1] for source in artifact["manifest"]["sources"] if source["id"] == "sales_monthly"
+        for item in source["query"]["filters"] if item.startswith("data_version=")
+    )
+    if OdsSessionLocal is None:
+        raise HTTPException(503, "库存数据源未配置")
+    with require_ads_session_factory()() as ads, OdsSessionLocal() as ods:
+        try:
+            artifact["snapshot"]["datasets"]["operating_analysis"] = build_operating_analysis(
+                ads, ods, artifact, payload.month, sales_version_for_analysis,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     sources = {item["id"]: item for item in artifact["manifest"]["sources"]}
     sales_version = next(item.split("=", 1)[1] for item in sources["sales_monthly"]["query"]["filters"] if item.startswith("data_version="))
     inventory_version = next(item.split("=", 1)[1] for item in sources["inventory_arrival"]["query"]["filters"] if item.startswith("data_version="))

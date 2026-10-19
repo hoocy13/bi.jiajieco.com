@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
-import { salesContributors } from '../../utils/monthlyReportInsights'
+import { reportAmount } from '../../utils/monthlyReportFormat'
+import MonthlyOperatingAnalysis from './MonthlyOperatingAnalysis.vue'
 import { buildMonthlyComparison, periodMonth } from '../../utils/monthlyReportComparison'
 import { summarizeReportChannels } from '../../utils/monthlyReportChannels'
 
@@ -14,7 +15,6 @@ const directions = computed(() => data.value.channel_sales?.length
     name: `${row.channel_group}渠道`, paid_amount: row.paid_amount, share: row.share,
     mom: row.paid_amount_mom, rows: [], available: row.paid_amount != null,
   })))
-const contributors = computed(() => salesContributors(data.value.channel_sales || []))
 const metrics = [
   { label: '销售额（万元）', field: 'paid_amount', wan: true },
   { label: '订单数', field: 'orders' }, { label: '销售数量', field: 'quantity' },
@@ -29,9 +29,16 @@ function number(value, digits = 0) {
   if (value === undefined || value === null) return '—'
   return Number(value).toLocaleString('zh-CN', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 }
-function wan(value) { return value == null ? '—' : number(Number(value) / 10000, 2) }
-function money(value, divisor = 10000) { return value == null ? '—' : number(Number(value) / divisor, 2) }
+function wan(value) { return reportAmount(value) }
+function money(value, divisor = 10000) { return reportAmount(value, divisor) }
 function comparisonValue(value) { return String(value).replaceAll('—', '-') }
+function chartRows(rows) {
+  const max = Math.max(1, ...rows.map(row => Math.abs(Number(row.paid_amount || 0))))
+  return rows.map(row => ({ ...row, width: Math.abs(Number(row.paid_amount || 0)) / max * 100 }))
+}
+const channelBars = computed(() => chartRows(directions.value.filter(row => row.available)))
+const brandBars = computed(() => chartRows((data.value.brands || []).map(row => ({ ...row, name: row.brand }))))
+const productBars = computed(() => chartRows(currentProducts.value.map(row => ({ ...row, name: row.product_type }))))
 const salesBars = computed(() => {
   const rows = comparison.value.periods
   const max = Math.max(1, ...rows.map(row => Math.abs(Number(row.paid_amount || 0))))
@@ -51,7 +58,7 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
     <section class="summary-metrics">
       <article v-for="metric in metrics" :key="metric.field" class="summary-metric">
         <span>{{ metric.label }}</span>
-        <strong>{{ metric.wan ? money(headline[metric.field]) : metric.money ? money(headline[metric.field], 1) : number(headline[metric.field]) }}</strong>
+        <strong>{{ metric.wan ? (headline[metric.field] == null ? '—' : number(Number(headline[metric.field]) / 10000)) : metric.money ? number(headline[metric.field]) : number(headline[metric.field]) }}</strong>
         <div>环比 <b :class="tone(comparison.current?.[`${metric.field}_mom`])">{{ percent(comparison.current?.[`${metric.field}_mom`], true) }}</b></div>
         <small>同比 {{ percent(headline[`${metric.field}_yoy`], true) }}</small>
       </article>
@@ -59,9 +66,6 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
     </section>
     <section class="summary-panel month-comparison">
       <h2>二、月度销售对比</h2>
-      <div class="month-table-scroll"><table><thead><tr><th>月份</th><th>销售额（万元）</th><th>环比</th><th>订单数</th><th>环比</th><th>销售数量</th><th>环比</th></tr></thead><tbody>
-        <tr v-for="row in comparison.periods" :key="row.period"><td>{{ periodMonth(row.period) }}</td><td>{{ comparisonValue(money(row.paid_amount)) }}</td><td :class="tone(row.paid_amount_mom)">{{ comparisonValue(percent(row.paid_amount_mom, true)) }}</td><td>{{ comparisonValue(number(row.orders)) }}</td><td :class="tone(row.orders_mom)">{{ comparisonValue(percent(row.orders_mom, true)) }}</td><td>{{ comparisonValue(number(row.quantity)) }}</td><td :class="tone(row.quantity_mom)">{{ comparisonValue(percent(row.quantity_mom, true)) }}</td></tr>
-      </tbody></table></div>
       <svg class="monthly-sales-bars" viewBox="0 0 360 136" role="img" aria-label="月度销售额柱状对比，单位万元">
         <line x1="22" y1="106" x2="338" y2="106" class="chart-baseline" />
         <g v-for="row in salesBars" :key="row.period">
@@ -71,9 +75,16 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
           <text :x="row.x" y="129" text-anchor="middle" class="bar-month">{{ periodMonth(row.period) }}</text>
         </g>
       </svg>
+      <div class="month-table-scroll"><table><thead><tr><th>月份</th><th>销售额（万元）</th><th>环比</th><th>订单数</th><th>环比</th><th>销售数量</th><th>环比</th></tr></thead><tbody>
+        <tr v-for="row in comparison.periods" :key="row.period"><td>{{ periodMonth(row.period) }}</td><td>{{ comparisonValue(money(row.paid_amount)) }}</td><td :class="tone(row.paid_amount_mom)">{{ comparisonValue(percent(row.paid_amount_mom, true)) }}</td><td>{{ comparisonValue(number(row.orders)) }}</td><td :class="tone(row.orders_mom)">{{ comparisonValue(percent(row.orders_mom, true)) }}</td><td>{{ comparisonValue(number(row.quantity)) }}</td><td :class="tone(row.quantity_mom)">{{ comparisonValue(percent(row.quantity_mom, true)) }}</td></tr>
+      </tbody></table></div>
     </section>
     <section class="summary-panel channel-overview">
-      <h2>三、渠道经营</h2>
+      <h2>三、渠道结构与经营</h2><div class="report-bar-chart" role="img" aria-label="渠道销售额对比，单位万元">
+        <div v-for="row in channelBars" :key="row.name" class="report-bar-row">
+          <span>{{ row.name }}</span><div class="report-bar-track"><i :style="{ width: `${row.width}%` }" /></div><b>{{ money(row.paid_amount) }}<small> 万元</small></b>
+        </div>
+      </div>
       <table><thead><tr><th>分类</th><th>销售额</th><th>占比</th><th>环比</th></tr></thead><tbody>
         <tr v-for="group in directions" :key="group.name"><td>{{ group.name }}</td><td>{{ group.available ? money(group.paid_amount) : '—' }}</td><td>{{ group.available ? percent(group.share) : '—' }}</td><td :class="tone(group.mom)">{{ group.available ? percent(group.mom, true) : '—' }}</td></tr>
       </tbody></table>
@@ -88,31 +99,33 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
       </div>
     </section>
     <section class="summary-panel contribution-panel">
-      <h2>四、销售变化贡献</h2>
-      <div class="contribution-columns">
-        <section v-for="(rows, key) in contributors" :key="key">
-          <h3>{{ key === 'growth' ? '月增长前三' : '月下降前三' }}</h3>
-          <table><thead><tr><th>渠道</th><th>变化（万元）</th><th>贡献</th></tr></thead><tbody>
-            <tr v-for="row in rows" :key="row.channel"><td>{{ row.channel }}</td><td :class="tone(row.paid_amount_change)">{{ row.paid_amount_change > 0 ? '+' : '' }}{{ money(row.paid_amount_change) }}</td><td>{{ percent(row.contribution, true) }}</td></tr>
-            <tr v-if="!rows.length"><td colspan="3">暂无</td></tr>
-          </tbody></table>
-        </section>
-      </div>
+      <h2>四、重点渠道销售趋势</h2>
+      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="trend" />
     </section>
     <section class="summary-panel">
-      <h2>五、品牌与商品结构</h2>
-      <div class="report-columns">
-        <div><h3>品牌销售前五</h3><table><thead><tr><th>品牌</th><th>销售额（万元）</th></tr></thead><tbody><tr v-for="row in data.brands || []" :key="row.brand"><td>{{ row.brand }}</td><td>{{ money(row.paid_amount) }}</td></tr></tbody></table></div>
-        <div><h3>正装／小样</h3><table><thead><tr><th>分类</th><th>销售额（万元）</th><th>两类占比</th></tr></thead><tbody><tr v-for="row in currentProducts" :key="row.product_type"><td>{{ row.product_type }}</td><td>{{ money(row.paid_amount) }}</td><td>{{ percent(productTotal ? row.paid_amount / productTotal : null) }}</td></tr></tbody></table></div>
+      <h2>五、品牌与商品表现</h2>
+      <div class="report-columns brand-product-columns">
+        <div><h3>品牌销售前五</h3><div class="report-bar-chart" role="img" aria-label="品牌销售额对比，单位万元">
+        <div v-for="row in brandBars" :key="row.name" class="report-bar-row">
+          <span>{{ row.name }}</span><div class="report-bar-track"><i :style="{ width: `${row.width}%` }" /></div><b>{{ money(row.paid_amount) }}<small> 万元</small></b>
+        </div>
+      </div><table><thead><tr><th>品牌</th><th>销售额（万元）</th></tr></thead><tbody><tr v-for="row in data.brands || []" :key="row.brand"><td>{{ row.brand }}</td><td>{{ money(row.paid_amount) }}</td></tr></tbody></table></div>
+        <div><h3>正装／小样</h3><div class="report-bar-chart" role="img" aria-label="正装与小样销售额和占比，单位万元">
+        <div v-for="row in productBars" :key="row.name" class="report-bar-row">
+          <span>{{ row.name }}</span><div class="report-bar-track"><i :style="{ width: `${row.width}%` }" /></div><b>{{ money(row.paid_amount) }}<small> 万元 · {{ percent(productTotal ? row.paid_amount / productTotal : null) }}</small></b>
+        </div>
+      </div><table><thead><tr><th>分类</th><th>销售额（万元）</th><th>两类占比</th></tr></thead><tbody><tr v-for="row in currentProducts" :key="row.product_type"><td>{{ row.product_type }}</td><td>{{ money(row.paid_amount) }}</td><td>{{ percent(productTotal ? row.paid_amount / productTotal : null) }}</td></tr></tbody></table></div>
       </div>
+      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="brands" />
+      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="drivers" />
     </section>
     <section class="summary-panel">
       <h2>六、客户情况</h2>
       <div class="mini-metrics"><div><span>可识别客户</span><b>{{ number(customer.customers) }}</b></div><div><span>月内复购客户</span><b>{{ number(customer.repeat_customers) }}</b></div><div><span>月内复购率</span><b>{{ percent(customer.repeat_rate) }}</b></div></div>
     </section>
     <section class="summary-panel">
-      <h2>七、采购到货与月末库存</h2>
-      <div class="report-columns"><div><h3>采购到货</h3><div class="mini-metrics"><div><span>净到货（万件）</span><b>{{ wan(arrival.net_quantity) }}</b></div><div><span>入库单</span><b>{{ number(arrival.document_count) }}</b></div></div></div><div><h3>月末库存</h3><div class="mini-metrics"><div><span>库存量（万件）</span><b>{{ wan(inventory.stock_quantity) }}</b></div><div><span>快照明细</span><b>{{ number(inventory.detail_rows) }}</b></div></div></div></div>
+      <h2>七、前五品牌进销存</h2>
+      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="inventory" />
     </section>
   </article>
 </template>
@@ -132,7 +145,7 @@ table { border-collapse: collapse; width: 100%; font-size: 14px; } th, td { padd
 .channel-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; } .channel-group td:first-child { white-space: normal; overflow-wrap: anywhere; } .channel-group table { font-size: 13px; } .channel-group td { padding: 5px 3px; }
 .summary-bottom { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; } .summary-bottom .summary-panel { margin: 0; }
 .mini-metrics { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; } .mini-metrics span { display: block; color: var(--muted); font-size: 13px; } .mini-metrics b { display: block; font-size: 22px; margin-top: 6px; }
-.monthly-sales-bars { display: block; width: 100%; height: 148px; margin-top: 8px; }
+.monthly-sales-bars { display: block; width: 100%; height: 148px; margin: 8px 0 20px; }
 .month-table-scroll { overflow-x: auto; }
 .chart-baseline { stroke: var(--border); stroke-width: 1; }
 .sales-bar { fill: var(--accent-strong); opacity: .55; } .sales-bar.is-current { opacity: 1; }
@@ -185,4 +198,31 @@ h2 { font-size: 22px; margin-bottom: 16px; }
 .is-exporting .report-prose { font-size: 15px; line-height: 1.75; margin-bottom: 16px; }
 @media (max-width: 640px) { .monthly-summary { padding: 20px; } .report-columns { grid-template-columns: 1fr; } }
 .is-exporting .report-columns { grid-template-columns: 1fr 1fr; }
+
+.report-bar-chart { display: grid; gap: 14px; margin: 16px 0 24px; }
+.report-bar-row { display: grid; grid-template-columns: 5em minmax(0, 1fr) auto; align-items: center; gap: 10px; font-size: 14px; }
+.report-bar-row > span { overflow-wrap: anywhere; }
+.report-bar-track { height: 14px; background: var(--surface-soft); border-radius: 3px; overflow: hidden; }
+.report-bar-track i { display: block; height: 100%; background: var(--accent-strong); border-radius: 3px; }
+.report-bar-row b { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.report-bar-row small { color: var(--muted); font-size: 12px; font-weight: 400; }
+@media (max-width: 640px) { .report-bar-row { gap: 8px; font-size: 13px; } }
+/* 两列共享标题、图表与表格行，图表条目数量不影响表头对齐。 */
+.brand-product-columns { grid-template-rows: auto auto auto; row-gap: 0; }
+.brand-product-columns > div { display: grid; grid-template-rows: subgrid; grid-row: span 3; min-width: 0; }
+.brand-product-columns .report-bar-chart { align-content: start; }
+.brand-product-columns table { align-self: start; }
+@media (max-width: 640px) {
+  .brand-product-columns { grid-template-rows: none; row-gap: 24px; }
+  .brand-product-columns > div { display: block; grid-row: auto; }
+}
+.is-exporting .brand-product-columns { grid-template-rows: auto auto auto; row-gap: 0; }
+.is-exporting .brand-product-columns > div { display: grid; grid-template-rows: subgrid; grid-row: span 3; }
+/* 章节留白统一，正文不使用缩小字号补充说明。 */
+.summary-panel, .report-intro { padding: 40px 0; }
+h2 { margin-bottom: 24px; }
+.is-exporting .summary-panel, .is-exporting .report-intro { padding: 34px 0; }
+.is-exporting h2 { margin-bottom: 22px; }
+.report-bar-row small { font-size: inherit; }
+@media (max-width: 640px) { .summary-panel, .report-intro { padding: 32px 0; } }
 </style>

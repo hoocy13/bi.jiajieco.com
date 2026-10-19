@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { reportAmount } from '../../utils/monthlyReportFormat'
 import { channelWarning } from '../../utils/monthlyReportInsights'
 import { isOnlineChannel, isWuyanChannel } from '../../utils/salesChannelClassification'
 
@@ -12,10 +13,7 @@ const groups = computed(() => ['线上渠道', '线下渠道', '梧颜'].map((na
 })))
 const total = computed(() => (data.value.channel_sales || []).reduce((sum, row) => sum + Number(row.paid_amount || 0), 0))
 function number(value) { return value == null ? '-' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 0 }) }
-function money(value) {
-  if (value == null) return '-'
-  return (Number(value) / 10000).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
+function money(value) { return reportAmount(value) }
 function percent(value, signed = false) {
   if (value == null) return '-'
   return `${signed && value > 0 ? '+' : ''}${(Number(value) * 100).toFixed(1)}%`
@@ -36,7 +34,7 @@ function tone(value) { return value < 0 ? 'down' : value > 0 ? 'up' : '' }
             <tr v-for="row in group.rows" :key="row.channel" class="detail-row">
               <td>{{ row.channel }}</td><td>{{ row.platform && row.platform !== '未设置' ? row.platform : '-' }}</td>
               <td :class="{ down: row.paid_amount < 0 }">{{ money(row.paid_amount) }}</td><td>{{ percent(row.share) }}</td>
-              <td :class="tone(row.paid_amount_mom)">{{ ['缺少基期', '上月负净额', '上月为零', '两月无销售'].includes(channelWarning(row)) ? '-' : percent(row.paid_amount_mom, true) }}<small v-if="channelWarning(row)" class="warning">{{ channelWarning(row) }}</small></td><td>{{ number(row.orders) }}</td><td>{{ number(row.quantity) }}</td>
+              <td :class="tone(row.paid_amount_mom)">{{ ['缺少基期', '上月负净额', '上月为零', '两月无销售'].includes(channelWarning(row)) ? '-' : percent(row.paid_amount_mom, true) }}</td><td>{{ number(row.orders) }}</td><td>{{ number(row.quantity) }}</td>
             </tr>
           </template>
           <tr v-if="data.channel_sales?.length" class="total-row"><th colspan="2">合计</th><td>{{ money(total) }}</td><td>{{ percent(data.headline?.[0]?.paid_amount ? total / data.headline[0].paid_amount : null) }}</td><td>-</td><td>{{ number(data.channel_sales.reduce((sum, row) => sum + Number(row.orders || 0), 0)) }}</td><td>{{ number(data.channel_sales.reduce((sum, row) => sum + Number(row.quantity || 0), 0)) }}</td></tr>
@@ -64,4 +62,7 @@ table { font-size: 15px; }
 .is-exporting table { font-size: 14px; line-height: 1.25; }
 .is-exporting td, .is-exporting th { padding: 3px; }
 .is-exporting .warning { font-size: 11px; }
+header { margin-bottom: 24px; }
+header span, small { font-size: 15px; }
+.is-exporting header span, .is-exporting small { font-size: 14px; }
 </style>

@@ -2,10 +2,27 @@ from datetime import date, datetime
 from decimal import Decimal
 import unittest
 
-from app.services.brand_inventory_flow import build_brand_inventory_flow
+from app.services.brand_inventory_flow import build_brand_inventory_flow, load_brand_inventory_flow_source
 
 
 class BrandInventoryFlowTests(unittest.TestCase):
+    def test_report_can_skip_live_sales_without_changing_other_sources(self):
+        class Rows:
+            def mappings(self): return self
+            def all(self): return []
+        class Database:
+            def __init__(self): self.sql=[]
+            def execute(self, statement, params): self.sql.append(str(statement)); return Rows()
+        db=Database()
+        source=load_brand_inventory_flow_source(db,start_date=date(2026,1,1),end_date=date(2026,9,30),brand='兰蔻',include_sales=False)
+        self.assertEqual(source['sales'],[])
+        self.assertEqual(len(db.sql),3)
+        self.assertFalse(any('销售单明细账' in sql for sql in db.sql))
+        normal=Database()
+        load_brand_inventory_flow_source(normal,start_date=date(2026,1,1),end_date=date(2026,9,30),brand='兰蔻')
+        self.assertEqual(len(normal.sql),4)
+
+
     def test_build_brand_inventory_flow_calculates_selected_months(self) -> None:
         source = {
             "sales": [

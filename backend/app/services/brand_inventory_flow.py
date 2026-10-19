@@ -53,6 +53,7 @@ def load_brand_inventory_flow_source(
     start_date: date,
     end_date: date,
     brand: str,
+    include_sales: bool = True,
 ) -> dict:
     normalized_start = month_start(start_date)
     normalized_end = month_end(end_date)
@@ -86,7 +87,7 @@ def load_brand_inventory_flow_source(
             """
         ),
         params,
-    ).mappings().all()
+    ).mappings().all() if include_sales else []
 
     inbound_rows = ods_db.execute(
         text(
