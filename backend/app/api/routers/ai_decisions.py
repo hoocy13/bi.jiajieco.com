@@ -1,5 +1,5 @@
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from time import monotonic
 
@@ -184,7 +184,7 @@ def inventory_decisions(
     evidence_id = remember(evidence)
     data = {
         "warehouses_selected": list(warehouses),
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(timezone(timedelta(hours=8))).isoformat(),
         "evidence_id": evidence_id,
         "sales": sales_evidence,
         "ai_status": "idle",

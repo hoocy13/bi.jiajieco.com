@@ -31,6 +31,7 @@ class DecisionTests(unittest.TestCase):
                 current_user=SimpleNamespace(), ods_db=ods, db=MagicMock())
         model.assert_not_called()
         self.assertEqual(response['data']['metrics']['decision_count'], 0)
+        self.assertTrue(response['data']['generated_at'].endswith('+08:00'))
 
     def test_ads_path_skips_all_legacy_sales_queries(self):
         ods = MagicMock()

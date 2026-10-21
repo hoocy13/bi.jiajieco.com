@@ -49,7 +49,7 @@ def _run(key, token, evidence):
             summary = chat_completion(db, [
                 {'role': 'system', 'content': SUMMARY_PROMPT},
                 {'role': 'user', 'content': json.dumps(evidence, ensure_ascii=False)},
-            ], max_tokens=2000)
+            ], max_tokens=4096)
         state = {'ai_status': 'ready', 'ai_summary': summary} if summary.strip() else {
             'ai_status': 'unavailable', 'ai_summary': '模型未返回建议，业务指标及规则决策仍可使用。'}
     except Exception:
@@ -101,7 +101,7 @@ SUMMARY_PROMPT = """
 
 要求：
 - 用中文。
-- 不要刻意减少字数，内容要完整，但表达要清楚。
+- 四节都要完整输出，全文约800至1200字，每节优先2至3项关键判断与动作；不要逐项重复JSON中的全部记录。
 - 每一段先说结论，再说原因或动作。
 - 分点输出，每点尽量只表达一个判断，避免长句堆叠。
 - 不要使用 Markdown 表格。

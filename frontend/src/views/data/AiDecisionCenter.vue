@@ -74,7 +74,7 @@ function applySummary(data, params, version, attempts = 0) {
   Object.assign(result.value, data)
   summaryLoading.value = data.ai_status === 'pending'
   if (!summaryLoading.value) return
-  if (attempts >= 60) {
+  if (attempts >= 120) {
     summaryLoading.value = false
     error.value = 'AI 分析仍在处理中，请稍后刷新；业务数据已可查看。'
     return
