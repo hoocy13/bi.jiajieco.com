@@ -242,13 +242,14 @@ async function confirmImport() {
     await Promise.all([loadPrices(), loadValuation()])
   } finally { importing.value = false }
 }
-onMounted(async () => {
+async function loadOptions() {
   const options = (await getInventoryWarehouses()).data
   warehouseOptions.value = options.warehouses || []
   productTypeOptions.value = options.product_types || [...DEFAULT_INVENTORY_PRODUCT_TYPES]
   brandOptions.value = options.brands || []
-  if (tab.value === 'prices') await loadPrices()
-  else await loadValuation()
+}
+onMounted(async () => {
+  await Promise.all([loadOptions(), tab.value === 'prices' ? loadPrices() : loadValuation()])
 })
 </script>
 
