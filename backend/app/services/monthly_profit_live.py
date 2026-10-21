@@ -3,14 +3,19 @@ from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from json import dumps
+from collections import OrderedDict
+from concurrent.futures import Future
 from threading import Lock
 from time import monotonic
 from sqlalchemy import text
 from fastapi import HTTPException
 from app.api.routers.inventory_valuation import current_prices
 
-_cache = {}
+_cache = OrderedDict()
 _lock = Lock()
+_inflight = {}
+CACHE_TTL_SECONDS = 300
+CACHE_MAX_MONTHS = 3
 
 
 def month_period(month, today=None):
@@ -34,7 +39,34 @@ def live_snapshot(month, admin, ods):
     with _lock:
         cached = _cache.get(key)
         if cached and cached[0] > monotonic():
+            _cache.move_to_end(key)
             return cached[1]
+        for expired in [k for k, (until, _) in _cache.items() if until <= monotonic()]:
+            _cache.pop(expired)
+        future = _inflight.get(key)
+        owner = future is None
+        if owner:
+            future = _inflight[key] = Future()
+    if not owner:
+        return future.result()
+    try:
+        snapshot = _load_snapshot(month, start, end, costs, fingerprint, ods)
+        with _lock:
+            _cache[key] = (monotonic() + CACHE_TTL_SECONDS, snapshot)
+            _cache.move_to_end(key)
+            while len(_cache) > CACHE_MAX_MONTHS:
+                _cache.popitem(last=False)
+        future.set_result(snapshot)
+        return snapshot
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with _lock:
+            _inflight.pop(key, None)
+
+
+def _load_snapshot(month, start, end, costs, fingerprint, ods):
     params = {'start': start, 'end': end}
     codes = []
     for i, code in enumerate(sorted(costs)):
@@ -74,7 +106,4 @@ def live_snapshot(month, admin, ods):
                   requested_end_date=str(end - timedelta(days=1)), updated_at=str(meta['updated']) if meta['updated'] else None,
                   cost_date=str(date.today()), empty=not rows, live=True)
     snapshot = (f'monthly-{month}-{fingerprint[:12]}', report, rows, pending, costs, names)
-    with _lock:
-        _cache.clear() if len(_cache) >= 3 else None
-        _cache[key] = (monotonic() + 300, snapshot)
     return snapshot
