@@ -333,8 +333,8 @@ async function fetchData() {
       brand: selectedBrand.value, start_date: startDate, end_date: endDate,
       warehouse: selectedWarehouses.value, product_type: effectiveProductTypes.value,
     })]
-    turnoverLoading.value = true
-    tasks.push(getBrandInventoryTurnoverAnalysis({
+    turnoverLoading.value = activePage.value !== 'overview'
+    tasks.push(activePage.value === 'overview' ? Promise.resolve(null) : getBrandInventoryTurnoverAnalysis({
       brand: selectedBrand.value, start_date: startDate, end_date: endDate,
       warehouse: selectedWarehouses.value, product_type: effectiveProductTypes.value, ranking_limit: 10,
     }))
