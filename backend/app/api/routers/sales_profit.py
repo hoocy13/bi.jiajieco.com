@@ -18,6 +18,27 @@ from app.services.sales_profit import AnalysisParams, SORT_FIELDS, analyze
 router = APIRouter(prefix="/sales/profit-analysis", tags=["sales-profit"])
 
 
+@router.get('/monthly-review', dependencies=[Depends(require_permission('sales.profit.view'))])
+def monthly_review(kind: str = Query('', pattern='^(|正装|小样)$'),
+                   channel: str = Query('', max_length=255),
+                   view: str = Query('channel', pattern='^(channel|product|orders)$'),
+                   bucket: str = Query('规则可计算订单', pattern='^(规则可计算订单|缺成本订单|待核订单)$'),
+                   page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=100),
+                   sort_by: str = Query('profit', pattern='^(name|net_sales|quantity|cost|profit|margin)$'),
+                   sort_order: str = Query('desc', pattern='^(asc|desc)$'),
+                   keyword: str = Query('', max_length=128),
+                   month: str | None = Query(None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$'),
+                   admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)):
+    from app.db.session import engine
+    from app.services.monthly_profit_review import review_data
+    if engine.url.get_backend_name() != 'sqlite' or engine.url.database.startswith('/app/data/'):
+        raise HTTPException(404, '本地试算页面尚未发布')
+    from app.services.monthly_profit_live import live_snapshot
+    selected_month = month or date.today().strftime('%Y-%m')
+    snapshot = live_snapshot(selected_month, admin, ods)
+    return ok(review_data(kind, channel, view, bucket, page, page_size, sort_by, sort_order, keyword, snapshot))
+
+
 def analysis_params(
     view: str = Query("profit", pattern="^(profit|prices)$"),
     range: str = Query("month", pattern="^(month|custom)$"),

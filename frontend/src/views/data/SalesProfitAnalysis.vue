@@ -5,12 +5,15 @@ import { ElMessage } from 'element-plus'
 import { ArrowRight, Download, InfoFilled, RefreshLeft, Search } from '@element-plus/icons-vue'
 import { useAuthStore } from '../../stores/auth'
 import { exportSalesProfitAnalysis, getSalesProfitAnalysis } from '../../api/salesProfit'
+import MonthlyProfitReview from '../../components/reports/MonthlyProfitReview.vue'
+import ProfitPageTabs from '../../components/reports/ProfitPageTabs.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const canExport = computed(() => auth.hasPermission('data.export'))
-const viewOptions = [{ label: '毛利分析', value: 'profit' }, { label: '客户价格对比', value: 'prices' }]
+const viewOptions = [{ label: '经营毛利', value: 'review' }, { label: '毛利分析', value: 'profit' }, { label: '客户分析', value: 'prices' }]
+const activeView = computed(() => ['profit', 'prices'].includes(route.query.view) ? route.query.view : 'review')
 const groupOptions = [
   { label: '销售人', value: 'owner' }, { label: '品牌', value: 'brand' },
   { label: '渠道', value: 'channel' }, { label: '客户', value: 'customer' }, { label: '商品', value: 'product' },
@@ -107,6 +110,8 @@ async function commit(value, replace = false) {
 function search() { commit({ ...copyFilters(filters), page: 1 }) }
 function reset() { commit(readQuery({ view: filters.view }), true) }
 function changeView(view) {
+  if (view === 'review') { router.push({ path: route.path, query: { view } }); return }
+  if (activeView.value === 'review') { commit(readQuery({ view })); return }
   commit({ ...copyFilters(applied.value), view, page: 1, benchmark: view === 'profit' ? 'company' : applied.value.benchmark, priceDirection: view === 'profit' ? 'all' : applied.value.priceDirection, sortBy: view === 'prices' ? 'price_effect_amount' : 'estimated_profit', sortOrder: view === 'prices' ? 'asc' : 'desc' })
 }
 function changeGroup(groupBy) { commit({ ...copyFilters(applied.value), groupBy, page: 1 }) }
@@ -207,6 +212,7 @@ function cellValue(row, column) {
 }
 function rowKey(row) { return JSON.stringify([row.owner, row.customer_code, row.product_code, row.brand, row.channel, row.product_type]) }
 watch(() => route.fullPath, () => {
+  if (activeView.value === 'review') { ++requestSequence; loading.value = false; return }
   const next = readQuery(route.query)
   Object.assign(filters, copyFilters(next))
   applied.value = copyFilters(next)
@@ -217,7 +223,8 @@ onBeforeUnmount(() => { ++requestSequence })
 </script>
 
 <template>
-  <div class="page-stack sales-profit-page">
+  <MonthlyProfitReview v-if="activeView === 'review'"><template #pages><ProfitPageTabs :view="activeView" @change="changeView" /></template></MonthlyProfitReview>
+  <div v-else class="page-stack sales-profit-page">
     <section class="toolbar-panel profit-toolbar" aria-label="销售毛利与价格筛选">
       <div class="filter-controls">
         <el-segmented v-model="filters.range" :options="[{ label: '本月', value: 'month' }, { label: '自定义', value: 'custom' }]" aria-label="统计区间" @change="(value) => { if (value === 'month') filters.dates = [] }" />
@@ -266,7 +273,7 @@ onBeforeUnmount(() => { ++requestSequence })
           </div>
         </el-popover>
       </div>
-      <div class="heading-right"><el-segmented class="profit-pages" :model-value="filters.view" :options="viewOptions" aria-label="分析分页" @change="changeView" /><span class="period-label">{{ periodLabel }}</span><span v-if="data.updated_at" class="data-update">数据更新 {{ String(data.updated_at).replace('T', ' ').slice(0, 19) }}</span></div>
+      <div class="heading-right"><ProfitPageTabs :view="activeView" @change="changeView" /><span class="period-label">{{ periodLabel }}</span><span v-if="data.updated_at" class="data-update">数据更新 {{ String(data.updated_at).replace('T', ' ').slice(0, 19) }}</span></div>
     </section>
 
     <section v-if="error" class="load-error" role="alert"><span>{{ error }}</span><el-button :icon="RefreshLeft" @click="load(applied)">重试</el-button></section>
@@ -304,6 +311,8 @@ onBeforeUnmount(() => { ++requestSequence })
 </template>
 
 <style scoped>
+.profit-view-navigation { display: flex; justify-content: flex-end; padding: 12px 16px; margin-bottom: 16px; background: var(--surface, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 8px; }
+.profit-view-navigation :deep(.el-segmented) { max-width: 100%; }
 .sales-profit-page {
   --profit-accent: var(--theme-primary);
   --profit-ink: var(--theme-strong);
