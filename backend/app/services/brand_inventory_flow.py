@@ -4,7 +4,7 @@ from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 
@@ -14,6 +14,22 @@ def _decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def load_brand_available_inventory(db, *, brand, warehouses=(), product_types=('正装', '小样')):
+    filters = ['TRIM(`品牌`) = :brand']
+    params = {'brand': brand.strip()}
+    bindings = []
+    for column, key, values in [('仓库', 'warehouses', warehouses), ('货品分类', 'product_types', product_types)]:
+        if values:
+            filters.append(f"COALESCE(NULLIF(TRIM(`{column}`), ''), '未归类') IN :{key}")
+            params[key] = tuple(values)
+            bindings.append(bindparam(key, expanding=True))
+    row = db.execute(text(f"""
+        SELECT COALESCE(SUM(COALESCE(`可用库存`, 0)), 0) quantity
+        FROM `分仓库查询` WHERE {' AND '.join(filters)}
+    """).bindparams(*bindings), params).mappings().one()
+    return float(_decimal(row['quantity']))
 
 
 def _dimension(value: object, fallback: str = "未归类") -> str:

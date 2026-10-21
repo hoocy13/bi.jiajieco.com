@@ -151,7 +151,7 @@ const metricCards = computed(() => [
   },
   {
     label: '当前可用库存',
-    value: turnoverAnalysis.value.summary.current_inventory,
+    value: analysis.value.summary.current_inventory ?? '-',
     unit: '件',
     note: '最新库存快照',
   },

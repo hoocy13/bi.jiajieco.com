@@ -18,6 +18,7 @@ from app.schemas.common import ok
 from app.services.brand_inventory_flow import (
     build_brand_inventory_flow,
     load_brand_inventory_flow_source,
+    load_brand_available_inventory,
 )
 from app.services.brand_inventory_turnover_analysis import (
     build_brand_inventory_turnover_analysis,
@@ -1770,7 +1771,7 @@ def brand_inventory_flow(
     warehouses = _normalize_warehouses(warehouse)
     product_types = _normalize_product_types(product_type) or DEFAULT_INVENTORY_PRODUCT_TYPES
     cache_key = _cache_key(
-        "brand-inventory-flow-v4",
+        "brand-inventory-flow-v5",
         start_date=start_date,
         end_date=end_date,
         brand=normalized_brand,
@@ -1795,6 +1796,9 @@ def brand_inventory_flow(
         brand=normalized_brand,
         warehouses=warehouses,
         product_types=product_types,
+    )
+    data['summary']['current_inventory'] = load_brand_available_inventory(
+        db, brand=normalized_brand, warehouses=warehouses, product_types=product_types,
     )
     selected_product_types = set(product_types)
     segment_specs = []
