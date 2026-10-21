@@ -1,4 +1,3 @@
-import json
 from copy import deepcopy
 from datetime import datetime, timedelta
 from threading import Lock
@@ -14,7 +13,8 @@ from app.db.session import get_db
 from app.models.user import User
 from app.schemas.common import ok
 from app.core.config import settings
-from app.services.model_client import chat_completion
+from app.services.decision_summary import remember, summary_state
+from app.services.decision_sales import load_sales_evidence
 from app.services.sales_sources import SALES_ORDER_TABLE_SQL
 
 
@@ -48,6 +48,11 @@ def _get_cache(key: tuple) -> dict | None:
 def _set_cache(key: tuple, data: dict) -> None:
     with _cache_lock:
         _cache[key] = (monotonic() + 300, deepcopy(data))
+        expired = [item for item, cached in _cache.items() if cached[0] <= monotonic()]
+        for item in expired:
+            _cache.pop(item, None)
+        while len(_cache) > 32:
+            _cache.pop(next(iter(_cache)))
 
 
 def _number(value: object) -> float:
@@ -65,7 +70,7 @@ def inventory_decisions(
     db: Session = Depends(get_db),
 ) -> dict:
     warehouses = _warehouses(warehouse)
-    cache_key = ("inventory-decisions-v4", warehouses, settings.BI_QUERY_SOURCE)
+    cache_key = ("inventory-decisions-v5", warehouses, settings.BI_QUERY_SOURCE)
     if not refresh:
         cached = _get_cache(cache_key)
         if cached is not None:
@@ -125,6 +130,94 @@ def inventory_decisions(
         ),
         params,
     ).mappings().one()
+    if settings.BI_QUERY_SOURCE == 'ads':
+        sales_evidence = load_sales_evidence()
+    else:
+        sales_evidence = _legacy_sales_evidence(ods_db)
+    sales_evidence['scope'] = '全部销售；仓库筛选仅作用于库存'
+
+    labels = {
+        "negative": ("紧急", "负库存", "检查库存同步、占用和出库回传"),
+        "out_of_stock": ("高", "可用库存为零", "检查锁定库存并评估补货"),
+        "shortage": ("高", "缺货风险", "结合在途库存制定补货或调拨"),
+        "no_sales": ("中", "90天无销量", "停止补货并评估促销清理"),
+        "overstock": ("中", "超储风险", "降低采购并评估跨仓调拨"),
+    }
+    decisions = []
+    for index, row in enumerate(rows):
+        priority, issue, action = labels.get(row["issue_type"], ("中", "库存异常", "人工复核"))
+        available_days = None
+        if float(row["sales30"] or 0) > 0:
+            available_days = round(float(row["available_stock"] or 0) / (float(row["sales30"]) / 30), 1)
+        decisions.append(
+            {
+                "id": f"{row['issue_type']}-{row['warehouse']}-{row['product_code']}",
+                "rank": index + 1,
+                "priority": priority,
+                "issue_type": row["issue_type"],
+                "issue": issue,
+                "product_code": str(row["product_code"] or "-"),
+                "product": str(row["product"] or "未命名商品"),
+                "brand": str(row["brand"] or "未归类"),
+                "barcode": str(row["barcode"] or "-"),
+                "warehouse": str(row["warehouse"] or "未归类"),
+                "stock": float(row["stock"] or 0),
+                "available_stock": float(row["available_stock"] or 0),
+                "sales30": float(row["sales30"] or 0),
+                "sales90": float(row["sales90"] or 0),
+                "stock_amount": float(row["stock_amount"] or 0),
+                "available_days": available_days,
+                "suggested_action": action,
+            }
+        )
+
+    evidence = {
+        "warehouses": list(warehouses),
+        "sales": sales_evidence,
+        "inventory": {
+            "decision_count": len(decisions),
+            "expired_stock": float(expiry["expired_stock"] or 0),
+            "expiring_stock": float(expiry["expiring_stock"] or 0),
+            "top_decisions": decisions[:12],
+        },
+    }
+    evidence_id = remember(evidence)
+    data = {
+        "warehouses_selected": list(warehouses),
+        "generated_at": datetime.now().isoformat(),
+        "evidence_id": evidence_id,
+        "sales": sales_evidence,
+        "ai_status": "idle",
+        "ai_summary": "",
+        "metrics": {
+            "decision_count": len(decisions),
+            "urgent_count": sum(item["priority"] == "紧急" for item in decisions),
+            "high_count": sum(item["priority"] == "高" for item in decisions),
+            "expired_stock": evidence["inventory"]["expired_stock"],
+            "expiring_stock": evidence["inventory"]["expiring_stock"],
+        },
+        "decisions": decisions,
+    }
+    _set_cache(cache_key, data)
+    return ok(data)
+
+
+@router.get("/inventory-decisions/summary")
+def get_decision_summary(evidence_id: str = Query(..., pattern=r"^[a-f0-9]{64}$"),
+                         warehouse: list[str] | None = Query(None),
+                         current_user: User = Depends(get_current_user)):
+    return ok(summary_state(evidence_id, _warehouses(warehouse)))
+
+
+@router.post("/inventory-decisions/summary")
+def start_decision_summary(evidence_id: str = Query(..., pattern=r"^[a-f0-9]{64}$"),
+                           warehouse: list[str] | None = Query(None),
+                           refresh: bool = Query(False),
+                           current_user: User = Depends(get_current_user)):
+    return ok(summary_state(evidence_id, _warehouses(warehouse), start=True, refresh=refresh))
+
+
+def _legacy_sales_evidence(ods_db):
     sales_anchor = ods_db.execute(
         text(
             f"SELECT MAX(`下单时间`) FROM {SALES_ORDER_TABLE_SQL} "
@@ -248,99 +341,4 @@ def inventory_decisions(
             ],
         }
 
-    labels = {
-        "negative": ("紧急", "负库存", "检查库存同步、占用和出库回传"),
-        "out_of_stock": ("高", "可用库存为零", "检查锁定库存并评估补货"),
-        "shortage": ("高", "缺货风险", "结合在途库存制定补货或调拨"),
-        "no_sales": ("中", "90天无销量", "停止补货并评估促销清理"),
-        "overstock": ("中", "超储风险", "降低采购并评估跨仓调拨"),
-    }
-    decisions = []
-    for index, row in enumerate(rows):
-        priority, issue, action = labels.get(row["issue_type"], ("中", "库存异常", "人工复核"))
-        available_days = None
-        if float(row["sales30"] or 0) > 0:
-            available_days = round(float(row["available_stock"] or 0) / (float(row["sales30"]) / 30), 1)
-        decisions.append(
-            {
-                "id": f"{row['issue_type']}-{row['warehouse']}-{row['product_code']}",
-                "rank": index + 1,
-                "priority": priority,
-                "issue_type": row["issue_type"],
-                "issue": issue,
-                "product_code": str(row["product_code"] or "-"),
-                "product": str(row["product"] or "未命名商品"),
-                "brand": str(row["brand"] or "未归类"),
-                "barcode": str(row["barcode"] or "-"),
-                "warehouse": str(row["warehouse"] or "未归类"),
-                "stock": float(row["stock"] or 0),
-                "available_stock": float(row["available_stock"] or 0),
-                "sales30": float(row["sales30"] or 0),
-                "sales90": float(row["sales90"] or 0),
-                "stock_amount": float(row["stock_amount"] or 0),
-                "available_days": available_days,
-                "suggested_action": action,
-            }
-        )
-
-    evidence = {
-        "warehouses": list(warehouses),
-        "sales": sales_evidence,
-        "inventory": {
-            "decision_count": len(decisions),
-            "expired_stock": float(expiry["expired_stock"] or 0),
-            "expiring_stock": float(expiry["expiring_stock"] or 0),
-            "top_decisions": decisions[:12],
-        },
-    }
-    ai_summary = ""
-    ai_status = "ready"
-    try:
-        ai_summary = chat_completion(
-            db,
-            [
-                {
-                    "role": "system",
-                    "content": """
-你是销售与库存运营策略助手。只能依据用户提供的 JSON 数据判断，不得编造不存在的销售额、订单数、库存、渠道或商品信息。
-
-请输出一份清晰、有条理的经营建议，格式固定为：
-一、总体判断：先给结论，再说明影响。要直接指出当前最重要的问题、机会或风险。
-二、销售侧：围绕近30天销售额、订单数、销量、客单价、环比变化、TOP渠道表现给出判断。说明哪些渠道值得继续投入，哪些渠道需要复核或调整。
-三、库存侧：围绕缺货、负库存、可用库存为零、90天无销量、超储、临期/过期给出判断。说明库存是否能支撑当前销售，以及哪些问题需要优先处理。
-四、销售库存联动动作：把销售表现和库存动作连起来，给出可执行建议，例如补货、停止补货、调拨、清货、渠道投放、数据复核。
-
-要求：
-- 用中文。
-- 不要刻意减少字数，内容要完整，但表达要清楚。
-- 每一段先说结论，再说原因或动作。
-- 分点输出，每点尽量只表达一个判断，避免长句堆叠。
-- 不要使用 Markdown 表格。
-- 不要泛泛而谈；建议尽量带上具体指标、渠道、仓库或商品问题。
-- 数据不足时，明确说明缺少什么，不要猜测。
-""".strip(),
-                },
-                {"role": "user", "content": json.dumps(evidence, ensure_ascii=False)},
-            ],
-            max_tokens=2000,
-        )
-    except Exception as exc:
-        ai_status = "unavailable"
-        ai_summary = f"模型暂不可用，已保留规则决策。原因：{exc}"
-
-    data = {
-        "warehouses_selected": list(warehouses),
-        "generated_at": datetime.now().isoformat(),
-        "ai_status": ai_status,
-        "ai_summary": ai_summary,
-        "metrics": {
-            "decision_count": len(decisions),
-            "urgent_count": sum(item["priority"] == "紧急" for item in decisions),
-            "high_count": sum(item["priority"] == "高" for item in decisions),
-            "expired_stock": evidence["inventory"]["expired_stock"],
-            "expiring_stock": evidence["inventory"]["expiring_stock"],
-        },
-        "decisions": decisions,
-    }
-    _set_cache(cache_key, data)
-    return ok(data)
+    return sales_evidence
