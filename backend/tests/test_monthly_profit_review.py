@@ -9,6 +9,7 @@ from app.api.deps import get_current_user
 from app.api.routers.sales_profit import router
 from app.db.session import get_db
 from app.db.ods import get_ods_db
+from app.db.sales_profit import get_monthly_profit_db
 from app.services.monthly_profit_review import review_data, summarize
 from app.services.monthly_profit_live import month_period
 
@@ -21,6 +22,7 @@ class ReviewTests(unittest.TestCase):
             role=SimpleNamespace(is_active=True, permissions=[SimpleNamespace(code='sales.profit.view')]))
         app.dependency_overrides[get_db] = lambda: 'admin-session'
         app.dependency_overrides[get_ods_db] = lambda: 'ods-session'
+        app.dependency_overrides[get_monthly_profit_db] = lambda: None
         production_engine = SimpleNamespace(url=SimpleNamespace(
             database='/app/data/bi_admin.db', get_backend_name=lambda: 'sqlite'))
         with patch('app.db.session.engine', production_engine), \
@@ -55,6 +57,28 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(result['summary']['profit'], -20)
             pending = review_data(channel='X', bucket='待核订单', view='product')
             self.assertIsNone(pending['rows'][0]['profit'])
+
+    def test_ads_endpoint_never_reads_live_source_for_prepared_month(self):
+        app = FastAPI()
+        app.include_router(router, prefix='/api/v1')
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            role=SimpleNamespace(is_active=True, permissions=[SimpleNamespace(code='sales.profit.view')]))
+        app.dependency_overrides[get_db] = lambda: 'admin'
+        app.dependency_overrides[get_ods_db] = lambda: 'unused-ods'
+        app.dependency_overrides[get_monthly_profit_db] = lambda: 'ads'
+        with patch('app.services.monthly_profit_ads.ads_snapshot', return_value=self.snapshot()), \
+             patch('app.services.monthly_profit_live.live_snapshot') as live, TestClient(app) as client:
+            response = client.get('/api/v1/sales/profit-analysis/monthly-review?month=2026-09&kind=正装&channel=X')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers['X-BI-Query-Mode'], 'ads')
+            self.assertEqual(response.json()['data']['filtered_summary']['profit'], -20)
+            live.assert_not_called()
+
+    def test_month_period_uses_shanghai_business_day(self):
+        with patch('app.services.monthly_profit_live.datetime') as clock:
+            clock.now.return_value.date.return_value = date(2026, 11, 1)
+            self.assertEqual(month_period('2026-11'), (date(2026,11,1), date(2026,11,2)))
+            self.assertEqual(clock.now.call_args.args[0].utcoffset(None).total_seconds(), 8*3600)
 
     def test_pending_reason_and_pagination_do_not_disclose_profit(self):
         with patch('app.services.monthly_profit_review.load_snapshot', return_value=self.snapshot()):

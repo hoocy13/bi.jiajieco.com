@@ -1,5 +1,5 @@
 """Read-only month-level review, cached before display filtering in every environment."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 from json import dumps
@@ -18,8 +18,12 @@ CACHE_TTL_SECONDS = 300
 CACHE_MAX_MONTHS = 3
 
 
+def business_today():
+    return datetime.now(timezone(timedelta(hours=8))).date()
+
+
 def month_period(month, today=None):
-    today = today or date.today()
+    today = today or business_today()
     try:
         start = date.fromisoformat(month + '-01')
     except ValueError as exc:
@@ -104,6 +108,6 @@ def _load_snapshot(month, start, end, costs, fingerprint, ods):
     report = dict(month=month, counts=counts, buckets={}, eligible_positive_sales_share=0,
                   start_date=str(start), end_date=str(meta['last_day']) if meta['last_day'] else None,
                   requested_end_date=str(end - timedelta(days=1)), updated_at=str(meta['updated']) if meta['updated'] else None,
-                  cost_date=str(date.today()), empty=not rows, live=True)
+                  cost_date=str(business_today()), empty=not rows, live=True)
     snapshot = (f'monthly-{month}-{fingerprint[:12]}', report, rows, pending, costs, names)
     return snapshot

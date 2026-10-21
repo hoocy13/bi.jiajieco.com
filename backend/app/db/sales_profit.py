@@ -41,6 +41,13 @@ def get_sales_profit_db() -> Generator[Session, None, None]:
         yield db
 
 
+def get_monthly_profit_db():
+    if settings.BI_QUERY_SOURCE != 'ads':
+        yield None
+        return
+    yield from get_sales_profit_db()
+
+
 def require_sales_profit_build_session_factory() -> sessionmaker[Session]:
     if ProfitBuildSessionLocal is not None:
         return ProfitBuildSessionLocal

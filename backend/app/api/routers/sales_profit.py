@@ -8,7 +8,7 @@ import xlsxwriter
 
 from app.api.deps import require_permission
 from app.api.routers.inventory_valuation import current_prices
-from app.db.sales_profit import get_sales_profit_db
+from app.db.sales_profit import get_sales_profit_db, get_monthly_profit_db
 from app.db.ods import get_ods_db
 from app.db.session import get_db
 from app.schemas.common import ok
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/sales/profit-analysis", tags=["sales-profit"])
 
 
 @router.get('/monthly-review', dependencies=[Depends(require_permission('sales.profit.view'))])
-def monthly_review(kind: str = Query('', pattern='^(|正装|小样)$'),
+def monthly_review(response: Response, kind: str = Query('', pattern='^(|正装|小样)$'),
                    channel: str = Query('', max_length=255),
                    view: str = Query('channel', pattern='^(channel|product|orders)$'),
                    bucket: str = Query('规则可计算订单', pattern='^(规则可计算订单|缺成本订单|待核订单)$'),
@@ -28,11 +28,26 @@ def monthly_review(kind: str = Query('', pattern='^(|正装|小样)$'),
                    sort_order: str = Query('desc', pattern='^(asc|desc)$'),
                    keyword: str = Query('', max_length=128),
                    month: str | None = Query(None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$'),
-                   admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)):
+                   admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db),
+                   ads: Session | None = Depends(get_monthly_profit_db)):
     from app.services.monthly_profit_review import review_data
-    from app.services.monthly_profit_live import live_snapshot
-    selected_month = month or date.today().strftime('%Y-%m')
-    snapshot = live_snapshot(selected_month, admin, ods)
+    from app.services.monthly_profit_live import live_snapshot, business_today
+    from app.services.monthly_profit_ads import ads_snapshot, MonthlySourceNotReady
+    selected_month = month or business_today().strftime('%Y-%m')
+    snapshot = None
+    if ads is not None:
+        try:
+            snapshot = ads_snapshot(selected_month, admin, ads)
+            response.headers['X-BI-Query-Mode'] = 'ads'
+            response.headers['X-BI-Response-Source'] = 'ads'
+        except MonthlySourceNotReady:
+            pass
+    if snapshot is None:
+        # Preserve access to historical months while they are being backfilled.
+        # Database/permission/integrity failures are never hidden by this path.
+        snapshot = live_snapshot(selected_month, admin, ods)
+        response.headers['X-BI-Query-Mode'] = 'legacy-unprepared-month'
+        response.headers['X-BI-Response-Source'] = 'ods'
     return ok(review_data(kind, channel, view, bucket, page, page_size, sort_by, sort_order, keyword, snapshot))
 
 
