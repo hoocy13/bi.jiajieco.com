@@ -2,11 +2,43 @@ import unittest
 from datetime import date
 from fastapi import HTTPException
 from unittest.mock import patch
+from types import SimpleNamespace
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from app.api.deps import get_current_user
+from app.api.routers.sales_profit import router
+from app.db.session import get_db
+from app.db.ods import get_ods_db
 from app.services.monthly_profit_review import review_data, summarize
 from app.services.monthly_profit_live import month_period
 
 
 class ReviewTests(unittest.TestCase):
+    def test_monthly_endpoint_works_with_production_database_and_filters(self):
+        app = FastAPI()
+        app.include_router(router, prefix='/api/v1')
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            role=SimpleNamespace(is_active=True, permissions=[SimpleNamespace(code='sales.profit.view')]))
+        app.dependency_overrides[get_db] = lambda: 'admin-session'
+        app.dependency_overrides[get_ods_db] = lambda: 'ods-session'
+        production_engine = SimpleNamespace(url=SimpleNamespace(
+            database='/app/data/bi_admin.db', get_backend_name=lambda: 'sqlite'))
+        with patch('app.db.session.engine', production_engine), \
+             patch('app.services.monthly_profit_live.live_snapshot', return_value=self.snapshot()) as load, \
+             TestClient(app) as client:
+            response = client.get('/api/v1/sales/profit-analysis/monthly-review')
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(load.call_args.args[1:], ('admin-session', 'ods-session'))
+            response = client.get('/api/v1/sales/profit-analysis/monthly-review', params={
+                'month': '2026-09', 'kind': '正装', 'channel': 'X', 'view': 'product'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(load.call_args.args, ('2026-09', 'admin-session', 'ods-session'))
+            self.assertEqual(response.json()['data']['filtered_summary']['profit'], -20)
+        app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
+            role=SimpleNamespace(is_active=True, permissions=[]))
+        with TestClient(app) as client:
+            self.assertEqual(client.get('/api/v1/sales/profit-analysis/monthly-review').status_code, 403)
+
     def snapshot(self):
         rows = [dict(bucket='规则可计算订单', code='a', kind='正装', channel='X', quantity=2, amount=80),
                 dict(bucket='待核订单', code='a', kind='正装', channel='X', quantity=-1, amount=0),

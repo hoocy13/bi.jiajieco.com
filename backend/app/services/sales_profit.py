@@ -286,9 +286,9 @@ def enrich_rows(rows: list[dict], prices: dict, previous_rows: list[dict], param
         cost = decimal(getattr(revision, "price", revision)) if revision is not None else None
         cost = cost if cost is not None and cost > 0 and row["product_code"] and row["product_code"] != "-" else None
         row["core_cost"] = cost
-        row["estimated_cost"] = row["quantity"] * cost if cost is not None else None
-        row["estimated_profit"] = row["paid_amount"] - row["estimated_cost"] if cost is not None else None
-        row["margin_rate"] = percent(row["estimated_profit"], row["paid_amount"]) if cost is not None else None
+        row["estimated_cost"] = row["sale_quantity"] * cost if cost is not None and row["sale_quantity"] > 0 else None
+        row["estimated_profit"] = row["sale_amount"] - row["estimated_cost"] if row["estimated_cost"] is not None else None
+        row["margin_rate"] = percent(row["estimated_profit"], row["sale_amount"]) if row["estimated_profit"] is not None else None
         row["avg_price"] = row["sale_amount"] / row["sale_quantity"] if eligible(row) else None
         row["reference_price"] = None
         row["reference_quantity"] = None
@@ -338,15 +338,16 @@ def enrich_rows(rows: list[dict], prices: dict, previous_rows: list[dict], param
 def summarize(rows: list[dict]) -> dict:
     total = {field: sum((row[field] for row in rows), ZERO) for field in NUMERIC_INPUTS}
     priced = [row for row in rows if row["core_cost"] is not None]
-    priced_amount = sum((row["paid_amount"] for row in priced), ZERO)
-    estimated_cost = sum((row["estimated_cost"] for row in priced), ZERO)
-    estimated_profit = priced_amount - estimated_cost if priced else None
+    profit_rows = [row for row in priced if row["estimated_cost"] is not None]
+    priced_amount = sum((row["sale_amount"] for row in profit_rows), ZERO)
+    estimated_cost = sum((row["estimated_cost"] for row in profit_rows), ZERO)
+    estimated_profit = priced_amount - estimated_cost if profit_rows else None
     total.update({
         "priced_amount": priced_amount,
-        "missing_cost_amount": total["paid_amount"] - priced_amount,
-        "estimated_cost": estimated_cost if priced else None,
+        "missing_cost_amount": sum((row["sale_amount"] for row in rows if row["core_cost"] is None), ZERO),
+        "estimated_cost": estimated_cost if profit_rows else None,
         "estimated_profit": estimated_profit,
-        "margin_rate": percent(estimated_profit, priced_amount) if priced else None,
+        "margin_rate": percent(estimated_profit, priced_amount) if profit_rows else None,
         "cost_coverage_rate": percent(sum((row["sale_amount"] for row in priced), ZERO), total["sale_amount"]),
         "identified_customer_rate": percent(sum((row["sale_amount"] for row in rows if row["customer_code"]), ZERO), total["sale_amount"]),
         "loss_sales_amount": sum((row["loss_sales_amount"] for row in rows), ZERO),
@@ -366,7 +367,8 @@ def breakdown(rows: list[dict], group_by: str) -> list[dict]:
         metrics = summarize(items)
         result.append({
             "key": key, "label": label, "quantity": metrics["quantity"],
-            "paid_amount": metrics["paid_amount"], "estimated_profit": metrics["estimated_profit"],
+            "paid_amount": metrics["paid_amount"], "sale_quantity": metrics["sale_quantity"],
+            "sale_amount": metrics["sale_amount"], "estimated_profit": metrics["estimated_profit"],
             "margin_rate": metrics["margin_rate"], "cost_coverage_rate": metrics["cost_coverage_rate"],
         })
     return sorted(result, key=lambda row: (

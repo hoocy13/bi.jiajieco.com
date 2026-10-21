@@ -166,12 +166,12 @@ function optionValues(key) {
 }
 const summary = computed(() => data.value.summary)
 const metrics = computed(() => [
-  { label: '分摊销售额', value: money(summary.value.paid_amount), unit: '元', hint: '已包含退货、红冲的净销售额。' },
-  { label: '预估毛利', value: money(summary.value.estimated_profit), unit: '元', primary: true, hint: '已匹配成本的净销售额减销售数量乘当前核心成本价，不代表历史实际毛利或净利润。' },
-  { label: '预估毛利率', value: percent(summary.value.margin_rate), hint: '预估毛利除以已匹配核心成本的销售额；不将缺成本商品计入分母。' },
+  { label: '正向销售额', value: money(summary.value.sale_amount), unit: '元', hint: '正常正向交易的分摊销售额，不包含退货红冲。' },
+  { label: '预估毛利', value: money(summary.value.estimated_profit), unit: '元', primary: true, hint: '已匹配成本的正向销售额减正向销售数量乘当前核心成本价；退货红冲不参与毛利计算。' },
+  { label: '预估毛利率', value: percent(summary.value.margin_rate), hint: '预估毛利除以已匹配核心成本的正向销售额；退货红冲和缺成本商品不计入分母。' },
   { label: '成本覆盖率', value: percent(summary.value.cost_coverage_rate), hint: '按正向销售额计算成本匹配覆盖；缺成本商品不按零成本计算。' },
   { label: '低于成本销售额', value: money(summary.value.loss_sales_amount), unit: '元', hint: '按客户、货品和具体渠道的正向成交加权均价判断；均价低于当前核心成本的正向销售额，不代表逐笔亏损金额。' },
-  { label: '缺成本销售额', value: money(summary.value.missing_cost_amount), unit: '元', hint: '当前筛选范围内未匹配核心成本价的净销售额。' },
+  { label: '缺成本销售额', value: money(summary.value.missing_cost_amount), unit: '元', hint: '当前筛选范围内未匹配核心成本价的正向销售额。' },
 ])
 const periodLabel = computed(() => data.value.start_date && data.value.end_date ? `${data.value.start_date} 至 ${data.value.end_date}` : '本月')
 const groupLabel = computed(() => groupOptions.find((item) => item.value === applied.value?.groupBy)?.label || '销售人')
@@ -193,8 +193,8 @@ const detailColumns = computed(() => {
     { key: 'margin_rate', label: '预估毛利率', width: 125, kind: 'percent' },
   ]
   return [...identity,
-    { key: 'quantity', label: '净销售数量', width: 125, kind: 'integer', strong: true },
-    { key: 'paid_amount', label: '分摊销售额', width: 150, kind: 'money', strong: true },
+    { key: 'sale_quantity', label: '正向销售数量', width: 125, kind: 'integer', strong: true },
+    { key: 'sale_amount', label: '正向销售额', width: 150, kind: 'money', strong: true },
     { key: 'core_cost', label: '核心成本价', width: 125, kind: 'money' },
     { key: 'estimated_cost', label: '预估成本', width: 145, kind: 'money' },
     { key: 'estimated_profit', label: '预估毛利', width: 145, kind: 'money', strong: true },
@@ -262,7 +262,7 @@ onBeforeUnmount(() => { ++requestSequence })
           <div class="profit-definitions">
             <strong>统计口径</strong>
             <p>销售人按渠道当前负责人归属，不等同于订单成交业务员。</p>
-            <p>预估毛利使用当前核心成本价，包含净退货、红冲；缺成本商品不按零成本计算。该结果不代表历史实际毛利或扣除平台费用后的净利润。</p>
+            <p>预估毛利使用正向销售额减正向销售数量乘当前核心成本价；退货红冲仅保留数量、金额展示，不参与毛利及成交价格计算；缺成本商品不按零成本计算。该结果不代表历史实际毛利或扣除平台费用后的净利润。</p>
             <p>成交均价只计算正向销售。价格比较按同品牌、货品、分类、线上或线下及同一时期进行，不混合不同商品。</p>
             <p>公司参考价使用同品牌、商品、分类和线上 / 线下范围内已识别客户的正向成交，保留当前具体渠道筛选，不受销售人、客户及成本状态筛选限制；其他客户参考价排除该客户。</p>
             <p>上期参考价对应同销售人、客户、品牌、商品、分类和线上 / 线下。低于参考价不直接认定异常，需结合采购量、促销和客户条件判断。</p>
@@ -289,8 +289,8 @@ onBeforeUnmount(() => { ++requestSequence })
         <header><h2>{{ groupLabel }}毛利汇总<span v-if="data.breakdown_total > data.breakdown.length" class="breakdown-limit">毛利前 {{ data.breakdown.length }} 项 / 共 {{ number(data.breakdown_total) }} 项</span></h2><el-segmented :model-value="applied.groupBy" :options="groupOptions" aria-label="汇总维度" @change="changeGroup" /></header>
         <el-table :data="data.breakdown" :max-height="340" stripe empty-text="暂无符合条件的销售数据" :default-sort="{ prop: 'estimated_profit', order: 'descending' }">
           <el-table-column prop="label" :label="groupLabel" min-width="220" sortable show-overflow-tooltip />
-          <el-table-column prop="quantity" label="净销售数量" min-width="120" align="right" sortable><template #default="{ row }"><span class="number-strong">{{ number(row.quantity) }}</span></template></el-table-column>
-          <el-table-column prop="paid_amount" label="分摊销售额" min-width="155" align="right" sortable><template #default="{ row }">{{ money(row.paid_amount) }}</template></el-table-column>
+          <el-table-column prop="sale_quantity" label="正向销售数量" min-width="120" align="right" sortable><template #default="{ row }"><span class="number-strong">{{ number(row.sale_quantity) }}</span></template></el-table-column>
+          <el-table-column prop="sale_amount" label="正向销售额" min-width="155" align="right" sortable><template #default="{ row }">{{ money(row.sale_amount) }}</template></el-table-column>
           <el-table-column prop="estimated_profit" label="预估毛利" min-width="155" align="right" sortable><template #default="{ row }"><span class="number-strong">{{ money(row.estimated_profit) }}</span></template></el-table-column>
           <el-table-column prop="margin_rate" label="预估毛利率" min-width="125" align="right" sortable><template #default="{ row }">{{ percent(row.margin_rate) }}</template></el-table-column>
           <el-table-column prop="cost_coverage_rate" label="成本覆盖率" min-width="125" align="right" sortable><template #default="{ row }">{{ percent(row.cost_coverage_rate) }}</template></el-table-column>

@@ -13,8 +13,12 @@ class CoreCostPriceRevision(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_code: Mapped[str] = mapped_column(String(128), index=True)
+    barcode: Mapped[str | None] = mapped_column(String(128), nullable=True)
     product_name: Mapped[str] = mapped_column(String(255), default="")
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2))
+    pricing_mode: Mapped[str] = mapped_column(String(16), default="fixed", server_default="fixed")
+    discount: Mapped[Decimal | None] = mapped_column(Numeric(7, 4), nullable=True)
+    base_retail_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     effective_date: Mapped[date] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(32))
     restored_from_id: Mapped[int | None] = mapped_column(ForeignKey("core_cost_price_revisions.id"), nullable=True)

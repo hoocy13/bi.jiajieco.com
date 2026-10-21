@@ -305,6 +305,8 @@ def inventory_warehouses(
             FROM (
               SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `分仓库查询`
               UNION
+              SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `总库存查询`
+              UNION
               SELECT DISTINCT NULLIF(TRIM(`品牌`), '') AS brand FROM `dwd`.`销售单明细账_品牌补全`
             ) inventory_brands
             WHERE brand IS NOT NULL AND brand <> '未归类'

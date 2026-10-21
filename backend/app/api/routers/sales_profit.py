@@ -29,10 +29,7 @@ def monthly_review(kind: str = Query('', pattern='^(|正装|小样)$'),
                    keyword: str = Query('', max_length=128),
                    month: str | None = Query(None, pattern=r'^\d{4}-(0[1-9]|1[0-2])$'),
                    admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)):
-    from app.db.session import engine
     from app.services.monthly_profit_review import review_data
-    if engine.url.get_backend_name() != 'sqlite' or engine.url.database.startswith('/app/data/'):
-        raise HTTPException(404, '本地试算页面尚未发布')
     from app.services.monthly_profit_live import live_snapshot
     selected_month = month or date.today().strftime('%Y-%m')
     snapshot = live_snapshot(selected_month, admin, ods)
@@ -126,7 +123,7 @@ def export_analysis(
     metadata.write_column(0, 0, ["开始日期", "结束日期", "成本日期", "销售人归属", "毛利口径", "成交均价", "成本覆盖率", "参考价", "低于成本销售额"])
     metadata.write_column(0, 1, [
         data["start_date"], data["end_date"], data["cost_as_of"], "当前渠道负责人，并非订单业务员",
-        "净分摊销售额减净数量乘当前核心成本价；缺成本不计毛利，非历史实际毛利或净利润",
+        "正向销售额减正向销售数量乘当前核心成本价；退货红冲不参与毛利及成交价格计算；缺成本不计毛利，非历史实际毛利或净利润",
         "正常正向交易销售额除销售数量，退货红冲不参与均价",
         "有核心成本的正常销售额占全部正常销售额比例",
         {"company": "公司已识别客户同 SKU、同品牌、同分类、同线上/线下加权均价", "peers": "同销售人其他客户同 SKU、同品牌、同分类、同线上/线下加权均价", "previous": "同销售人、同客户、同 SKU、同品牌、同分类、同线上/线下上期加权均价"}[params.benchmark],

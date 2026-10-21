@@ -66,6 +66,14 @@ export function importCoreCostPrices(rows) {
   return http.post('/inventory/valuation/prices/import', { rows })
 }
 
+export function previewCoreCostBatch(payload) {
+  return http.post('/inventory/valuation/prices/batch-preview', payload)
+}
+
+export function saveCoreCostBatch(rows) {
+  return http.post('/inventory/valuation/prices/batch', { rows })
+}
+
 export function getInventoryProductDetail(productCode, params = {}) {
   return http.get(`/inventory/product-detail/${encodeURIComponent(productCode)}`, {
     params: inventoryParams(params),

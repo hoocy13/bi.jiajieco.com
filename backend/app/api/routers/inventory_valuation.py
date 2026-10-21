@@ -2,11 +2,11 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from urllib.parse import quote
+from zipfile import BadZipFile
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from openpyxl import load_workbook
 import xlsxwriter
-from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -16,20 +16,11 @@ from app.db.session import get_db
 from app.models.core_cost_price import CoreCostPriceRevision
 from app.models.user import User
 from app.schemas.common import ok
+from app.schemas.core_cost import PriceInput, ImportInput, BatchPriceInput
+from app.services.core_cost_catalog import load_catalog, resolve_price, calculate_cost
 
 
 router = APIRouter(prefix="/inventory/valuation", tags=["inventory-valuation"])
-
-
-class PriceInput(BaseModel):
-    product_code: str = Field(min_length=1, max_length=128)
-    product_name: str = Field(default="", max_length=255)
-    price: Decimal = Field(gt=0, max_digits=18, decimal_places=2)
-    effective_date: date
-
-
-class ImportInput(BaseModel):
-    rows: list[PriceInput] = Field(min_length=1, max_length=5000)
 
 
 def price_states(db: Session) -> tuple[dict[str, CoreCostPriceRevision], dict[str, CoreCostPriceRevision]]:
@@ -61,8 +52,12 @@ def price_data(revision: CoreCostPriceRevision) -> dict:
     return {
         "id": revision.id,
         "product_code": revision.product_code,
+        "barcode": revision.barcode,
         "product_name": revision.product_name,
         "price": float(revision.price),
+        "pricing_mode": getattr(revision, "pricing_mode", None) or "fixed",
+        "discount": float(revision.discount) if getattr(revision, "discount", None) is not None else None,
+        "base_retail_price": float(revision.base_retail_price) if getattr(revision, "base_retail_price", None) is not None else None,
         "effective_date": revision.effective_date.isoformat(),
         "source": revision.source,
         "restored_from_id": revision.restored_from_id,
@@ -71,25 +66,11 @@ def price_data(revision: CoreCostPriceRevision) -> dict:
     }
 
 
-def price_brands(ods: Session, codes: list[str]) -> dict[str, str]:
-    brands = {}
-    for start in range(0, len(codes), 500):
-        batch = codes[start:start + 500]
-        params = {f"code_{index}": code for index, code in enumerate(batch)}
-        placeholders = ", ".join(f":{key}" for key in params)
-        rows = ods.execute(text(f"""
-            SELECT `货品编号` AS product_code, MAX(`品牌`) AS brand
-            FROM `总库存查询` WHERE `货品编号` IN ({placeholders})
-            GROUP BY `货品编号`
-        """), params).mappings().all()
-        brands.update({str(row["product_code"]): row["brand"] or "" for row in rows})
-    return brands
-
-
 def add_revision(db: Session, item: PriceInput, operator: str, source: str, restored_from_id: int | None = None) -> None:
     db.add(CoreCostPriceRevision(
-        product_code=item.product_code.strip(), product_name=item.product_name.strip(),
+        product_code=item.product_code.strip(), product_name=item.product_name.strip(), barcode=item.barcode,
         price=item.price, effective_date=item.effective_date, source=source,
+        pricing_mode=item.pricing_mode, discount=item.discount, base_retail_price=item.base_retail_price,
         restored_from_id=restored_from_id, operator=operator,
     ))
 
@@ -237,75 +218,160 @@ def export_valuation(
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
 
 
+def catalog_prices(ods, admin, keyword="", brand=None, product_type=None, source="all",
+                   min_price=None, max_price=None, min_discount=None, max_discount=None):
+    active, deleted = price_states(admin)
+    prices = deleted if source == "delete" else active
+    catalog = load_catalog(ods)
+    codes = set(prices) if source == "delete" else set(catalog) | set(prices)
+    by_barcode = {}
+    for product in catalog.values():
+        if product.get("barcode") and " / " not in product["barcode"]:
+            by_barcode.setdefault(product["barcode"], []).append(product)
+    selected_brands = set(brand or [])
+    selected_types = set(product_type or []) - {"__all__"}
+    term = keyword.strip().casefold()
+    rows = []
+    for code in sorted(codes):
+        revision = prices.get(code)
+        product = catalog.get(code)
+        if revision and revision.barcode and len(by_barcode.get(revision.barcode, [])) == 1:
+            product = by_barcode[revision.barcode][0]
+        product = product or {"product_code": code, "product_name": revision.product_name if revision else ""}
+        row = {"id": None, "price": None, "source": "", "discount": None,
+               "pricing_mode": "fixed", "base_retail_price": None, **product}
+        if revision:
+            row.update(price_data(revision))
+            row["product_name"] = product.get("product_name") or revision.product_name
+            row["barcode"] = product.get("barcode") or revision.barcode
+        row.setdefault("brand", "")
+        row.setdefault("product_type", "")
+        row.setdefault("retail_price", None)
+        row.setdefault("tax_price", None)
+        row["base_changed"] = bool(revision and row["pricing_mode"] == "discount" and (
+            row.get("retail_price_conflict") or row["retail_price"] is None or row["base_retail_price"] is None or
+            Decimal(str(row["base_retail_price"])) != Decimal(str(row["retail_price"]))
+        ))
+        if term and not any(term in str(row.get(key, "")).casefold() for key in ("product_code", "product_name", "barcode")):
+            continue
+        if selected_brands and row["brand"] not in selected_brands:
+            continue
+        if selected_types and not selected_types.intersection(row["product_type"].split(" / ")):
+            continue
+        if source == "priced" and not revision:
+            continue
+        if source == "missing" and revision:
+            continue
+        if source in {"manual", "import", "batch", "restore"} and row["source"] != source:
+            continue
+        if source == "changed" and not row["base_changed"]:
+            continue
+        if source == "conflict" and not row.get("retail_price_conflict"):
+            continue
+        if min_price is not None and (row["price"] is None or Decimal(str(row["price"])) < min_price):
+            continue
+        if max_price is not None and (row["price"] is None or Decimal(str(row["price"])) > max_price):
+            continue
+        row["reference_discount"] = (float((Decimal(str(row["price"])) / Decimal(str(row["retail_price"])) * 10).quantize(Decimal("0.0001")))
+                                     if revision and source != "delete" and row["price"] is not None
+                                     and row["retail_price"] and not row.get("retail_price_conflict") else None)
+        percentage = Decimal(str(row["discount"] if row["discount"] is not None else row["reference_discount"])) * 10 if (row["discount"] is not None or row["reference_discount"] is not None) and source != "delete" else None
+        if min_discount is not None and (percentage is None or percentage < min_discount):
+            continue
+        if max_discount is not None and (percentage is None or percentage > max_discount):
+            continue
+        for key in ("retail_price", "tax_price"):
+            row[key] = float(row[key]) if row[key] is not None else None
+        rows.append(row)
+    return rows
+
+
 @router.get("/prices", dependencies=[Depends(require_permission("inventory.price.manage"))])
 def list_prices(
-    keyword: str = "", brand: list[str] | None = Query(None), source: str = "all",
-    effective_from: date | None = None, effective_to: date | None = None,
+    keyword: str = "", brand: list[str] | None = Query(None), product_type: list[str] | None = Query(None),
+    source: str = Query("all", pattern="^(all|priced|missing|changed|conflict|delete|manual|import|batch|restore)$"),
     min_price: Decimal | None = None, max_price: Decimal | None = None,
+    min_discount: Decimal | None = Query(None, ge=0), max_discount: Decimal | None = Query(None, ge=0),
+    page: int = Query(1, ge=1), page_size: int = Query(50, ge=10, le=100),
+    sort_by: str = Query("product_code", pattern="^(barcode|product_code|product_name|brand|product_type|retail_price|tax_price|discount|price)$"),
+    sort_order: str = Query("asc", pattern="^(asc|desc)$"),
     ods: Session = Depends(get_ods_db), admin: Session = Depends(get_db),
 ) -> dict:
-    prices = price_states(admin)[1] if source == "delete" else current_prices(admin)
-    brands = price_brands(ods, list(prices))
-    term = keyword.strip().lower()
-    selected_brands = {value.strip() for value in brand or [] if value.strip()}
-    rows = [dict(price_data(item), brand=brands.get(item.product_code, "")) for item in prices.values()
-            if (not term or term in item.product_code.lower() or term in item.product_name.lower())
-            and (not selected_brands or brands.get(item.product_code) in selected_brands)
-            and (source in ("all", "delete") or item.source == source)
-            and (effective_from is None or item.effective_date >= effective_from)
-            and (effective_to is None or item.effective_date <= effective_to)
-            and (min_price is None or item.price >= min_price)
-            and (max_price is None or item.price <= max_price)]
-    return ok(sorted(rows, key=lambda item: item["product_code"]))
+    if min_discount is not None and max_discount is not None and min_discount > max_discount:
+        raise HTTPException(422, "最低折扣不能高于最高折扣")
+    rows = catalog_prices(ods, admin, keyword, brand, product_type, source, min_price, max_price, min_discount, max_discount)
+    def sort_value(row):
+        return (row.get("discount") if row.get("discount") is not None else row.get("reference_discount")) if sort_by == "discount" else row.get(sort_by)
+    populated = [row for row in rows if sort_value(row) is not None]
+    missing = [row for row in rows if sort_value(row) is None]
+    populated.sort(key=sort_value, reverse=sort_order == "desc")
+    rows = populated + missing
+    return ok({"rows": rows[(page - 1) * page_size:page * page_size],
+               "pagination": {"page": page, "page_size": page_size, "total": len(rows)}})
+
+
+PRICE_COLUMNS = [("product_code", "商品编号"), ("product_name", "商品名称"), ("brand", "品牌"),
+                 ("product_type", "分类"), ("retail_price", "零售价"), ("tax_price", "含税价"),
+                 ("discount", "核心成本折扣"), ("price", "核心成本价")]
 
 
 @router.get("/prices/export", dependencies=[Depends(require_permission("inventory.price.manage"))])
 def export_prices(
-    keyword: str = "", brand: list[str] | None = Query(None), source: str = "all",
-    effective_from: date | None = None, effective_to: date | None = None,
-    min_price: Decimal | None = None, max_price: Decimal | None = None,
+    keyword: str = "", brand: list[str] | None = Query(None), product_type: list[str] | None = Query(None),
+    source: str = "all", min_price: Decimal | None = None, max_price: Decimal | None = None,
+    min_discount: Decimal | None = Query(None, ge=0), max_discount: Decimal | None = Query(None, ge=0),
     ods: Session = Depends(get_ods_db), admin: Session = Depends(get_db),
 ) -> Response:
-    rows = list_prices(keyword=keyword, brand=brand, source=source, effective_from=effective_from,
-                       effective_to=effective_to, min_price=min_price, max_price=max_price,
-                       ods=ods, admin=admin)["data"]
+    if min_discount is not None and max_discount is not None and min_discount > max_discount:
+        raise HTTPException(422, "最低折扣不能高于最高折扣")
+    rows = catalog_prices(ods, admin, keyword, brand, product_type, source, min_price, max_price, min_discount, max_discount)
     output = BytesIO()
-    workbook = xlsxwriter.Workbook(output, {"in_memory": True})
+    workbook = xlsxwriter.Workbook(output, {"in_memory": True, "strings_to_formulas": False, "strings_to_urls": False})
     sheet = workbook.add_worksheet("核心成本价")
-    headers = ["货品编号", "货品名称", "品牌", "核心成本价"]
-    header_format = workbook.add_format({"bold": True, "bg_color": "#E8F2EC"})
-    money_format = workbook.add_format({"num_format": "#,##0.00"})
-    for column, label in enumerate(headers):
-        sheet.write(0, column, label, header_format)
-    sheet.set_column(0, 0, 20)
+    header = workbook.add_format({"bold": True, "bg_color": "#E8F2EC"})
+    money = workbook.add_format({"num_format": "#,##0.00"})
+    discount = workbook.add_format({"num_format": '0.####"折"'})
+    sheet.write_row(0, 0, [label for _, label in PRICE_COLUMNS], header)
+    sheet.set_column(0, 0, 22)
     sheet.set_column(1, 1, 42)
-    sheet.set_column(2, 3, 19)
+    sheet.set_column(2, 7, 19)
     for index, row in enumerate(rows, start=1):
-        sheet.write_string(index, 0, row["product_code"])
-        sheet.write_string(index, 1, row["product_name"] or "")
-        sheet.write_string(index, 2, row.get("brand") or "")
-        sheet.write_number(index, 3, row["price"], money_format)
-    sheet.autofilter(0, 0, len(rows), len(headers) - 1)
+        for column, (key, _) in enumerate(PRICE_COLUMNS):
+            value = row.get(key)
+            if key in {"price", "discount"} and row["source"] == "delete":
+                value = None
+            if value is not None:
+                if column < 4:
+                    sheet.write_string(index, column, str(value))
+                else:
+                    if value is not None:
+                        sheet.write_number(index, column, float(value), discount if key == "discount" else money)
+    sheet.autofilter(0, 0, len(rows), 7)
     sheet.freeze_panes(1, 2)
     workbook.close()
-    filename = quote(f"核心成本价_{date.today():%Y%m%d}.xlsx")
     return Response(output.getvalue(), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"})
+                    headers={"Content-Disposition": "attachment; filename*=UTF-8''" + quote(f"核心成本价_{date.today():%Y%m%d}.xlsx")})
 
 
 @router.get("/prices/{product_code}/history", dependencies=[Depends(require_permission("inventory.price.manage"))])
 def price_history(product_code: str, admin: Session = Depends(get_db)) -> dict:
-    rows = admin.query(CoreCostPriceRevision).filter(
-        CoreCostPriceRevision.product_code == product_code
-    ).order_by(CoreCostPriceRevision.id.desc()).all()
+    rows = admin.query(CoreCostPriceRevision).filter(CoreCostPriceRevision.product_code == product_code).order_by(CoreCostPriceRevision.id.desc()).all()
     return ok([price_data(item) for item in rows])
 
 
 @router.post("/prices", dependencies=[Depends(require_permission("inventory.price.manage"))])
-def save_price(item: PriceInput, user: User = Depends(get_current_user), admin: Session = Depends(get_db)) -> dict:
-    add_revision(admin, item, user.username, "manual")
+def save_price(item: PriceInput, user: User = Depends(get_current_user), admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)) -> dict:
+    resolved = resolve_price(item, load_catalog(ods, [item.product_code]), current_prices(admin))
+    add_revision(admin, resolved, user.username, "manual")
     admin.commit()
     return ok({"saved": 1})
+
+
+def revision_input(revision):
+    return PriceInput(product_code=revision.product_code, product_name=revision.product_name, barcode=revision.barcode,
+                      price=revision.price, effective_date=date.today(),
+                      pricing_mode=revision.pricing_mode or "fixed", discount=revision.discount,
+                      base_retail_price=revision.base_retail_price)
 
 
 @router.delete("/prices/{product_code}", dependencies=[Depends(require_permission("inventory.price.manage"))])
@@ -313,8 +379,7 @@ def delete_price(product_code: str, user: User = Depends(get_current_user), admi
     current = current_prices(admin).get(product_code)
     if current is None:
         raise HTTPException(404, "当前核心成本价不存在")
-    add_revision(admin, PriceInput(product_code=product_code, product_name=current.product_name,
-                                   price=current.price, effective_date=date.today()), user.username, "delete")
+    add_revision(admin, revision_input(current), user.username, "delete")
     admin.commit()
     return ok({"deleted": 1})
 
@@ -322,73 +387,129 @@ def delete_price(product_code: str, user: User = Depends(get_current_user), admi
 @router.post("/prices/{product_code}/restore", dependencies=[Depends(require_permission("inventory.price.manage"))])
 def restore_price(product_code: str, revision_id: int, user: User = Depends(get_current_user), admin: Session = Depends(get_db)) -> dict:
     revision = admin.get(CoreCostPriceRevision, revision_id)
-    if revision is None or revision.product_code != product_code:
+    if revision is None or revision.product_code != product_code or revision.source == "delete":
         raise HTTPException(404, "价格版本不存在")
-    add_revision(admin, PriceInput(product_code=product_code, product_name=revision.product_name,
-                                   price=revision.price, effective_date=date.today()),
-                 user.username, "restore", revision.id)
+    add_revision(admin, revision_input(revision), user.username, "restore", revision.id)
     admin.commit()
     return ok({"restored": 1})
 
 
 @router.post("/prices/import-preview", dependencies=[Depends(require_permission("inventory.price.manage"))])
-async def import_preview(file: UploadFile = File(...)) -> dict:
-    content = await file.read()
+async def import_preview(file: UploadFile = File(...), ods: Session = Depends(get_ods_db), admin: Session = Depends(get_db)) -> dict:
+    content = await file.read(5_000_001)
     if len(content) > 5_000_000 or not (file.filename or "").lower().endswith(".xlsx"):
         raise HTTPException(400, "请上传不超过 5 MB 的 xlsx 文件")
+    workbook = None
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-        sheet = workbook.active
-        iterator = sheet.values
+        iterator = workbook.active.values
         header = next(iterator)
         columns = {str(value).strip(): index for index, value in enumerate(header) if value is not None}
-        indexes = [columns[name] for name in ("货品编号", "货品名称", "品牌", "核心成本价")]
-        rows = []
-        errors = []
-        seen = set()
-        blank_price_count = 0
-        for number, raw in enumerate(iterator, start=2):
+        code_key = "商品编号" if "商品编号" in columns else "货品编号"
+        name_key = "商品名称" if "商品名称" in columns else "货品名称"
+        if code_key not in columns or ("核心成本价" not in columns and "核心成本折扣" not in columns):
+            raise HTTPException(400, "请提供商品编号及核心成本价或核心成本折扣列，兼容旧版货品编号")
+        raw_rows = []
+        for number, raw in enumerate(iterator, 2):
             if number > 5001:
                 raise HTTPException(400, "一次最多导入 5000 行")
-            if not any(value is not None for value in raw):
-                continue
-            code = str(raw[indexes[0]] or "").strip()
-            name = str(raw[indexes[1]] or "").strip()
-            brand = str(raw[indexes[2]] or "").strip()
-            value = raw[indexes[3]]
+            if any(value is not None for value in raw):
+                raw_rows.append((number, raw))
+        def value(raw, key):
+            index = columns.get(key)
+            return raw[index] if index is not None and index < len(raw) else None
+        codes = [str(value(raw, code_key) or "").strip() for _, raw in raw_rows]
+        catalog = load_catalog(ods, list(set(codes)))
+        existing = current_prices(admin)
+        rows, errors, seen = [], [], set()
+        blank = 0
+        for (number, raw), code in zip(raw_rows, codes):
             if not code or code in seen or len(code) > 128:
-                errors.append(f"第 {number} 行货品编号为空、重复或过长")
+                errors.append(f"第 {number} 行商品编号为空、重复或过长")
                 continue
             seen.add(code)
-            if value is None or value == "":
-                blank_price_count += 1
+            price, discount = value(raw, "核心成本价"), value(raw, "核心成本折扣")
+            if price in (None, "") and discount in (None, ""):
+                blank += 1
                 continue
             try:
-                price = Decimal(str(value))
-                item = PriceInput(product_code=code, product_name=name[:255], price=price,
-                                  effective_date=date.today())
-                rows.append({**item.model_dump(mode="json"), "brand": brand})
+                discount = Decimal(str(discount).strip().removesuffix("折")) if discount not in (None, "") else None
+                base = value(raw, "零售价") if discount is not None else None
+                item = PriceInput(product_code=code, product_name=str(value(raw, name_key) or "")[:255],
+                                  price=price if price not in (None, "") else None,
+                                  pricing_mode="discount" if discount is not None else "fixed", discount=discount,
+                                  base_retail_price=base if base not in (None, "") else None,
+                                  expected_revision_id=existing[code].id if code in existing else None)
+                resolved = resolve_price(item, catalog, existing)
+                rows.append({**resolved.model_dump(mode="json"), "brand": catalog.get(code, {}).get("brand", str(value(raw, "品牌") or ""))})
+            except HTTPException as exc:
+                errors.append(f"第 {number} 行：{exc.detail}")
             except (InvalidOperation, ValueError):
-                errors.append(f"第 {number} 行核心成本价无效")
-        return ok({"rows": rows, "errors": errors, "blank_price_count": blank_price_count})
+                errors.append(f"第 {number} 行核心成本价或折扣无效")
+        return ok({"rows": rows, "errors": errors, "blank_price_count": blank})
     except HTTPException:
         raise
-    except Exception as exc:
+    except (ValueError, KeyError, StopIteration, OSError, BadZipFile) as exc:
         raise HTTPException(400, "Excel 格式或表头不正确") from exc
+    finally:
+        if workbook:
+            workbook.close()
 
 
-@router.post("/prices/import", dependencies=[Depends(require_permission("inventory.price.manage"))])
-def import_prices(payload: ImportInput, user: User = Depends(get_current_user), admin: Session = Depends(get_db)) -> dict:
-    codes = [item.product_code.strip() for item in payload.rows]
+def persist_prices(payload, user, admin, ods, source):
+    codes = [item.product_code for item in payload.rows]
     if len(codes) != len(set(codes)):
-        raise HTTPException(400, "导入数据包含重复货品编号")
-    existing = current_prices(admin)
+        raise HTTPException(400, "导入数据包含重复商品编号")
+    catalog, existing = load_catalog(ods, codes), current_prices(admin)
+    # Validate the entire selection before writing any revisions.
+    resolved = [resolve_price(item, catalog, existing) for item in payload.rows]
     saved = 0
-    for item in payload.rows:
-        previous = existing.get(item.product_code.strip())
-        if previous and previous.price == item.price and previous.product_name == item.product_name:
+    for item in resolved:
+        previous = existing.get(item.product_code)
+        if previous and all(getattr(previous, key) == getattr(item, key) for key in ("price", "pricing_mode", "discount", "base_retail_price")):
             continue
-        add_revision(admin, item, user.username, "import")
+        add_revision(admin, item, user.username, source)
         saved += 1
     admin.commit()
     return ok({"saved": saved, "skipped": len(codes) - saved})
+
+
+@router.post("/prices/import", dependencies=[Depends(require_permission("inventory.price.manage"))])
+def import_prices(payload: ImportInput, user: User = Depends(get_current_user), admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)) -> dict:
+    return persist_prices(payload, user, admin, ods, "import")
+
+
+@router.post("/prices/batch-preview", dependencies=[Depends(require_permission("inventory.price.manage"))])
+def batch_preview(payload: BatchPriceInput, ods: Session = Depends(get_ods_db), admin: Session = Depends(get_db)) -> dict:
+    if not payload.brand and not payload.product_type and not payload.keyword.strip():
+        raise HTTPException(422, "批量设置前请先选择品牌、分类或输入关键词，避免影响全部商品")
+    existing = current_prices(admin)
+    rows = catalog_prices(ods, admin, payload.keyword, payload.brand, payload.product_type)
+    if len(rows) > 5000:
+        raise HTTPException(422, "匹配超过 5000 个商品，请缩小筛选范围")
+    preview, errors = [], []
+    skipped = 0
+    for row in rows:
+        if row["price"] is not None and row["pricing_mode"] == "fixed" and not payload.overwrite_fixed:
+            skipped += 1
+            continue
+        if row.get("retail_price_conflict") or row["retail_price"] is None:
+            errors.append(row["product_code"] + ("：零售价冲突" if row.get("retail_price_conflict") else "：缺少零售价"))
+            continue
+        try:
+            price = calculate_cost(row["retail_price"], payload.discount)
+        except HTTPException as exc:
+            errors.append(f"{row['product_code']}：{exc.detail}")
+            continue
+        item = PriceInput(product_code=row["product_code"], product_name=row["product_name"][:255],
+                          pricing_mode="discount", discount=payload.discount,
+                          price=price,
+                          base_retail_price=row["retail_price"],
+                          expected_revision_id=existing[row["product_code"]].id if row["product_code"] in existing else None)
+        preview.append({**item.model_dump(mode="json"), "old_price": row["price"], "brand": row["brand"]})
+    return ok({"rows": preview, "errors": errors, "skipped": skipped, "matched": len(rows)})
+
+
+@router.post("/prices/batch", dependencies=[Depends(require_permission("inventory.price.manage"))])
+def batch_save(payload: ImportInput, user: User = Depends(get_current_user), admin: Session = Depends(get_db), ods: Session = Depends(get_ods_db)) -> dict:
+    return persist_prices(payload, user, admin, ods, "batch")

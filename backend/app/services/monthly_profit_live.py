@@ -1,4 +1,4 @@
-"""Read-only month-level review, cached before display filtering."""
+"""Read-only month-level review, cached before display filtering in every environment."""
 from datetime import date, timedelta
 from decimal import Decimal
 from hashlib import sha256

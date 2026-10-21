@@ -83,6 +83,20 @@ def ensure_monthly_report_columns() -> None:
             connection.execute(text("ALTER TABLE monthly_operating_reports ADD COLUMN pdf_content BLOB"))
 
 
+def ensure_core_cost_columns() -> None:
+    columns = {column["name"] for column in inspect(engine).get_columns("core_cost_price_revisions")}
+    definitions = {
+        "pricing_mode": "VARCHAR(16) NOT NULL DEFAULT 'fixed'",
+        "discount": "NUMERIC(7,4)",
+        "base_retail_price": "NUMERIC(18,2)",
+        "barcode": "VARCHAR(128)",
+    }
+    with engine.begin() as connection:
+        for name, definition in definitions.items():
+            if name not in columns:
+                connection.execute(text(f"ALTER TABLE core_cost_price_revisions ADD COLUMN {name} {definition}"))
+
+
 def seed_roles(db: Session) -> dict[str, Role]:
     permissions: dict[str, Permission] = {}
     for order, (code, name, module) in enumerate(PERMISSION_DEFINITIONS):
@@ -132,6 +146,7 @@ def init_db() -> None:
     ensure_user_columns()
     ensure_role_columns()
     ensure_monthly_report_columns()
+    ensure_core_cost_columns()
     db: Session = SessionLocal()
     try:
         roles = seed_roles(db)

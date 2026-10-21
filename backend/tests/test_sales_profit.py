@@ -60,15 +60,32 @@ class SalesProfitCalculationTest(unittest.TestCase):
         self.assertEqual(rows[0]["price_effect_amount"], Decimal("-30"))
         self.assertAlmostEqual(float(rows[0]["price_delta_rate"]), -27.27272727)
 
-    def test_return_net_profit_not_forward_price(self):
+    def test_returns_are_excluded_from_profit_and_price(self):
         rows = self.enriched([source_row(
             quantity="8", amount="76", sale_quantity="10", sale_amount="100",
             return_quantity="-2", return_amount="-24",
         )], {"SKU-1": Decimal("6")})
         self.assertEqual(rows[0]["avg_price"], Decimal("10"))
-        self.assertEqual(rows[0]["estimated_cost"], Decimal("48"))
-        self.assertEqual(rows[0]["estimated_profit"], Decimal("28"))
-        self.assertAlmostEqual(service.summarize(rows)["margin_rate"], 36.84)
+        self.assertEqual(rows[0]["estimated_cost"], Decimal("60"))
+        self.assertEqual(rows[0]["estimated_profit"], Decimal("40"))
+        self.assertAlmostEqual(service.summarize(rows)["margin_rate"], 40)
+
+    def test_screenshot_zero_amount_returns_do_not_inflate_profit(self):
+        rows = self.enriched([
+            source_row(product='LE847701', quantity='-1694', amount='5565.10', sale_quantity='109', sale_amount='5565.10', return_quantity='1803'),
+            source_row(product='LF148800', quantity='-493', amount='548', sale_quantity='5', sale_amount='548', return_quantity='498'),
+            source_row(product='RETURN', quantity='-50', amount='0', sale_quantity='0', sale_amount='0', return_quantity='50'),
+        ], {'LE847701': '45', 'LF148800': '80', 'RETURN': '20'}, service.AnalysisParams(view='profit'))
+        self.assertEqual(rows[0]['estimated_profit'], Decimal('660.10'))
+        self.assertEqual(rows[1]['estimated_profit'], Decimal('148'))
+        self.assertAlmostEqual(float(rows[0]['margin_rate']), 11.86142208)
+        self.assertIsNone(rows[2]['estimated_profit'])
+        self.assertIsNone(rows[2]['avg_price'])
+        self.assertEqual(rows[0]['quantity'], Decimal('-1694'))
+        summary = service.summarize(rows)
+        self.assertEqual(summary['estimated_profit'], 808.10)
+        self.assertEqual(summary['estimated_cost'], 5305)
+        self.assertEqual(service.breakdown(rows, 'owner')[0]['estimated_profit'], 808.10)
 
     def test_missing_cost_never_becomes_zero_or_changes_margin_denominator(self):
         rows = self.enriched([source_row(), source_row(product="SKU-2", amount="300")], {"SKU-1": "6"})
@@ -85,7 +102,8 @@ class SalesProfitCalculationTest(unittest.TestCase):
         rows = self.enriched([source_row(quantity="-2", amount="-20", sale_quantity="0", sale_amount="0")], {"SKU-1": "6"})
         self.assertIsNone(rows[0]["margin_rate"])
         self.assertIsNone(rows[0]["avg_price"])
-        self.assertEqual(rows[0]["estimated_profit"], Decimal("-8"))
+        self.assertIsNone(rows[0]["estimated_cost"])
+        self.assertIsNone(rows[0]["estimated_profit"])
         self.assertIsNone(service.summarize(rows)["margin_rate"])
         self.assertIsNone(service.summarize(rows)["cost_coverage_rate"])
 
@@ -321,6 +339,22 @@ class SalesProfitApiTest(unittest.TestCase):
         self.assertEqual(sheet.cell(2, 19).number_format, "#,##0.00")
         self.assertEqual(sheet.freeze_panes, "F2")
         self.assertEqual(sheet.auto_filter.ref, "A1:Y7")
+
+    def test_return_exclusion_matches_detail_summary_and_export(self):
+        self.db.execute(text("UPDATE ads_sales_profit_daily SET quantity=-90,return_quantity=100,return_amount=0 WHERE item_id=0"))
+        self.db.commit()
+        data = self.get(keyword='00000').json()['data']
+        self.assertEqual(data['rows'][0]['quantity'], -90)
+        self.assertEqual(data['rows'][0]['estimated_profit'], 40)
+        self.assertEqual(data['summary']['estimated_profit'], 40)
+        self.assertEqual(data['breakdown'][0]['sale_quantity'], 10)
+        self.assertEqual(data['breakdown'][0]['sale_amount'], 100)
+        response = self.client.get('/api/v1/sales/profit-analysis/export', params={'keyword': '00000'})
+        book = load_workbook(BytesIO(response.content))
+        self.assertEqual(book.worksheets[0].cell(2, 18).value, 60)
+        self.assertEqual(book.worksheets[0].cell(2, 19).value, 40)
+        self.assertIn('退货红冲不参与毛利', book['统计口径'].cell(5, 2).value)
+        book.close()
 
     def test_export_preserves_literal_formula_text(self):
         self.db.execute(text("UPDATE ads_sales_profit_daily SET product_name='=HYPERLINK(\"https://invalid\")' WHERE item_id=0"))
