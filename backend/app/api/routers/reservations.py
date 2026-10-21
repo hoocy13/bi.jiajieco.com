@@ -9,6 +9,7 @@ from app.api.deps import get_current_user
 from app.db.ods import get_ods_db
 from app.models.user import User
 from app.schemas.common import ok
+from app.services.reservation_cache import ReservationReads
 
 
 router = APIRouter(prefix="/reservations", tags=["reservations"])
@@ -73,6 +74,7 @@ def reservation_analysis(
     keyword: str | None = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=10, le=100),
+    view: str = Query("all", pattern="^(all|overview|applicants|details)$"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_ods_db),
 ) -> dict:
@@ -121,7 +123,22 @@ def reservation_analysis(
       INNER JOIN `预留单查询` h ON h.`预留单ID` = d.`预留单ID`
     """
 
-    option_rows = db.execute(
+    coverage = db.execute(
+        text(
+            """
+            SELECT MIN(`申请时间`) AS min_date, MAX(`申请时间`) AS max_date,
+                   MAX(GREATEST(COALESCE(`修改时间`, `申请时间`), COALESCE(`updatetime`, `申请时间`))) AS updated_at,
+                   COUNT(*) AS header_count,
+                   (SELECT MAX(`updatetime`) FROM `预留单货品明细`) AS detail_updated_at,
+                   (SELECT COUNT(*) FROM `预留单货品明细`) AS detail_count
+            FROM `预留单查询`
+            """
+        )
+    ).mappings().one()
+
+    reads = ReservationReads(db, coverage)
+
+    option_rows = reads.execute(
         text(
             """
             SELECT DISTINCT
@@ -137,17 +154,7 @@ def reservation_analysis(
         )
     ).mappings().all()
 
-    coverage = db.execute(
-        text(
-            """
-            SELECT MIN(`申请时间`) AS min_date, MAX(`申请时间`) AS max_date,
-                   MAX(GREATEST(COALESCE(`修改时间`, `申请时间`), COALESCE(`updatetime`, `申请时间`))) AS updated_at
-            FROM `预留单查询`
-            """
-        )
-    ).mappings().one()
-
-    summary = db.execute(
+    summary = reads.execute(
         text(
             f"""
             SELECT
@@ -168,7 +175,7 @@ def reservation_analysis(
     def grouped_rows(select_sql: str, group_sql: str, order_sql: str = "remaining_quantity DESC") -> list[dict]:
         return [
             dict(row)
-            for row in db.execute(
+            for row in reads.execute(
                 text(
                     f"""
                     SELECT {select_sql},
@@ -187,99 +194,107 @@ def reservation_analysis(
             ).mappings().all()
         ]
 
-    status_rows = grouped_rows("h.`状态` AS name", "h.`状态`")
-    warehouse_rows = grouped_rows("COALESCE(NULLIF(TRIM(h.`预留仓库`), ''), '未设置') AS name", "COALESCE(NULLIF(TRIM(h.`预留仓库`), ''), '未设置')")
-    brand_rows = grouped_rows("COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS name", "COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类')")[:15]
-    product_type_rows = grouped_rows("COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS name", "COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')")
-    applicant_rows = grouped_rows("COALESCE(NULLIF(TRIM(h.`申请人`), ''), '未设置') AS name", "COALESCE(NULLIF(TRIM(h.`申请人`), ''), '未设置')")
+    status_rows = grouped_rows("h.`状态` AS name", "h.`状态`") if view in ('all', 'overview') else []
+    warehouse_rows = grouped_rows("COALESCE(NULLIF(TRIM(h.`预留仓库`), ''), '未设置') AS name", "COALESCE(NULLIF(TRIM(h.`预留仓库`), ''), '未设置')") if view in ('all', 'overview') else []
+    brand_rows = grouped_rows("COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS name", "COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类')")[:15] if view in ('all', 'overview') else []
+    product_type_rows = grouped_rows("COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS name", "COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类')") if view in ('all', 'overview') else []
+    applicant_rows = grouped_rows("COALESCE(NULLIF(TRIM(h.`申请人`), ''), '未设置') AS name", "COALESCE(NULLIF(TRIM(h.`申请人`), ''), '未设置')") if view in ('all', 'overview', 'applicants') else []
 
-    applicant_product_rows = db.execute(
-        text(
-            f"""
-            SELECT
-              COALESCE(NULLIF(TRIM(d.`货品编号`), ''), '未设置') AS product_code,
-              COALESCE(NULLIF(TRIM(d.`货品名称`), ''), '未设置') AS product,
-              COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS brand,
-              COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
-              COUNT(DISTINCT h.`预留单ID`) AS order_count,
-              COALESCE(SUM(d.`预留数量`), 0) AS reserved_quantity,
-              COALESCE(SUM(d.`剩余数量`), 0) AS remaining_quantity,
-              COALESCE(SUM(d.`已用数量`), 0) AS used_quantity,
-              COALESCE(SUM(d.`已释放数量`), 0) AS released_quantity
-            {joined_from}
-            WHERE {where_sql}
-            GROUP BY d.`货品编号`, d.`货品名称`, d.`品牌`, d.`货品分类`
-            ORDER BY remaining_quantity DESC, reserved_quantity DESC
-            """
-        ),
-        params,
-    ).mappings().all()
+    applicant_product_rows = []
+    if view == 'all' or (view == 'applicants' and applicants):
+        applicant_product_rows = reads.execute(
+            text(
+                f"""
+                SELECT
+                  COALESCE(NULLIF(TRIM(d.`货品编号`), ''), '未设置') AS product_code,
+                  COALESCE(NULLIF(TRIM(d.`货品名称`), ''), '未设置') AS product,
+                  COALESCE(NULLIF(TRIM(d.`品牌`), ''), '未归类') AS brand,
+                  COALESCE(NULLIF(TRIM(d.`货品分类`), ''), '未归类') AS product_type,
+                  COUNT(DISTINCT h.`预留单ID`) AS order_count,
+                  COALESCE(SUM(d.`预留数量`), 0) AS reserved_quantity,
+                  COALESCE(SUM(d.`剩余数量`), 0) AS remaining_quantity,
+                  COALESCE(SUM(d.`已用数量`), 0) AS used_quantity,
+                  COALESCE(SUM(d.`已释放数量`), 0) AS released_quantity
+                {joined_from}
+                WHERE {where_sql}
+                GROUP BY d.`货品编号`, d.`货品名称`, d.`品牌`, d.`货品分类`
+                ORDER BY remaining_quantity DESC, reserved_quantity DESC
+                """
+            ),
+            params,
+        ).mappings().all()
 
-    trend_rows = db.execute(
-        text(
-            f"""
-            SELECT DATE_FORMAT(h.`申请时间`, '%Y-%m') AS month,
-              COUNT(DISTINCT h.`预留单ID`) AS order_count,
-              COALESCE(SUM(d.`预留数量`), 0) AS reserved_quantity,
-              COALESCE(SUM(d.`剩余数量`), 0) AS remaining_quantity
-            {joined_from}
-            WHERE {where_sql} AND h.`申请时间` IS NOT NULL
-            GROUP BY DATE_FORMAT(h.`申请时间`, '%Y-%m')
-            ORDER BY month
-            """
-        ),
-        params,
-    ).mappings().all()
+    trend_rows = []
+    if view in ('all', 'overview'):
+        trend_rows = reads.execute(
+            text(
+                f"""
+                SELECT DATE_FORMAT(h.`申请时间`, '%Y-%m') AS month,
+                  COUNT(DISTINCT h.`预留单ID`) AS order_count,
+                  COALESCE(SUM(d.`预留数量`), 0) AS reserved_quantity,
+                  COALESCE(SUM(d.`剩余数量`), 0) AS remaining_quantity
+                {joined_from}
+                WHERE {where_sql} AND h.`申请时间` IS NOT NULL
+                GROUP BY DATE_FORMAT(h.`申请时间`, '%Y-%m')
+                ORDER BY month
+                """
+            ),
+            params,
+        ).mappings().all()
 
-    expiry_rows = db.execute(
-        text(
-            f"""
-            SELECT expiry_bucket AS name, COUNT(DISTINCT reserve_id) AS order_count,
-                   COALESCE(SUM(remaining_quantity), 0) AS remaining_quantity
-            FROM (
-              SELECT h.`预留单ID` AS reserve_id, d.`剩余数量` AS remaining_quantity,
-                CASE
-                  WHEN h.`使用结束日期` IS NULL THEN '未设置使用结束日'
-                  WHEN DATE(h.`使用结束日期`) < CURDATE() THEN '已过使用结束日'
-                  WHEN DATE(h.`使用结束日期`) < CURDATE() + INTERVAL 8 DAY THEN '7日内到期'
-                  WHEN DATE(h.`使用结束日期`) < CURDATE() + INTERVAL 31 DAY THEN '8-30日到期'
-                  ELSE '31日后到期'
-                END AS expiry_bucket
-              {joined_from}
-              WHERE {where_sql} AND d.`剩余数量` > 0
-            ) scoped
-            GROUP BY expiry_bucket
-            ORDER BY FIELD(expiry_bucket, '已过使用结束日', '7日内到期', '8-30日到期', '31日后到期', '未设置使用结束日')
-            """
-        ),
-        params,
-    ).mappings().all()
+    expiry_rows = []
+    if view in ('all', 'overview'):
+        expiry_rows = reads.execute(
+            text(
+                f"""
+                SELECT expiry_bucket AS name, COUNT(DISTINCT reserve_id) AS order_count,
+                       COALESCE(SUM(remaining_quantity), 0) AS remaining_quantity
+                FROM (
+                  SELECT h.`预留单ID` AS reserve_id, d.`剩余数量` AS remaining_quantity,
+                    CASE
+                      WHEN h.`使用结束日期` IS NULL THEN '未设置使用结束日'
+                      WHEN DATE(h.`使用结束日期`) < CURDATE() THEN '已过使用结束日'
+                      WHEN DATE(h.`使用结束日期`) < CURDATE() + INTERVAL 8 DAY THEN '7日内到期'
+                      WHEN DATE(h.`使用结束日期`) < CURDATE() + INTERVAL 31 DAY THEN '8-30日到期'
+                      ELSE '31日后到期'
+                    END AS expiry_bucket
+                  {joined_from}
+                  WHERE {where_sql} AND d.`剩余数量` > 0
+                ) scoped
+                GROUP BY expiry_bucket
+                ORDER BY FIELD(expiry_bucket, '已过使用结束日', '7日内到期', '8-30日到期', '31日后到期', '未设置使用结束日')
+                """
+            ),
+            params,
+        ).mappings().all()
 
-    total = db.execute(
+    total = reads.execute(
         text(f"SELECT COUNT(*) {joined_from} WHERE {where_sql}"), params
     ).scalar_one()
     detail_params = {**params, "limit": page_size, "offset": (page - 1) * page_size}
-    details = db.execute(
-        text(
-            f"""
-            SELECT
-              h.`预留单号` AS reservation_number, h.`状态` AS status,
-              h.`预留仓库` AS warehouse, h.`申请部门` AS department, h.`申请人` AS applicant,
-              h.`申请时间` AS application_time, h.`使用起始日期` AS start_time,
-              h.`使用结束日期` AS end_time, h.`预留原因` AS reason,
-              d.`货品编号` AS product_code, d.`货品名称` AS product,
-              d.`品牌` AS brand, d.`货品分类` AS product_type,
-              d.`条码` AS barcode, d.`单位` AS unit,
-              d.`预留数量` AS reserved_quantity, d.`剩余数量` AS remaining_quantity,
-              d.`已用数量` AS used_quantity, d.`已释放数量` AS released_quantity
-            {joined_from}
-            WHERE {where_sql}
-            ORDER BY h.`申请时间` DESC, h.`预留单号` DESC, d.`明细ID` DESC
-            LIMIT :limit OFFSET :offset
-            """
-        ),
-        detail_params,
-    ).mappings().all()
+    details = []
+    if view in ('all', 'details'):
+        details = reads.execute(
+            text(
+                f"""
+                SELECT
+                  h.`预留单号` AS reservation_number, h.`状态` AS status,
+                  h.`预留仓库` AS warehouse, h.`申请部门` AS department, h.`申请人` AS applicant,
+                  h.`申请时间` AS application_time, h.`使用起始日期` AS start_time,
+                  h.`使用结束日期` AS end_time, h.`预留原因` AS reason,
+                  d.`货品编号` AS product_code, d.`货品名称` AS product,
+                  d.`品牌` AS brand, d.`货品分类` AS product_type,
+                  d.`条码` AS barcode, d.`单位` AS unit,
+                  d.`预留数量` AS reserved_quantity, d.`剩余数量` AS remaining_quantity,
+                  d.`已用数量` AS used_quantity, d.`已释放数量` AS released_quantity
+                {joined_from}
+                WHERE {where_sql}
+                ORDER BY h.`申请时间` DESC, h.`预留单号` DESC, d.`明细ID` DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            detail_params,
+        ).mappings().all()
 
     def serialize_group(rows: list[dict]) -> list[dict]:
         return [

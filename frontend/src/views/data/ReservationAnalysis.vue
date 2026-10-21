@@ -15,6 +15,7 @@ const chartTheme = getSavedTheme()
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+let requestVersion = 0
 const activePage = ref(['overview', 'applicants', 'details'].includes(String(route.query.view)) ? String(route.query.view) : 'overview')
 const dateRange = ref(route.query.start_date && route.query.end_date ? [String(route.query.start_date), String(route.query.end_date)] : [])
 const statuses = ref(toArray(route.query.status))
@@ -22,8 +23,8 @@ const warehouses = ref(toArray(route.query.warehouse))
 const brands = ref(toArray(route.query.brand))
 const productTypes = ref(toArray(route.query.product_type))
 const departments = ref(toArray(route.query.department))
-const applicants = ref([])
-const keyword = ref('')
+const applicants = ref(toArray(route.query.applicant))
+const keyword = ref(String(route.query.keyword || ''))
 const page = ref(Number(route.query.page || 1))
 const pageSize = ref(Number(route.query.page_size || 20))
 const analysis = ref({
@@ -165,14 +166,17 @@ function queryParams() {
     warehouse: warehouses.value, brand: brands.value, product_type: productTypes.value,
     department: departments.value, applicant: applicants.value, keyword: keyword.value.trim() || undefined,
     page: page.value, page_size: pageSize.value,
+    view: activePage.value,
   }
 }
 
 async function fetchData(resetPage = false) {
+  const version = ++requestVersion
   if (resetPage) page.value = 1
   loading.value = true
   try {
     const response = await getReservationAnalysis(queryParams())
+    if (version !== requestVersion) return
     analysis.value = response.data
     router.replace({ query: {
       ...(activePage.value !== 'overview' ? { view: activePage.value } : {}),
@@ -182,11 +186,13 @@ async function fetchData(resetPage = false) {
       ...(brands.value.length ? { brand: brands.value } : {}),
       ...(productTypes.value.length ? { product_type: productTypes.value } : {}),
       ...(departments.value.length ? { department: departments.value } : {}),
+      ...(applicants.value.length ? { applicant: applicants.value } : {}),
+      ...(keyword.value.trim() ? { keyword: keyword.value.trim() } : {}),
       ...(page.value > 1 ? { page: page.value } : {}),
       ...(pageSize.value !== 20 ? { page_size: pageSize.value } : {}),
     } })
   } finally {
-    loading.value = false
+    if (version === requestVersion) loading.value = false
   }
 }
 
