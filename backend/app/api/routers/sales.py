@@ -523,6 +523,7 @@ def _load_ads_channel_analysis(
             "start_date": resolved_start.isoformat(),
             "end_date": resolved_end.isoformat(),
         }
+        meta["data_version"] = batch.data_version
         return load_sales_channel_analysis_from_ads(
             ads_db,
             batch,
@@ -2911,3 +2912,41 @@ def sales_brand_channel_analysis(
         },
     }
     return _cached_ok(cache_key, data)
+
+
+@router.get("/channel-product-analysis")
+def sales_channel_product_analysis(
+    channel_name: str = Query(..., min_length=1),
+    start_date: date = Query(...), end_date: date = Query(...),
+    keyword: str = Query(""), product_type: str = Query(""),
+    data_version: str | None = Query(None),
+    page: int = Query(1, ge=1), page_size: int = Query(20, ge=10, le=100),
+    sort: str = Query("paid_amount"), direction: str = Query("descending"),
+    current_user: User = Depends(get_current_user), db: Session = Depends(get_ods_db),
+) -> dict:
+    from app.services.channel_products import load_channel_products
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="开始日期不能晚于结束日期")
+    args = dict(channel=channel_name, start=start_date, end=end_date,
+                keyword=keyword, product_type=product_type, page=page,
+                page_size=page_size, sort=sort, direction=direction)
+    if settings.BI_QUERY_SOURCE == "ads":
+        if AdsSessionLocal is None:
+            raise HTTPException(status_code=503, detail="ADS database is not configured")
+        try:
+            with AdsSessionLocal() as ads_db:
+                batch = latest_ready_sales_batch(ads_db)
+                if data_version:
+                    from app.models.ads import AdsPublishBatch
+                    batch = ads_db.query(AdsPublishBatch).filter_by(
+                        dataset="sales_daily", status="ready", data_version=data_version).first()
+                    if batch is None:
+                        raise AdsDataUnavailable("数据版本已更新，请刷新渠道页面")
+                from app.services.sales_ads import ensure_batch_covers
+                ensure_batch_covers(batch, start_date, end_date)
+                return ok(load_channel_products(ads_db, version=batch.data_version, **args))
+        except AdsDataUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if db is None:
+        raise HTTPException(status_code=503, detail="ODS database is not configured")
+    return ok(load_channel_products(db, version=None, **args))

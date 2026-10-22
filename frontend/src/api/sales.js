@@ -44,3 +44,7 @@ export function getSalesBrandChannelAnalysis(params = {}) {
     paramsSerializer: { indexes: null },
   })
 }
+
+export function getSalesChannelProductAnalysis(params = {}) {
+  return http.get('/sales/channel-product-analysis', { params })
+}

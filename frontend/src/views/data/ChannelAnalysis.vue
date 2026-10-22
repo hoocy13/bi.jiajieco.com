@@ -7,6 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { getSalesChannelAnalysis, getSalesChannelCustomerAnalysis } from '../../api/sales'
+import ChannelProducts from '../../components/reports/ChannelProducts.vue'
 import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSavedTheme } from '../../utils/theme'
 import { isOnlineChannel, isWuyanChannel, displayPlatform } from '../../utils/salesChannelClassification'
@@ -66,6 +67,12 @@ const analysis = ref({
   filter_options: { channel_types: [], platforms: [] },
 })
 const channelExportColumns = [{ key: 'channel_code', label: '编号' }, { key: 'channel_name', label: '渠道名称' }, { key: 'category', label: '渠道分类' }, { key: 'platform', label: '平台归属' }, { key: 'owner', label: '负责人' }, { key: 'orders', label: '订单数', kind: 'integer' }, { key: 'quantity', label: '销售数量', kind: 'integer' }, { key: 'paid_amount', label: '分摊销售额', kind: 'number' }, { key: 'share', label: '销售占比', kind: 'percent' }]
+const productDrawerVisible = ref(false)
+const selectedProductChannel = ref(null)
+function openProductDrilldown(row) {
+  selectedProductChannel.value = row
+  productDrawerVisible.value = true
+}
 const customerDrawerVisible = ref(false)
 const channelDetailVisible = ref(false)
 const selectedPlatform = ref(null)
@@ -309,6 +316,7 @@ async function fetchAnalysis() {
     const params = buildParams()
     const result = await getSalesChannelAnalysis(params)
     analysis.value = result.data
+    productDrawerVisible.value = false
     channelDetailVisible.value = false
     selectedPlatform.value = null
     dateRange.value = [analysis.value.start_date, analysis.value.end_date]
@@ -520,7 +528,7 @@ onMounted(fetchAnalysis)
             <div v-for="(item, index) in offlineChannels" :key="item.channel_name" class="ranked-channel-item">
               <span class="channel-rank">{{ index + 1 }}</span>
               <div class="channel-main"><strong>{{ item.channel_name }}</strong><span>{{ item.category || '未分类' }}</span></div>
-              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span><el-button link type="primary" @click.stop="openProductDrilldown(item)">查看货品</el-button></div>
             </div>
           </div>
           <el-empty v-else description="暂无线下渠道数据" :image-size="76" />
@@ -535,7 +543,7 @@ onMounted(fetchAnalysis)
             <div v-for="(item, index) in wuyanChannels" :key="item.channel_name" class="ranked-channel-item is-wuyan-row">
               <span class="channel-rank">{{ index + 1 }}</span>
               <div class="channel-main"><strong>{{ item.channel_name }}</strong><span>{{ item.platform && item.platform !== '未设置' ? item.platform : '梧颜渠道' }}</span></div>
-              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+              <div class="channel-result"><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span><el-button link type="primary" @click.stop="openProductDrilldown(item)">查看货品</el-button></div>
             </div>
           </div>
           <el-empty v-else description="暂无梧颜渠道数据" :image-size="76" />
@@ -559,7 +567,7 @@ onMounted(fetchAnalysis)
           <div class="inline-channel-grid">
             <div v-for="item in selectedPlatform.channel_rows" :key="item.channel_name" class="inline-channel-item">
               <div><strong>{{ item.channel_name }}</strong><span>{{ item.category || '未分类' }}</span></div>
-              <div><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span></div>
+              <div><strong>{{ formatPercent(item.share) }}</strong><span>¥ {{ formatNumber(item.paid_amount, 2) }}</span><el-button link type="primary" @click.stop="openProductDrilldown(item)">查看货品</el-button></div>
             </div>
           </div>
         </div>
@@ -598,7 +606,8 @@ onMounted(fetchAnalysis)
 
       <section class="panel">
         <header><h2>渠道清单<span class="panel-source">（销售单明细账 + 渠道列表）</span></h2><div class="header-actions"><ExportExcelButton title="渠道分析" :rows="analysis.rows" :columns="channelExportColumns" :total="analysis.rows.length" /><el-button :icon="'Refresh'" circle @click="fetchAnalysis" /></div></header>
-        <el-table :data="analysis.rows" height="520">
+        <el-table :data="analysis.rows" height="520" @row-dblclick="openProductDrilldown">
+          <el-table-column label="货品下钻" width="110" fixed="right"><template #default="{ row }"><el-button link type="primary" @click.stop="openProductDrilldown(row)">查看货品</el-button></template></el-table-column>
           <el-table-column prop="channel_code" label="编号" width="90" sortable />
           <el-table-column prop="channel_name" label="渠道名称" min-width="220" show-overflow-tooltip sortable>
             <template #default="{ row }"><div class="channel-cell"><strong>{{ row.channel_name }}</strong><span><i :style="{ width: progressWidth(row.share) }"></i></span></div></template>
@@ -622,6 +631,7 @@ onMounted(fetchAnalysis)
       <section class="panel">
         <header><h2>线下渠道表现<span class="panel-source">（销售单明细账 + 渠道列表，可下钻客户）</span></h2></header>
         <el-table :data="allOfflineChannels" height="360" @row-dblclick="openCustomerDrilldown">
+          <el-table-column label="货品下钻" width="110" fixed="right"><template #default="{ row }"><el-button link type="primary" @click.stop="openProductDrilldown(row)">查看货品</el-button></template></el-table-column>
           <el-table-column prop="channel_name" label="线下渠道" min-width="240" show-overflow-tooltip sortable />
           <el-table-column prop="category" label="渠道分类" width="150" sortable />
           <el-table-column prop="orders" label="订单数" width="130" sortable><template #default="{ row }">{{ formatNumber(row.orders) }}</template></el-table-column>
@@ -635,6 +645,7 @@ onMounted(fetchAnalysis)
       </section>
     </template>
 
+    <ChannelProducts v-model="productDrawerVisible" :channel="selectedProductChannel" :period="analysis" />
     <el-drawer v-model="customerDrawerVisible" size="78%" class="customer-sales-drawer" destroy-on-close>
       <template #header>
         <div class="customer-drawer-title">
