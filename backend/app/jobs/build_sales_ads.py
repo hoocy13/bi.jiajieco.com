@@ -1662,6 +1662,7 @@ def build_sales_ads(
                 and start_date is None
                 and end_date is None
                 and previous_batch is not None
+                and (previous_batch.reconciliation or {}).get("order_status_filter") == ACTIVE_SALES_ORDER_SQL
             )
             resolved_start = full_start
             copy_source_version: str | None = None
@@ -2318,6 +2319,7 @@ def build_sales_ads(
                     and detail_source_summary.quantity
                     == brand_channel_product_summary.quantity
                 )
+                reconciliation["order_status_filter"] = ACTIVE_SALES_ORDER_SQL
                 reconciliation["brand_analysis"] = {
                     "detail_scope_matches": detail_scope_matches,
                     "brand_scope_amount_quantity_matches": brand_scope_amount_quantity_matches,

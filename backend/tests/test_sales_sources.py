@@ -1,6 +1,20 @@
 import unittest
+import sqlite3
 
-from app.services.sales_sources import is_online_sales_channel
+from app.services.sales_sources import ACTIVE_SALES_ORDER_SQL, is_online_sales_channel
+
+
+class SalesOrderStatusTests(unittest.TestCase):
+    def test_active_order_filter_excludes_pending_review_and_cancelled_orders(self):
+        statuses = ['待审核', '审核中', '待复核', '复核中', '取消', '已取消',
+                    '已发货', '已完成', '', None]
+        with sqlite3.connect(':memory:') as db:
+            db.execute('CREATE TABLE orders (`订单状态` TEXT)')
+            db.executemany('INSERT INTO orders VALUES (?)', [(s,) for s in statuses])
+            actual = [row[0] for row in db.execute(
+                f'SELECT `订单状态` FROM orders WHERE {ACTIVE_SALES_ORDER_SQL}'
+            )]
+        self.assertEqual(actual, ['已发货', '已完成', '', None])
 
 
 class SalesChannelClassificationTests(unittest.TestCase):

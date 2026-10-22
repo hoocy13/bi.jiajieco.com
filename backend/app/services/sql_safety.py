@@ -15,7 +15,7 @@ from app.services.schema_linker import load_metadata
 DEFAULT_ALLOWED_TABLES = frozenset(
     {
         "dwd.销售单明细账_品牌补全",
-        "dwd.销售单查询_进口超市上海仓补全",
+        "dwd.销售订单主表",
         "ods.总库存查询",
         "ods.分仓库查询",
         "ods.批次货品库存查询",

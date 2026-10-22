@@ -74,7 +74,7 @@ def _build_prompt(schema_context: dict[str, Any]) -> list[dict[str, str]]:
 4. 表名必须带 schema 前缀，例如 dwd.`销售单明细账_品牌补全`。
 5. 默认销售额使用 dwd.`销售单明细账_品牌补全`.`分摊后金额`。
 6. 售后退货、售后发货进入销售指标，不要默认过滤。
-7. 订单头“销售单查询”使用 dwd.`销售单查询_进口超市上海仓补全`，不要使用 ods 原始订单头表。
+7. 订单头“销售单查询”使用 dwd.`销售订单主表`，不要使用 ods 原始订单头表。
 8. 不确定时优先生成保守、可执行的聚合 SQL。
 """
     user = "请基于以下剪枝后的语义上下文生成 SQL：\n" + json.dumps(payload, ensure_ascii=False, indent=2)
@@ -108,7 +108,7 @@ def build_repair_prompt(
 3. 中文表名、中文字段名必须用反引号。
 4. 表名必须带 schema 前缀，例如 dwd.`销售单明细账_品牌补全`。
 5. 不要使用写入、DDL、存储过程、临时表或多语句。
-6. 订单头“销售单查询”使用 dwd.`销售单查询_进口超市上海仓补全`。
+6. 订单头“销售单查询”使用 dwd.`销售订单主表`。
 """
     user = "请修复以下 SQL：\n" + json.dumps(payload, ensure_ascii=False, indent=2)
     return [
