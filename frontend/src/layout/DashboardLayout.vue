@@ -51,6 +51,14 @@ const menuGroups = computed(() => [
     ],
   },
   {
+    key: 'group-buy',
+    label: '团购管理',
+    icon: 'ShoppingBag',
+    children: [
+      { path: '/group-buy', label: '团购订单与分配', permission: 'group_buy.manage' },
+    ],
+  },
+  {
     key: 'inventory',
     label: '库存分析',
     icon: 'Box',
@@ -206,7 +214,7 @@ function selectAppearance(name) {
       </el-header>
 
       <el-main class="main-content">
-        <router-view :key="`${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
+        <router-view :key="$route.path === '/group-buy' ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
       </el-main>
     </el-container>
   </el-container>

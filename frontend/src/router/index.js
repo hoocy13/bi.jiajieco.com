@@ -44,6 +44,7 @@ const routes = [
     component: DashboardLayout,
     children: [
       { path: 'dashboard', component: Dashboard, meta: { title: '经营总览', permission: 'dashboard.view' } },
+      { path: 'group-buy', component: () => import('../views/data/GroupBuyManagement.vue'), meta: { title: '团购管理', permission: 'group_buy.manage' } },
       { path: 'reports/monthly', component: MonthlyOperatingReport, meta: { title: '经营月报', permission: 'report.monthly.view' } },
       { path: 'reports/monthly-management', component: MonthlyReportManagement, meta: { title: '月报管理', permission: 'report.monthly.manage' } },
       { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: '智能洞察', permission: 'ai.decision.view' } },

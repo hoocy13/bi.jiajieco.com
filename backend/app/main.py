@@ -9,6 +9,7 @@ from app.api.routers import ai_decisions, analysis_workspace, announcements, aut
 from app.core.config import settings
 from app.core.performance import performance_middleware
 from app.db.init_db import init_db
+from app.api.routers import group_buy
 
 
 @asynccontextmanager
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(auth.router, prefix=settings.API_PREFIX)
+    app.include_router(group_buy.router, prefix=settings.API_PREFIX)
     app.include_router(dashboard.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("dashboard.view"))])
     app.include_router(inventory.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("inventory.view"))])
     app.include_router(inventory_valuation.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("inventory.view"))])

@@ -10,6 +10,7 @@ from app.models.announcement import Announcement  # noqa: F401
 from app.models.monthly_report import MonthlyOperatingReport  # noqa: F401
 from app.models.core_cost_price import CoreCostPriceRevision  # noqa: F401
 from app.models.user import Permission, Role, User
+from app.models.group_buy import GroupBuyBatch, GroupBuyChange  # noqa: F401
 
 
 PERMISSION_DEFINITIONS = [
@@ -17,6 +18,7 @@ PERMISSION_DEFINITIONS = [
     ("sales.view", "销售分析", "sales"),
     ("sales.profit.view", "销售毛利与价格分析", "sales"),
     ("inventory.view", "库存分析", "inventory"),
+    ("group_buy.manage", "团购管理（查看、编辑、导入导出）", "group_buy"),
     ("inventory.price.manage", "核心成本价维护", "inventory"),
     ("report.monthly.view", "经营月报", "report"),
     ("report.monthly.manage", "经营月报管理", "report"),
@@ -128,7 +130,12 @@ def seed_roles(db: Session) -> dict[str, Role]:
         elif role.role_no is None:
             role.role_no = role_no
         elif code in {"data_analyst", "management", "admin"}:
+            # Group-buy access is assigned through role management. Keep that
+            # explicit grant across restarts without granting it by default.
+            group_buy_granted = any(p.code == "group_buy.manage" for p in role.permissions)
             role.permissions = [permissions[item] for item in permission_codes]
+            if group_buy_granted and "group_buy.manage" not in permission_codes:
+                role.permissions.append(permissions["group_buy.manage"])
         roles[code] = role
     db.flush()
     used_numbers = {int(role.role_no) for role in db.query(Role).all() if role.role_no and role.role_no.isdigit()}
