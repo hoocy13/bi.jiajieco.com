@@ -59,6 +59,12 @@ jobs:
 
           APP_DIR="/www/wwwroot/bi.jiajieco.com"
           ARCHIVE="/root/bi-deploy.tar.gz"
+          # Share the publisher lock before replacing files or containers.
+          exec 8>/var/lock/bi-sales-ads.lock
+          if ! flock -n 8; then
+            echo "ADS build is active; deployment stopped before changing production. Retry after publication completes."
+            exit 1
+          fi
           TS=$(date +%Y%m%d%H%M%S)
           RELEASE="/www/wwwroot/bi.jiajieco.com.release.$TS"
           BACKUP="/www/wwwroot/bi.jiajieco.com.backup.$TS"
