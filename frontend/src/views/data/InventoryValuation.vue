@@ -43,7 +43,7 @@ const editorVisible = ref(false)
 const savingPrice = ref(false)
 const editingCode = ref('')
 const editor = reactive({ product_code: '', product_name: '', price: null, pricing_mode: 'fixed', discount: null, retail_price: null, tax_price: null, brand: '', product_type: '', id: null, retail_price_conflict: false })
-const calculatedPrice = computed(() => editor.retail_price > 0 && editor.discount > 0 ? Math.round((Number(editor.retail_price) * Number(editor.discount) / 10 + Number.EPSILON) * 100) / 100 : null)
+const calculatedPrice = computed(() => editor.retail_price > 0 && editor.discount > 0 ? Math.round((Number(editor.retail_price) * Number(editor.discount) / 100 + Number.EPSILON) * 100) / 100 : null)
 const batchVisible = ref(false)
 const batchDiscount = ref(null)
 const overwriteFixed = ref(false)
@@ -153,6 +153,7 @@ function changeTab(value) {
 function openEditor(item = null) {
   editingCode.value = item?.product_code || ''
   Object.assign(editor, { product_code: '', product_name: '', price: null, pricing_mode: 'fixed', discount: null, retail_price: null, tax_price: null, brand: '', product_type: '', id: null, retail_price_conflict: false }, item || {})
+  editor.discount = item?.discount == null ? null : Number((Number(item.discount) * 10).toFixed(2))
   editorVisible.value = true
 }
 async function lookupEditor() {
@@ -173,11 +174,11 @@ function openBatch() {
   batchVisible.value = true
 }
 async function previewBatch() {
-  if (!(batchDiscount.value > 0 && batchDiscount.value <= 10)) return ElMessage.warning('请输入大于 0、不超过 10 的折扣')
+  if (!(batchDiscount.value > 0 && batchDiscount.value <= 100)) return ElMessage.warning('请输入大于 0、不超过 100 的折扣百分比')
   savingBatch.value = true
   batchPreview.value = null
   try {
-    batchPreview.value = (await previewCoreCostBatch({ keyword: priceFilters.keyword.trim(), brand: priceFilters.brands, product_type: priceFilters.productTypes, discount: batchDiscount.value, overwrite_fixed: overwriteFixed.value })).data
+    batchPreview.value = (await previewCoreCostBatch({ keyword: priceFilters.keyword.trim(), brand: priceFilters.brands, product_type: priceFilters.productTypes, discount: Number((batchDiscount.value / 10).toFixed(4)), overwrite_fixed: overwriteFixed.value })).data
   } finally { savingBatch.value = false }
 }
 async function confirmBatch() {
@@ -202,11 +203,11 @@ async function deletePrice() {
 async function savePrice() {
   if (savingPrice.value) return
   if (!editor.product_code.trim()) return ElMessage.warning('请填写商品编号')
-  if (editor.pricing_mode === 'discount' && (!(editor.discount > 0 && editor.discount <= 10) || editor.retail_price == null || editor.retail_price_conflict)) return ElMessage.warning('按折扣需要唯一有效零售价及大于 0、不超过 10 的折扣')
+  if (editor.pricing_mode === 'discount' && (!(editor.discount > 0 && editor.discount <= 100) || editor.retail_price == null || editor.retail_price_conflict)) return ElMessage.warning('按折扣需要唯一有效零售价及大于 0、不超过 100 的折扣百分比')
   if (editor.pricing_mode === 'fixed' && !(editor.price > 0)) return ElMessage.warning('请输入大于 0 的核心成本价')
   savingPrice.value = true
   try {
-    await saveCoreCostPrice({ product_code: editor.product_code.trim(), product_name: editor.product_name, pricing_mode: editor.pricing_mode, price: editor.pricing_mode === 'fixed' ? editor.price : null, discount: editor.pricing_mode === 'discount' ? editor.discount : null, base_retail_price: editor.pricing_mode === 'discount' ? editor.retail_price : null, expected_revision_id: editor.id, effective_date: new Date().toLocaleDateString('sv-SE') })
+    await saveCoreCostPrice({ product_code: editor.product_code.trim(), product_name: editor.product_name, pricing_mode: editor.pricing_mode, price: editor.pricing_mode === 'fixed' ? editor.price : null, discount: editor.pricing_mode === 'discount' ? Number((editor.discount / 10).toFixed(4)) : null, base_retail_price: editor.pricing_mode === 'discount' ? editor.retail_price : null, expected_revision_id: editor.id, effective_date: new Date().toLocaleDateString('sv-SE') })
     editorVisible.value = false
     ElMessage.success('价格版本已保存')
     await loadPrices()
@@ -316,7 +317,7 @@ onMounted(async () => {
     </template>
     <template v-else-if="canManage">
       <section class="panel inventory-detail-table-panel">
-        <header class="valuation-panel-header price-panel-header"><div class="valuation-panel-heading"><h2>核心成本价<span class="panel-source">{{ integer(pricePagination.total) }} 项</span></h2><p class="cost-rule">核心成本价 = 零售价 × 折扣 ÷ 10；已有成本保持保存时的金额。</p></div><div class="header-actions"><el-button @click="openEditor()">新增价格</el-button><el-button type="primary" @click="openBatch">批量设置折扣</el-button><el-upload :show-file-list="false" :before-upload="previewFile" accept=".xlsx"><el-button :loading="importing">导入 Excel</el-button></el-upload><el-button :icon="'Download'" @click="exportPrices">导出 Excel</el-button></div></header>
+        <header class="valuation-panel-header price-panel-header"><div class="valuation-panel-heading"><h2>核心成本价<span class="panel-source">{{ integer(pricePagination.total) }} 项</span></h2><p class="cost-rule">核心成本价 = 零售价 × 折扣百分比；已有成本保持保存时的金额。</p></div><div class="header-actions"><el-button @click="openEditor()">新增价格</el-button><el-button type="primary" @click="openBatch">批量设置折扣</el-button><el-upload :show-file-list="false" :before-upload="previewFile" accept=".xlsx"><el-button :loading="importing">导入 Excel</el-button></el-upload><el-button :icon="'Download'" @click="exportPrices">导出 Excel</el-button></div></header>
         <el-table :data="prices" height="640" stripe @sort-change="sortPrices" :default-sort="{ prop: priceSort.prop, order: priceSort.order === 'desc' ? 'descending' : 'ascending' }">
           <el-table-column prop="barcode" label="条码" width="170" sortable="custom" show-overflow-tooltip><template #default="{ row }">{{ row.barcode || '-' }}</template></el-table-column>
           <el-table-column prop="product_name" label="商品名称" min-width="260" sortable="custom" show-overflow-tooltip />
@@ -336,18 +337,18 @@ onMounted(async () => {
         <el-form-item label="商品名称"><el-input v-model="editor.product_name" :readonly="Boolean(editingCode)" /></el-form-item>
         <p class="cost-rule">{{ editor.brand || '未匹配品牌' }} · {{ editor.product_type || '未匹配分类' }} · 零售价 {{ editor.retail_price_conflict ? '冲突' : mutedMoney(editor.retail_price) }} 元 · 含税价 {{ mutedMoney(editor.tax_price) }} 元</p>
         <el-form-item label="定价方式"><el-radio-group v-model="editor.pricing_mode"><el-radio-button value="fixed">直接填价</el-radio-button><el-radio-button value="discount">按折扣计算</el-radio-button></el-radio-group></el-form-item>
-        <template v-if="editor.pricing_mode === 'discount'"><el-form-item label="核心成本折扣（例如 3.5 表示 3.5 折）"><el-input-number v-model="editor.discount" :min="0.0001" :max="10" :precision="4" :step="0.1" /><span class="discount-unit">折</span></el-form-item><p>计算结果：{{ editor.retail_price_conflict ? '零售价冲突，无法计算' : money(calculatedPrice) }} 元</p></template>
+        <template v-if="editor.pricing_mode === 'discount'"><el-form-item label="核心成本折扣（输入 25 表示 25%）"><el-input-number aria-label="单条核心成本折扣百分比" v-model="editor.discount" :min="0.01" :max="100" :precision="2" :step="1" /><span class="discount-unit">%</span></el-form-item><p>计算结果：{{ editor.retail_price_conflict ? '零售价冲突，无法计算' : money(calculatedPrice) }} 元</p></template>
         <el-form-item v-else label="核心成本价（元）"><el-input-number v-model="editor.price" :min="0.01" :precision="2" :step="1" controls-position="right" /></el-form-item>
       </el-form>
       <template #footer><div class="editor-actions"><el-button v-if="editor.id" type="danger" plain @click="deletePrice">删除价格</el-button><span class="editor-actions-spacer" /><el-button @click="editorVisible = false">取消</el-button><el-button type="primary" :loading="savingPrice" @click="savePrice">保存版本</el-button></div></template>
     </el-dialog>
     <el-dialog v-model="batchVisible" title="批量设置核心成本折扣" width="min(880px, 96vw)">
       <p class="cost-rule">范围：{{ priceFilters.brands.join('、') || '全部品牌' }} / {{ priceFilters.productTypes.join('、') || '全部分类' }}{{ priceFilters.keyword ? ` / ${priceFilters.keyword}` : '' }}。按品牌、分类、关键词匹配全部商品，不限当前分页；其他状态、价格区间筛选不参与批量范围。</p>
-      <div class="batch-controls"><el-input-number aria-label="批量核心成本折扣" :disabled="savingBatch" v-model="batchDiscount" :min="0.0001" :max="10" :precision="4" :step="0.1" @change="batchPreview = null" /><span>折</span><el-checkbox :disabled="savingBatch" v-model="overwriteFixed" @change="batchPreview = null">覆盖直接填价商品</el-checkbox><el-button type="primary" :loading="savingBatch" @click="previewBatch">预览变更</el-button></div>
+      <div class="batch-controls"><el-input-number aria-label="批量核心成本折扣百分比" :disabled="savingBatch" v-model="batchDiscount" :min="0.01" :max="100" :precision="2" :step="1" @change="batchPreview = null" /><span>%（输入 25 表示 25%）</span><el-checkbox :disabled="savingBatch" v-model="overwriteFixed" @change="batchPreview = null">覆盖直接填价商品</el-checkbox><el-button type="primary" :loading="savingBatch" @click="previewBatch">预览变更</el-button></div>
       <template v-if="batchPreview"><p>匹配 {{ batchPreview.matched }} 项 · 可保存 {{ batchPreview.rows.length }} 项 · 跳过直接填价 {{ batchPreview.skipped }} 项 · 缺价或冲突 {{ batchPreview.errors.length }} 项</p><el-alert v-if="batchPreview.errors.length" :title="batchPreview.errors.slice(0, 8).join('；') + (batchPreview.errors.length > 8 ? '…' : '')" type="warning" :closable="false" /><el-table :data="batchPreview.rows.slice(0, 50)" max-height="360"><el-table-column prop="product_code" label="商品编号" width="150" /><el-table-column prop="product_name" label="商品名称" min-width="200" /><el-table-column prop="base_retail_price" label="零售价" width="110"><template #default="{ row }">{{ mutedMoney(row.base_retail_price) }}</template></el-table-column><el-table-column label="原成本" width="110"><template #default="{ row }">{{ mutedMoney(row.old_price) }}</template></el-table-column><el-table-column label="新成本" width="110"><template #default="{ row }">{{ money(row.price) }}</template></el-table-column></el-table><p class="cost-rule">仅展示前 50 项，确认后保存全部可保存项；缺价及冲突项跳过。</p></template>
       <template #footer><el-button @click="batchVisible = false">取消</el-button><el-button type="primary" :disabled="!batchPreview?.rows.length" :loading="savingBatch" @click="confirmBatch">确认保存 {{ batchPreview?.rows.length || 0 }} 项</el-button></template>
     </el-dialog>
-    <el-dialog v-model="historyVisible" :title="`${historyCode} · 价格历史`" width="min(1060px, 96vw)"><el-table :data="history" max-height="420"><el-table-column prop="id" label="版本" width="70" /><el-table-column prop="price" label="价格" width="100"><template #default="{ row }">{{ money(row.price) }}</template></el-table-column><el-table-column prop="base_retail_price" label="基准零售价" width="120"><template #default="{ row }">{{ mutedMoney(row.base_retail_price) }}</template></el-table-column><el-table-column prop="discount" label="折扣" width="90"><template #default="{ row }">{{ row.discount == null ? '-' : `${row.discount} 折` }}</template></el-table-column><el-table-column prop="source" label="操作" width="90"><template #default="{ row }">{{ row.source === 'delete' ? '删除' : row.source === 'restore' ? '还原' : row.source === 'import' ? '导入' : row.source === 'batch' ? '批量折扣' : '修改' }}</template></el-table-column><el-table-column prop="effective_date" label="生效日期" width="115" /><el-table-column prop="created_at" label="记录时间" min-width="170" /><el-table-column prop="operator" label="操作人" min-width="165"><template #default="{ row }">{{ operatorName(row.operator) }}</template></el-table-column><el-table-column label="操作" width="80"><template #default="{ row }"><el-button v-if="row.source !== 'delete'" link type="primary" @click="restore(row)">还原</el-button></template></el-table-column></el-table></el-dialog>
+    <el-dialog v-model="historyVisible" :title="`${historyCode} · 价格历史`" width="min(1060px, 96vw)"><el-table :data="history" max-height="420"><el-table-column prop="id" label="版本" width="70" /><el-table-column prop="price" label="价格" width="100"><template #default="{ row }">{{ money(row.price) }}</template></el-table-column><el-table-column prop="base_retail_price" label="基准零售价" width="120"><template #default="{ row }">{{ mutedMoney(row.base_retail_price) }}</template></el-table-column><el-table-column prop="discount" label="折扣" width="90"><template #default="{ row }">{{ row.discount == null ? '-' : `${Number((Number(row.discount) * 10).toFixed(2))}%` }}</template></el-table-column><el-table-column prop="source" label="操作" width="90"><template #default="{ row }">{{ row.source === 'delete' ? '删除' : row.source === 'restore' ? '还原' : row.source === 'import' ? '导入' : row.source === 'batch' ? '批量折扣' : '修改' }}</template></el-table-column><el-table-column prop="effective_date" label="生效日期" width="115" /><el-table-column prop="created_at" label="记录时间" min-width="170" /><el-table-column prop="operator" label="操作人" min-width="165"><template #default="{ row }">{{ operatorName(row.operator) }}</template></el-table-column><el-table-column label="操作" width="80"><template #default="{ row }"><el-button v-if="row.source !== 'delete'" link type="primary" @click="restore(row)">还原</el-button></template></el-table-column></el-table></el-dialog>
     <el-dialog v-model="importVisible" title="导入预览" width="720px"><p>有效价格 {{ importPreview.rows.length }} 条 · 空价格 {{ importPreview.blank_price_count }} 条（跳过） · 错误 {{ importPreview.errors.length }} 条</p><p class="import-guide">新版为八列商品价格清单，兼容旧版四列。导入默认覆盖文件中商品的已有核心成本价，以文件里的成本价为准；成本价为空时才按折扣计算。成本价和折扣均为空的行跳过，未包含的商品保持不变。</p><el-alert v-if="importPreview.errors.length" type="error" :title="importPreview.errors.join('；')" :closable="false" /><el-table :data="importPreview.rows.slice(0, 20)" max-height="360"><el-table-column prop="product_code" label="货品编号" width="160" /><el-table-column prop="product_name" label="货品名称" min-width="230" /><el-table-column prop="brand" label="品牌" width="120" /><el-table-column prop="discount" label="折扣" width="90" /><el-table-column prop="price" label="核心成本价" width="120"><template #default="{ row }">{{ money(row.price) }}</template></el-table-column></el-table><template #footer><el-button @click="importVisible = false">取消</el-button><el-button type="primary" :disabled="Boolean(importPreview.errors.length) || !importPreview.rows.length" :loading="importing" @click="confirmImport">确认导入 {{ importPreview.rows.length }} 条</el-button></template></el-dialog>
   </div>
 </template>
