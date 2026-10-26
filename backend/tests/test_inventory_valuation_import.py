@@ -144,12 +144,26 @@ class CoreCostPricesTest(unittest.TestCase):
         self.assertEqual(router.current_prices(self.db)['A'].price,350)
         self.assertEqual(router.current_prices(self.db)['B'].price,Decimal('9.5'))
 
-    def test_eight_columns_discount_import_rejects_inconsistent_cost(self):
+    def test_eight_columns_import_explicit_price_overrides_discount_and_existing_price(self):
         d=self.preview([label for _,label in router.PRICE_COLUMNS],[['A','A','品牌甲','正装',1000,999,'3.5折',350],['C','C','品牌甲','小样',50,18,5,24]])
-        self.assertEqual(len(d['rows']),1)
-        self.assertEqual(len(d['errors']),1)
-        self.assertEqual(d['rows'][0]['price'],'350.00')
+        self.assertEqual(len(d['rows']),2)
+        self.assertEqual(d['errors'],[])
+        self.assertEqual(Decimal(d['rows'][0]['price']),Decimal('350.00'))
+        self.assertEqual(Decimal(d['rows'][1]['price']),Decimal('24.00'))
+        self.assertTrue(all(row['pricing_mode'] == 'fixed' for row in d['rows']))
         self.assertEqual(self.client.post(self.base+'/import',json={'rows':d['rows']}).status_code,200)
+
+    def test_import_overwrites_95_with_47_50_despite_local_retail_and_discount(self):
+        self.client.post(self.base, json={'product_code': 'A', 'price': 95})
+        data = self.preview(['商品编号', '零售价', '核心成本折扣', '核心成本价'],
+                            [['A', 190, 2.5, 47.5], ['C', 50, 5, None]])
+        self.assertEqual(data['errors'], [])
+        result = self.client.post(self.base + '/import', json={'rows': data['rows']})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual(result.json()['data']['saved'], 2)
+        self.assertEqual(router.current_prices(self.db)['A'].price, Decimal('47.50'))
+        self.assertEqual(router.current_prices(self.db)['C'].price, Decimal('25'))
+        self.assertEqual(router.current_prices(self.db)['Z'].price, Decimal('20'))
 
     def test_export_eight_columns_roundtrip(self):
         r=self.client.get(self.base+'/export')

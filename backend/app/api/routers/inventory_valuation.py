@@ -433,7 +433,10 @@ async def import_preview(file: UploadFile = File(...), ods: Session = Depends(ge
                 blank += 1
                 continue
             try:
-                discount = Decimal(str(discount).strip().removesuffix("折")) if discount not in (None, "") else None
+                # Imported explicit amounts are authoritative, including exports
+                # whose reference discount or retail basis differs locally.
+                discount = (Decimal(str(discount).strip().removesuffix("折"))
+                            if price in (None, "") and discount not in (None, "") else None)
                 base = value(raw, "零售价") if discount is not None else None
                 item = PriceInput(product_code=code, product_name=str(value(raw, name_key) or "")[:255],
                                   price=price if price not in (None, "") else None,
