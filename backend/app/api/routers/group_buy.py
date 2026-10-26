@@ -13,6 +13,7 @@ from app.models.group_buy import GroupBuyBatch, GroupBuyChange
 from app.schemas.common import ok
 from app.schemas.group_buy import BRANDS, AddColumn, AddQuota, CreateBatch, ProductInput, RenameBatch, RenameLabel, RevisionInput, SaveCells
 from app.services import group_buy as service
+from app.services.group_buy_inbound import guard_order_structure, progress as inbound_progress
 
 
 router = APIRouter(prefix="/group-buy", tags=["group-buy"])
@@ -104,7 +105,7 @@ def restore_batch(batch_id: int, body: RevisionInput, db: Session = Depends(get_
 @router.get("/batches/{batch_id}")
 def table(batch_id: int, keyword: str = "", source: str = "", customer: str = "",
           only_os: bool = False, only_gap: bool = False,
-          sort_by: str = Query("position", pattern="^(position|code|name|barcode|price|abc|pcb|quota|allocated|remaining|ordered)$"),
+          sort_by: str = Query("position", pattern="^(position|code|name|barcode|price|abc|pcb|quota|allocated|remaining|ordered|received_total|waiting_total)$"),
           sort_order: str = Query("asc", pattern="^(asc|desc)$"),
           page: int = Query(1, ge=1), page_size: int = Query(30, ge=10, le=100), all_rows: bool = False,
           db: Session = Depends(get_db), user=Depends(manage)):
@@ -122,8 +123,11 @@ def table(batch_id: int, keyword: str = "", source: str = "", customer: str = ""
             continue
         items.append({**p, "totals": t})
     filtered_summary = service.summary({**doc, "products": items})
+    arrival_products = inbound_progress(db, batch_id)['products'] if sort_by in ('received_total', 'waiting_total') else {}
     if sort_by != "position":
         def key(p):
+            if sort_by in ('received_total', 'waiting_total'):
+                return False, arrival_products[p['id']][sort_by]
             value = p.get(sort_by) if sort_by in p else p["totals"].get(sort_by)
             if sort_by == "price":
                 value = float(value)
@@ -204,6 +208,10 @@ def delete_item(batch_id: int, collection: str, item_id: str, body: RevisionInpu
         service.fail("操作不存在", 404)
     batch = service.get_batch(db, batch_id)
     service.check_revision(batch, body.revision)
+    if collection == 'products':
+        guard_order_structure(db, batch_id, product_id=item_id)
+    elif collection == 'sources':
+        guard_order_structure(db, batch_id, source_id=item_id)
     doc = deepcopy(batch.document)
     changes = service.remove_item(doc, collection, item_id)
     result = service.save_document(db, batch, body.revision, doc, f"{collection}_delete", changes, user.username)
@@ -248,6 +256,8 @@ def update_product(batch_id: int, product_id: str, body: ProductInput, db: Sessi
     service.check_revision(batch, body.revision)
     doc = deepcopy(batch.document)
     p = service.find_product(doc, product_id)
+    if body.barcode.strip() != p['barcode'].strip():
+        guard_order_structure(db, batch_id, product_id=product_id)
     if any(x["id"] != product_id and x["code"] == body.code for x in doc["products"]):
         service.fail("产品代码已存在")
     values = body.model_dump(mode="json", exclude={"revision"})

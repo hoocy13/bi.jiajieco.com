@@ -24,11 +24,11 @@ export function formatPrice(price) {
   return formatCents(priceCents(price)).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
 }
 
-export function aggregateGroupBuy(rows, columns, columnQuantity, rowTotals) {
+export function aggregateGroupBuy(rows, columns, columnQuantity, rowTotals, summaryKeys = ['quota', 'allocated', 'remaining']) {
   const empty = () => ({ quantity: 0, amount: 0n })
   const result = {
     columns: new Map(columns.map(c => [c.id, empty()])),
-    summary: Object.fromEntries(['quota', 'allocated', 'remaining'].map(key => [key, empty()])),
+    summary: Object.fromEntries(summaryKeys.map(key => [key, empty()])),
   }
   function add(target, quantity, price) {
     if (quantity == null) {
@@ -44,6 +44,19 @@ export function aggregateGroupBuy(rows, columns, columnQuantity, rowTotals) {
     const totals = rowTotals(row)
     for (const key of Object.keys(result.summary)) add(result.summary[key], totals[key], price)
     for (const column of columns) add(result.columns.get(column.id), columnQuantity(row, column), price)
+  }
+  return result
+}
+
+export function groupBuyArrivalTotals(row, sources, received, orderQuantity = (row, id) => row.orders[id] || 0) {
+  const result = { received_total: 0, waiting_total: 0, over_received: 0 }
+  for (const source of sources) {
+    if (!source.counter) continue
+    const actual = received[`${row.id}:${source.id}`] || 0
+    const ordered = orderQuantity(row, source.id)
+    result.received_total += actual
+    result.waiting_total += Math.max(ordered - actual, 0)
+    result.over_received += Math.max(actual - ordered, 0)
   }
   return result
 }

@@ -56,6 +56,7 @@ const menuGroups = computed(() => [
     icon: 'ShoppingBag',
     children: [
       { path: '/group-buy', label: '团购订单与分配', permission: 'group_buy.manage' },
+      { path: '/group-buy/inbound', label: '采购入库关联', permission: 'group_buy.manage' },
     ],
   },
   {
@@ -135,7 +136,7 @@ function selectAppearance(name) {
 <template>
   <el-container
     class="app-shell"
-    :class="{ 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis'), 'is-sales-profit': $route.path === '/sales/profit-analysis' }"
+    :class="{ 'is-group-buy': $route.path.startsWith('/group-buy'), 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis'), 'is-sales-profit': $route.path === '/sales/profit-analysis' }"
   >
     <el-aside width="252px" class="sidebar">
       <div class="brand">
@@ -214,13 +215,18 @@ function selectAppearance(name) {
       </el-header>
 
       <el-main class="main-content">
-        <router-view :key="$route.path === '/group-buy' ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
+        <router-view :key="$route.path.startsWith('/group-buy') ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
       </el-main>
     </el-container>
   </el-container>
 </template>
 
 <style scoped>
+.app-shell.is-group-buy{height:100dvh;min-height:0;overflow:hidden}
+.is-group-buy>.el-container{height:100%;min-width:0;min-height:0}
+.is-group-buy .sidebar{height:100%;min-height:0;overflow-y:auto}
+.is-group-buy .topbar{flex-shrink:0;min-width:0}
+.is-group-buy .main-content{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain}
 .theme-button { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 10px; color: var(--text-soft); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
 .theme-button:hover { color: var(--accent-strong); border-color: var(--theme-soft-strong); background: var(--accent-soft); }
 .theme-swatch, .theme-option-swatch { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: 0 0 0 1px rgb(23 24 28 / 12%); }

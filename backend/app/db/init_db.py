@@ -11,6 +11,7 @@ from app.models.monthly_report import MonthlyOperatingReport  # noqa: F401
 from app.models.core_cost_price import CoreCostPriceRevision  # noqa: F401
 from app.models.user import Permission, Role, User
 from app.models.group_buy import GroupBuyBatch, GroupBuyChange  # noqa: F401
+from app.models import group_buy_inbound  # noqa: F401
 
 
 PERMISSION_DEFINITIONS = [

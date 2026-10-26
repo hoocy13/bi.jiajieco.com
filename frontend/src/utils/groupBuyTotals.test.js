@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { aggregateGroupBuy, formatCents, formatPrice, priceCents } from './groupBuyTotals.js'
+import { aggregateGroupBuy, formatCents, formatPrice, priceCents, groupBuyArrivalTotals } from './groupBuyTotals.js'
 
 test('sums decimal prices exactly, including amounts beyond safe float precision', () => {
   assert.equal(priceCents('0.10') * 3n + priceCents('0.20'), 50n)
@@ -47,4 +47,20 @@ test('preserves unknown quota, negative remaining amounts and customer summary g
   assert.equal(formatCents(result.summary.remaining.amount), '待维护')
   const negative = aggregateGroupBuy(rows.slice(1), [], () => 0, row => row.totals)
   assert.deepEqual(negative.summary.remaining, { quantity: -1, amount: -250n })
+})
+
+test('arrival totals keep counter shortages separate from excess and ignore non-counter stock', () => {
+  const row={id:'p',orders:{a:10,b:10,stock:99}}
+  const sources=[{id:'a',counter:true},{id:'b',counter:true},{id:'stock',counter:false}]
+  assert.deepEqual(groupBuyArrivalTotals(row,sources,{'p:a':15,'p:b':5,'p:stock':99}),{received_total:20,waiting_total:5,over_received:5})
+  assert.deepEqual(groupBuyArrivalTotals(row,sources,{'p:a':-2}),{received_total:-2,waiting_total:22,over_received:0})
+  assert.deepEqual(groupBuyArrivalTotals(row,sources,{'p:a':15,'p:b':5},(p,id)=>id==='b'?12:p.orders[id]),{received_total:20,waiting_total:7,over_received:5})
+})
+
+test('arrival footer totals aggregate the displayed product set and preserve unavailable quantities', () => {
+  const rows=[{price:'2.50',summary:{quota:10,received_total:4,waiting_total:6}},{price:'1.00',summary:{quota:5,received_total:2,waiting_total:3}}]
+  const keys=['quota','received_total','waiting_total']
+  assert.deepEqual(aggregateGroupBuy(rows,[],()=>0,r=>r.summary,keys).summary.waiting_total,{quantity:9,amount:1800n})
+  assert.equal(aggregateGroupBuy(rows.slice(0,1),[],()=>0,r=>r.summary,keys).summary.received_total.quantity,4)
+  assert.equal(aggregateGroupBuy([{price:'1',summary:{received_total:null}}],[],()=>0,r=>r.summary,['received_total']).summary.received_total.quantity,null)
 })
