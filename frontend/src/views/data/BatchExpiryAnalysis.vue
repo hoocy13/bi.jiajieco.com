@@ -124,7 +124,7 @@ const longExpiryChartRows = computed(() => analysis.value.long_expiry_rows
   .reverse())
 
 const fefoChartOption = computed(() => ({
-  color: ['#d94a4a'],
+  color: [chartTheme.primary],
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'shadow' },

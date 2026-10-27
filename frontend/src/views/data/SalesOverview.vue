@@ -8,11 +8,12 @@ import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/compon
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import { getSalesOverview } from '../../api/sales'
-import { getSavedTheme } from '../../utils/theme'
+import { useThemeStore } from '../../stores/theme'
 
 use([CanvasRenderer, BarChart, LineChart, GridComponent, LegendComponent, TooltipComponent])
 
-const chartTheme = getSavedTheme()
+const theme = useThemeStore()
+const chartTheme = computed(() => theme.current)
 
 const loading = ref(false)
 const selectedRange = ref('last_30')
@@ -66,7 +67,7 @@ const metrics = computed(() => [
 ])
 
 const trendOption = computed(() => ({
-  color: [chartTheme.primary, chartTheme.secondary],
+  color: [chartTheme.value.primary, chartTheme.value.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#111827',
@@ -118,7 +119,7 @@ const trendOption = computed(() => ({
 }))
 
 const channelBarOption = computed(() => ({
-  color: [chartTheme.primary],
+  color: [chartTheme.value.primary],
   tooltip: {
     trigger: 'axis',
     axisPointer: { type: 'shadow' },
@@ -168,8 +169,8 @@ const channelBarOption = computed(() => ({
           x2: 1,
           y2: 0,
           colorStops: [
-            { offset: 0, color: chartTheme.primary },
-            { offset: 1, color: chartTheme.secondary },
+            { offset: 0, color: chartTheme.value.primary },
+            { offset: 1, color: chartTheme.value.secondary },
           ],
         },
       },
@@ -218,7 +219,7 @@ onMounted(fetchOverview)
 </script>
 
 <template>
-  <div class="page-stack" v-loading="loading">
+  <div class="page-stack sales-overview-page" v-loading="loading">
     <section class="toolbar-panel sales-filter">
       <div class="filter-controls">
         <el-segmented v-model="selectedRange" :options="rangeOptions" @change="handleRangeChange" />

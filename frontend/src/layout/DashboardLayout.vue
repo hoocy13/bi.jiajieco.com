@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useRequestStatusStore } from '../stores/requestStatus'
@@ -10,6 +10,10 @@ const router = useRouter()
 const auth = useAuthStore()
 const requestStatus = useRequestStatusStore()
 const theme = useThemeStore()
+const filterRefresh = ref(false)
+watch(() => route.fullPath, (next, previous) => {
+  filterRefresh.value = next.split(/[?#]/)[0] === previous.split(/[?#]/)[0]
+})
 theme.initialize()
 
 const title = computed(() => route.meta.title || '经营总览')
@@ -161,11 +165,28 @@ function selectAppearance(name) {
           <h1>{{ title }}</h1>
         </div>
         <div class="top-actions">
-          <div class="request-status" :class="{ 'is-loading': requestStatus.isLoading }">
+          <el-dropdown trigger="click" @command="theme.applyStyle">
+            <button class="theme-button" aria-label="选择界面版本">
+              <el-icon><component :is="theme.currentStyle.icon" /></el-icon>
+              <span>版本 · {{ theme.currentStyle.label }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="option in theme.styleOptions" :key="option.name" :command="option.name" :class="{ 'is-selected-theme': option.name === theme.interfaceStyle }">
+                  <el-icon><component :is="option.icon" /></el-icon>
+                  {{ option.label }}
+                  <el-icon v-if="option.name === theme.interfaceStyle"><Check /></el-icon>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <el-tooltip :content="requestStatus.statusText" placement="bottom" :show-after="200">
+          <div class="request-status request-status--compact" tabindex="0" :aria-label="requestStatus.statusText" :class="{ 'is-loading': requestStatus.isLoading }">
             <el-icon v-if="requestStatus.isLoading" class="is-loading"><Loading /></el-icon>
             <el-icon v-else><Timer /></el-icon>
-            <span>{{ requestStatus.statusText }}</span>
           </div>
+          </el-tooltip>
           <el-dropdown trigger="click" @command="selectTheme">
             <button class="theme-button" aria-label="选择网页色调">
               <span class="theme-swatch" :style="{ background: theme.current.primary }"></span>
@@ -214,7 +235,7 @@ function selectAppearance(name) {
         </div>
       </el-header>
 
-      <el-main class="main-content">
+      <el-main class="main-content" :class="{ 'is-filter-refresh': filterRefresh }">
         <router-view :key="$route.path.startsWith('/group-buy') ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
       </el-main>
     </el-container>

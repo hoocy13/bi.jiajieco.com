@@ -5,6 +5,7 @@ import { createPinia } from 'pinia'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import './style.css'
+import './interface-style.css'
 import App from './App.vue'
 import router from './router'
 

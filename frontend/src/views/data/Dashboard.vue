@@ -5,24 +5,25 @@ import { useAuthStore } from '../../stores/auth'
 import VChart from '../../components/common/ThemedChart.vue'
 import { registerMap, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { CustomChart, LineChart, PieChart } from 'echarts/charts'
+import { BarChart, CustomChart, LineChart, PieChart } from 'echarts/charts'
 import { GeoComponent, GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import MetricCard from '../../components/dashboard/MetricCard.vue'
 import ExportExcelButton from '../../components/common/ExportExcelButton.vue'
 import chinaGeoJson from '../../assets/china.json'
 import { getDashboardSummary } from '../../api/dashboard'
 import { getSalesBrandAnalysis } from '../../api/sales'
-import { getSavedTheme } from '../../utils/theme'
+import { useThemeStore } from '../../stores/theme'
 import { getActiveAnnouncements } from '../../api/announcements'
 
-use([CanvasRenderer, CustomChart, LineChart, PieChart, GeoComponent, GridComponent, LegendComponent, TooltipComponent])
+use([CanvasRenderer, BarChart, CustomChart, LineChart, PieChart, GeoComponent, GridComponent, LegendComponent, TooltipComponent])
 registerMap('china', chinaGeoJson)
 
-const chartTheme = getSavedTheme()
+const theme = useThemeStore()
+const isApple = computed(() => theme.interfaceStyle === 'glass')
 const router = useRouter()
 const auth = useAuthStore()
-const palette = [chartTheme.primary, chartTheme.secondary, '#64748b', '#d8a23a', chartTheme.pale, '#14b8a6', '#f97316']
-const mapPieColors = [chartTheme.primary, chartTheme.secondary, '#d8a23a', '#64748b']
+const palette = computed(() => [theme.current.primary, theme.current.secondary, '#64748b', '#d8a23a', theme.current.pale, '#14b8a6', '#f97316'])
+const mapPieColors = computed(() => isApple.value ? palette.value.slice(0, 4) : [theme.current.primary, theme.current.secondary, '#d8a23a', '#64748b'])
 
 const summary = ref({
   cards: [],
@@ -147,7 +148,7 @@ function openInsight(path = '/ai/decisions') {
 }
 
 const trendOption = computed(() => ({
-  color: [chartTheme.primary, chartTheme.secondary],
+  color: [theme.current.primary, theme.current.secondary],
   tooltip: {
     trigger: 'axis',
     backgroundColor: '#111217',
@@ -218,7 +219,7 @@ const trendOption = computed(() => ({
 
 function pieOption(title, data) {
   return {
-    color: palette,
+    color: palette.value,
     tooltip: {
       trigger: 'item',
       backgroundColor: '#111217',
@@ -251,9 +252,24 @@ function pieOption(title, data) {
 
 const channelOption = computed(() => pieOption('订单实付金额', channelPieData.value))
 const brandOption = computed(() => pieOption('明细分摊销售额', brandPieData.value))
+const rankedBrands = computed(() => [...brandRows.value].sort((a, b) => Number(b.paid_amount || 0) - Number(a.paid_amount || 0)).slice(0, 10))
+const brandRankOption = computed(() => ({
+  grid: { top: 18, left: 24, right: 110, bottom: 36, containLabel: true },
+  tooltip: {
+    trigger: 'axis', axisPointer: { type: 'shadow' },
+    formatter: (items) => {
+      const row = rankedBrands.value[items[0]?.dataIndex]
+      if (!row) return ''
+      return `${row.brand || '未归类'}<br/>分摊销售额：${formatNumber(row.paid_amount, 2)} 元<br/>销售数量：${formatNumber(row.quantity)} 件<br/>订单数：${formatNumber(row.orders)} 单`
+    },
+  },
+  xAxis: { type: 'value', axisLabel: { formatter: value => formatWan(value, 0), color: theme.isDark ? '#a1a1a6' : '#6e6e73' }, splitLine: { lineStyle: { color: theme.isDark ? '#35353b' : '#eeeef0' } } },
+  yAxis: { type: 'category', inverse: true, data: rankedBrands.value.map(row => row.brand || '未归类'), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: theme.isDark ? '#f5f5f7' : '#1d1d1f', width: 120, overflow: 'truncate' } },
+  series: [{ type: 'bar', barMaxWidth: 20, data: rankedBrands.value.map(row => Number(row.paid_amount || 0)), itemStyle: { color: theme.current.primary, borderRadius: 5 }, label: { show: true, position: 'right', color: theme.isDark ? '#c8c8ce' : '#515158', formatter: item => formatWan(item.value) } }],
+}))
 
 const geoPieOption = computed(() => ({
-  color: mapPieColors,
+  color: mapPieColors.value,
   tooltip: {
     trigger: 'item',
     show: true,
@@ -317,7 +333,7 @@ const geoPieOption = computed(() => ({
               clockwise: true,
             },
             style: {
-              fill: mapPieColors[index % mapPieColors.length],
+              fill: mapPieColors.value[index % mapPieColors.value.length],
               stroke: '#ffffff',
               lineWidth: 1,
             },
@@ -344,7 +360,11 @@ const geoPieOption = computed(() => ({
 </script>
 
 <template>
-  <div class="page-stack">
+  <div class="page-stack dashboard-home" :class="{ 'apple-home': isApple }">
+    <section v-if="isApple" class="apple-welcome">
+      <div><h2>30天，都值得看见。</h2></div>
+      <el-button v-if="auth.hasPermission('sales.view')" type="primary" round @click="router.push('/sales/overview')">查看销售分析 <el-icon><ArrowRight /></el-icon></el-button>
+    </section>
     <section v-if="announcements.length" class="dashboard-announcements" aria-label="系统公告">
       <article v-for="item in announcements" :key="item.id" class="dashboard-announcement">
         <el-icon><Bell /></el-icon>
@@ -384,7 +404,7 @@ const geoPieOption = computed(() => ({
       </article>
     </section>
 
-    <div class="content-grid">
+    <div class="content-grid dashboard-primary-charts">
       <section class="panel wide">
         <header><h2>近七日订单实付趋势<span class="panel-source">（订单头实付金额口径）</span></h2></header>
         <v-chart class="chart" :option="trendOption" autoresize />
@@ -395,7 +415,7 @@ const geoPieOption = computed(() => ({
       </section>
     </div>
 
-    <div class="content-grid">
+    <div class="content-grid dashboard-secondary-charts">
       <section class="panel">
         <header><h2>城市渠道构成<span class="panel-source">（订单头实付金额口径）</span></h2></header>
         <v-chart class="map-chart map-chart-compact" :option="geoPieOption" autoresize />
@@ -405,6 +425,11 @@ const geoPieOption = computed(() => ({
         <v-chart class="chart" :option="brandOption" autoresize />
       </section>
     </div>
+    <section v-if="isApple" class="panel apple-brand-ranking">
+      <header><h2>品牌销售排行<span class="panel-source">近30天 · 销售额前10名 · 明细分摊销售额</span></h2><el-button v-if="auth.hasPermission('sales.view')" link @click="router.push('/sales/brand-analysis')">查看品牌分析</el-button></header>
+      <v-chart v-if="rankedBrands.length" style="height: 420px" :option="brandRankOption" autoresize />
+      <el-empty v-else description="暂无品牌数据" />
+    </section>
   </div>
 </template>
 

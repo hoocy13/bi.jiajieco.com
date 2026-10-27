@@ -113,7 +113,7 @@ onMounted(() => fetchDetail())
 </script>
 
 <template>
-  <div class="page-stack" v-loading="loading">
+  <div class="page-stack sales-detail-page" v-loading="loading">
     <section class="toolbar-panel sales-filter">
       <div class="filter-controls">
         <el-segmented v-model="selectedRange" :options="rangeOptions" @change="handleRangeChange" />

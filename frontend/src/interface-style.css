@@ -1,0 +1,225 @@
+/* Web approximation inspired by Apple materials. Keep data surfaces opaque;
+   limit backdrop sampling to navigation and floating controls. */
+:root[data-interface-style='glass'] {
+  --bg: #ededf0;
+  --surface: #fff;
+  --surface-soft: #fafafc;
+  --surface-muted: #eeeef2;
+  --border: #e4e5eb;
+  --text: #1d1d1f;
+  --text-soft: #515158;
+  --muted: #6e6e73;
+  --ambient-start: #eeeffa;
+  --ambient-end: #f8f5fc;
+  --business-sales: #c93864;
+  --business-inventory: #34785b;
+  --el-text-color-primary: var(--text);
+  --el-text-color-regular: var(--text-soft);
+  --radius: 12px;
+  --glass-fill: rgb(255 255 255 / 0.76);
+  --glass-edge: rgb(255 255 255 / 0.8);
+  --glass-shadow: 0 8px 28px rgb(0 0 0 / 0.055), inset 0 1px 0 rgb(255 255 255 / 0.7);
+  --shadow: var(--glass-shadow);
+  --el-border-radius-base: 10px;
+}
+
+:root[data-interface-style='glass'][data-theme='rose'] {
+  --ambient-start: #faedf2;
+  --ambient-end: #fcf6f0;
+}
+:root[data-interface-style='glass'][data-theme='green'] {
+  --ambient-start: #edf5ed;
+  --ambient-end: #f3f7ed;
+}
+
+:root[data-interface-style='glass'][data-appearance='dark'][data-theme] {
+  --ambient-start: color-mix(in srgb, var(--theme-primary) 12%, #111114);
+  --ambient-end: color-mix(in srgb, var(--theme-secondary) 6%, #111114);
+  --bg: #111114;
+  --surface: #1c1c1e;
+  --surface-soft: #242426;
+  --surface-muted: #2c2c30;
+  --border: #35353b;
+  --text: #f5f5f7;
+  --text-soft: #c8c8ce;
+  --muted: #a1a1a6;
+  --business-sales: #ff759b;
+  --business-inventory: #73c69b;
+  --glass-fill: rgb(28 28 30 / 0.88);
+  --glass-edge: rgb(255 255 255 / 0.13);
+  --glass-shadow: 0 8px 28px rgb(0 0 0 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.07);
+}
+
+:root[data-interface-style='glass'] .app-shell {
+  background: var(--bg);
+}
+
+@media (min-width: 961px) {
+  :root[data-interface-style='glass'] .app-shell > .sidebar {
+    width: 224px !important;
+    margin: 12px 0 12px 12px;
+    border: 1px solid var(--glass-edge);
+    border-radius: 22px;
+  }
+  :root[data-interface-style='glass'] .app-shell:is(.is-group-buy, .is-sales-profit) > .sidebar { height: calc(100% - 24px); }
+  :root[data-interface-style='glass'] .topbar { margin: 12px 20px 0; border: 1px solid var(--glass-edge); border-radius: 18px; }
+}
+
+:root[data-interface-style='glass'] .apple-home { gap: 24px; max-width: 1600px; margin: 0 auto; }
+:root[data-interface-style='glass'] .apple-welcome { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 4px 8px; }
+:root[data-interface-style='glass'] .apple-eyebrow { color: var(--muted); font-size: 12px; font-weight: 600; }
+:root[data-interface-style='glass'] .apple-welcome h2 { margin: 12px 0; font-size: clamp(25px, 2.5vw, 38px); letter-spacing: -0.035em; font-weight: 650; }
+:root[data-interface-style='glass'] .apple-welcome p { margin: 0; color: var(--text-soft); font-size: 14px; line-height: 1.6; }
+:root[data-interface-style='glass'] .apple-welcome .el-button { flex-shrink: 0; padding: 20px; }
+:root[data-interface-style='glass'] .apple-home .dashboard-announcements { order: -2; }
+:root[data-interface-style='glass'] .apple-home .apple-welcome { order: -1; }
+:root[data-interface-style='glass'] .apple-home .dashboard-metrics { order: 0; }
+:root[data-interface-style='glass'] .apple-home .dashboard-primary-charts { order: 1; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); }
+:root[data-interface-style='glass'] .apple-home .insight-grid { order: 2; }
+:root[data-interface-style='glass'] .apple-home .dashboard-secondary-charts { order: 3; }
+:root[data-interface-style='glass'] .apple-home .apple-brand-ranking { order: 4; overflow: hidden; }
+:root[data-interface-style='glass'] .apple-home .insight-panel { border-radius: 18px; padding: 0 20px 20px; box-shadow: var(--glass-shadow); }
+:root[data-interface-style='glass'] .apple-home .metric-card { padding: 24px; border-radius: 20px; }
+:root[data-interface-style='glass'] .apple-home .metric-value strong { font-size: clamp(30px, 3vw, 42px); font-weight: 650; letter-spacing: -0.03em; }
+:root[data-interface-style='glass'] .apple-home .panel > header { padding: 20px; }
+:root[data-interface-style='glass'] .apple-home .panel-source { display: block; margin: 6px 0 0; font-weight: 400; }
+:root[data-interface-style='glass'] .theme-button:focus-visible { outline: 2px solid var(--theme-primary); outline-offset: 3px; }
+@media (max-width: 980px) {
+  :root[data-interface-style='glass'] .apple-home .dashboard-primary-charts { grid-template-columns: 1fr; }
+  :root[data-interface-style='glass'] .apple-welcome { align-items: flex-start; flex-direction: column; gap: 16px; }
+}
+
+:root[data-interface-style='glass'] :is(.sidebar, .topbar) {
+  background: var(--glass-fill);
+  border-color: var(--glass-edge);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  backdrop-filter: blur(18px) saturate(130%);
+  box-shadow: var(--glass-shadow);
+}
+
+:root[data-interface-style='glass'] .side-menu .el-menu-item.is-active {
+  box-shadow: inset 3px 0 0 var(--theme-primary);
+}
+
+:root[data-interface-style='glass'] .app-shell :is(.panel, .toolbar-panel, .metric-card, .el-card, .arrival-panel, .flow-panel, .channel-kpi-card, .brand-kpi-card) {
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+}
+
+:root[data-interface-style='glass'] .app-shell :is(.theme-button, .user-button, .request-status) {
+  border-radius: 12px;
+  border-color: var(--glass-edge);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-edge);
+}
+
+/* Poppers are teleported to body, so scope them via the root style setting. */
+:root[data-interface-style='glass'] :is(.el-popper.is-light, .el-dialog, .el-drawer) {
+  background: var(--glass-fill);
+  border-color: var(--glass-edge);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  backdrop-filter: blur(18px) saturate(130%);
+}
+
+:root[data-interface-style='glass'] .el-dropdown-menu { background: transparent; }
+:root[data-interface-style='glass'] .el-dropdown-menu__item { margin: 2px 4px; border-radius: 8px; }
+
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-interface-style='glass'] :is(.sidebar, .topbar, .el-popper.is-light, .el-dialog, .el-drawer) {
+    background: var(--surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-interface-style='glass'] :is(.sidebar, .topbar, .el-popper.is-light, .el-dialog, .el-drawer) { background: var(--surface); }
+}
+
+/* The additional preference must remain reachable at narrower widths. */
+@media (max-width: 1280px) {
+  .app-shell .topbar { height: auto; min-height: 68px; flex-wrap: wrap; gap: 10px; padding: 12px 18px; }
+  .app-shell .top-actions { flex-wrap: wrap; gap: 6px; max-width: 100%; }
+  .app-shell .top-actions > * { flex-shrink: 0; }
+  .app-shell .theme-button, .app-shell .user-button { white-space: nowrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-interface-style='glass'] .metric-card { transition: none; }
+  :root[data-interface-style='glass'] .metric-card:hover { transform: none; }
+}
+:root[data-interface-style='glass'] .apple-home .metric-card:first-child { background: var(--theme-strong); border-color: var(--theme-strong); box-shadow: var(--glass-shadow); }
+:root[data-interface-style='glass'] .apple-home .metric-card:first-child .metric-value strong { color: #fff; }
+:root[data-interface-style='glass'] .apple-home .metric-card:first-child :is(.metric-label, .metric-value span, .metric-trend) { color: #c7c7cc; }
+:root[data-interface-style='glass'] .side-menu .el-menu-item.is-active { box-shadow: none; }
+:root[data-interface-style='glass'] .side-menu :is(.el-menu-item, .el-sub-menu__title):hover { background: var(--theme-soft); color: var(--theme-strong); }
+:root[data-interface-style='glass'][data-appearance='dark'] .apple-home .metric-card:first-child { background: var(--theme-soft-strong); border-color: var(--theme-soft-strong); }
+:root[data-interface-style='glass'] .brand-mark { background: var(--surface-muted); color: var(--text); border-color: var(--border); }
+
+/* Fade-up entrance: only compositor-friendly properties, no loading delay.
+   CSS animation also covers asynchronously inserted metric cards. */
+@keyframes apple-page-reveal {
+  from { opacity: 0; translate: 0 12px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* Home keeps headings and business content, without secondary annotations. */
+.request-status--compact { width: 34px; padding: 0; justify-content: center; cursor: help; }
+.request-status--compact:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dashboard-home .panel-source,
+.dashboard-home .metric-trend,
+.dashboard-home .insight-panel header > div > span,
+.dashboard-home .trend-callout > span { display: none !important; }
+:root[data-interface-style='glass'] .apple-welcome { padding-top: 8px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-interface-style='glass'] .main-content > :not(.apple-home) {
+    animation: apple-page-reveal 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  :root[data-interface-style='glass'] .apple-home > *,
+  :root[data-interface-style='glass'] .apple-home .dashboard-metrics > * {
+    animation: apple-page-reveal 560ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  :root[data-interface-style='glass'] .apple-home > .dashboard-metrics { animation: none; }
+  :root[data-interface-style='glass'] .apple-home .dashboard-metrics > :nth-child(2) { animation-delay: 60ms; }
+  :root[data-interface-style='glass'] .apple-home .dashboard-metrics > :nth-child(n+3) { animation-delay: 100ms; }
+  :root[data-interface-style='glass'] .apple-home > .dashboard-primary-charts { animation-delay: 110ms; }
+  :root[data-interface-style='glass'] .apple-home > .insight-grid { animation-delay: 160ms; }
+  :root[data-interface-style='glass'] .apple-home > :is(.dashboard-secondary-charts, .apple-brand-ranking) { animation-delay: 200ms; }
+}
+.sales-detail-page .sales-filter { flex-wrap: wrap; gap: 12px; align-items: center; }
+.sales-detail-page .filter-controls { flex: 1 1 780px; min-width: 0; }
+.sales-detail-page .filter-controls .el-date-editor { width: 300px; flex: 0 0 300px; }
+.sales-detail-page .filter-input { width: 150px; }
+.sales-detail-page .filter-select { width: 120px; }
+.sales-detail-page .range-summary { flex-shrink: 0; white-space: nowrap; }
+@media (max-width: 960px) {
+  .sales-detail-page .filter-controls { flex-basis: auto; }
+  .sales-detail-page .filter-controls .el-date-editor { width: 100%; flex: 1 1 100%; }
+}
+/* Shared compact filters: reserve room for actions, wrap only as a group. */
+.app-shell .sales-filter { flex-wrap: wrap; align-items: center; gap: 12px; }
+.app-shell .sales-filter .filter-controls { flex: 1 1 780px; min-width: 0; gap: 8px; }
+.app-shell .sales-filter .filter-controls .el-date-editor { width: 288px; flex: 0 0 288px; }
+.app-shell .sales-filter .filter-input { width: 150px; }
+.app-shell .sales-filter .filter-select { width: 126px; }
+.app-shell .sales-filter .range-summary { margin-left: auto; flex: 0 0 auto; white-space: nowrap; }
+.app-shell .el-table .cell { font-variant-numeric: tabular-nums; }
+:root[data-appearance='dark'][data-theme='mono'] { --theme-primary: #b9b9c2; --theme-strong: #ededf2; --theme-soft: #2c2c32; --theme-soft-strong: #48484f; --theme-secondary: #92929c; --theme-pale: #65656f; }
+:root[data-interface-style='glass'][data-theme='mono'] .apple-home .metric-card:first-child { background: #252529; border-color: #45454b; }
+@media (max-width: 960px) {
+  .app-shell .sales-filter .filter-controls { flex-basis: auto; }
+  .app-shell .sales-filter .filter-controls .el-date-editor { width: 100%; flex: 1 1 100%; }
+  .app-shell .sales-filter .filter-input, .app-shell .sales-filter .filter-select { width: 100%; }
+  .app-shell .sales-filter .range-summary { margin-left: 0; white-space: normal; }
+}
+:root[data-interface-style='glass'] .main-content.is-filter-refresh > *,
+:root[data-interface-style='glass'] .main-content.is-filter-refresh .apple-home > *,
+:root[data-interface-style='glass'] .main-content.is-filter-refresh .dashboard-metrics > * { animation: none; }
+:root[data-theme='mono'] { --theme-primary: #45454b; --theme-strong: #252529; --theme-soft: #eeeef0; --theme-soft-strong: #d6d6da; --theme-secondary: #8b8b93; --theme-pale: #c6c6cc; }
+:root[data-appearance='dark'][data-theme='mono'] { --theme-primary: #b9b9c2; --theme-strong: #ededf2; --theme-soft: #2c2c32; --theme-soft-strong: #48484f; --theme-secondary: #92929c; --theme-pale: #65656f; }
+@media (min-width: 1400px) {
+  .app-shell .sales-filter .filter-controls { flex-basis: 100%; }
+}

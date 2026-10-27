@@ -30,7 +30,7 @@ const trendOption = computed(() => ({
   grid: { top: 28, left: 70, right: 22, bottom: 42 },
   xAxis: { type: 'category', data: result.value.trend.map(item => dateText(item.date).slice(5)), axisTick: { show: false }, axisLabel: { color: '#667085' } },
   yAxis: { type: 'value', splitLine: { lineStyle: { color: '#edf1f6' } }, axisLabel: { color: '#667085', formatter: value => `${money(value / 10000, 0)}万` } },
-  series: [{ type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 3 }, areaStyle: { opacity: 0.12 }, data: result.value.trend.map(item => item.paid_amount), markPoint: { symbolSize: 48, data: result.value.anomalies.map(item => ({ coord: [dateText(item.date).slice(5), item.paid_amount], itemStyle: { color: item.direction === 'up' ? '#e61d4f' : '#16a36a' } })) } }],
+  series: [{ type: 'line', smooth: false, symbol: 'none', lineStyle: { width: 3 }, areaStyle: { opacity: 0.12 }, data: result.value.trend.map(item => item.paid_amount), markPoint: { symbolSize: 48, data: result.value.anomalies.map(item => ({ coord: [dateText(item.date).slice(5), item.paid_amount], itemStyle: { color: item.direction === 'up' ? '#e61d4f' : '#16a36a' } })) } }],
 }))
 const brandOption = computed(() => ({
   color: [chartTheme.primary],

@@ -9,6 +9,7 @@ import CustomerChurnAlerts from './CustomerChurnAlerts.vue'
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const qualityVisible = ref(true)
 const activeView = ref(route.query.view === 'churn' ? 'churn' : 'overview')
 const page = ref(Number(route.query.page) || 1)
 const pageSize = ref(Number(route.query.page_size) || 20)
@@ -189,7 +190,8 @@ onMounted(() => { if (activeView.value === 'overview') load() })
     </section>
 
     <template v-else>
-    <section class="quality-strip" :class="`grade-${data.quality.grade.toLowerCase()}`">
+    <section v-if="qualityVisible" class="quality-strip" :class="`grade-${data.quality.grade.toLowerCase()}`">
+      <el-button class="quality-close" text circle aria-label="关闭客户数据可信等级提示" @click="qualityVisible = false"><el-icon><Close /></el-icon></el-button>
       <div><span>客户数据可信等级</span><strong>{{ data.quality.grade }}</strong></div>
       <div><span>订单识别率</span><strong>{{ number(data.quality.identified_order_rate, 1) }}%</strong></div>
       <div><span>销售额识别率</span><strong>{{ number(data.summary.identified_amount_rate, 1) }}%</strong></div>
@@ -256,6 +258,8 @@ onMounted(() => { if (activeView.value === 'overview') load() })
 </template>
 
 <style scoped>
+.quality-strip { position: relative; padding-right: 48px !important; }
+.quality-close { position: absolute; top: 8px; right: 8px; }
 .customer-page { display: grid; gap: 14px; color: #172033; }
 .view-tabs { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: #fff; border: 1px solid var(--border); border-radius: 8px; }.view-tabs > span { color: #7a8699; font-size: 12px; }
 .customer-hero, .customer-toolbar, .panel, .metric-grid article { background: #fff; border: 1px solid var(--border); border-radius: 8px; }
