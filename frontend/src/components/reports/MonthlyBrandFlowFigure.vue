@@ -13,7 +13,7 @@ const scale=computed(()=>{
 })
 const x=n=>150+(n/10000-scale.value.low)/(scale.value.high-scale.value.low)*500
 const number=n=>Number(n).toLocaleString('zh-CN',{maximumFractionDigits:2})
-const series=[{field:'inbound_quantity',label:'净采购入库',color:'#506fe0',direction:1,offset:0},{field:'sales_quantity',label:'净销售（左向）',color:'#555779',direction:-1,offset:23},{field:'ending_quantity',label:'月末总库存',color:'#b0d72b',direction:1,offset:23}]
+const series=[{field:'inbound_quantity',label:'净采购入库',color:'#365f25',direction:1,offset:0},{field:'sales_quantity',label:'净销售（左向）',color:'#50536f',direction:-1,offset:23},{field:'ending_quantity',label:'月末总库存',color:'#ff9948',direction:1,offset:23}]
 const directed=(row,s)=>row[s.field]*s.direction
 </script>
 <template>

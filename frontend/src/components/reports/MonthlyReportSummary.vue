@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { reportAmount } from '../../utils/monthlyReportFormat'
+import MonthlyCustomerFigure from './MonthlyCustomerFigure.vue'
 import MonthlyOperatingAnalysis from './MonthlyOperatingAnalysis.vue'
 import { buildMonthlyComparison, periodMonth } from '../../utils/monthlyReportComparison'
 import { summarizeReportChannels } from '../../utils/monthlyReportChannels'
@@ -120,8 +121,8 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
       <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="drivers" />
     </section>
     <section class="summary-panel">
-      <h2>六、客户情况</h2>
-      <div class="mini-metrics"><div><span>可识别客户</span><b>{{ number(customer.customers) }}</b></div><div><span>月内复购客户</span><b>{{ number(customer.repeat_customers) }}</b></div><div><span>月内复购率</span><b>{{ percent(customer.repeat_rate) }}</b></div></div>
+      <h2>六、客户与成交基础</h2>
+      <MonthlyCustomerFigure :customer="customer" />
     </section>
     <section class="summary-panel">
       <h2>七、前五品牌进销存</h2>

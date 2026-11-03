@@ -1,16 +1,14 @@
 <script setup>
 import { computed } from 'vue'
-import { buildManagementReview } from '../../utils/monthlyReportDecision'
+import MonthlySupplyActions from './MonthlySupplyActions.vue'
 const props=defineProps({artifact:Object,month:String})
 const data=computed(()=>props.artifact?.snapshot?.datasets||{})
-const review=computed(()=>buildManagementReview(data.value,props.month))
+
 </script>
 <template>
  <article class="report-paper report-conclusion">
-  <h2>九、经营判断与下月重点</h2>
-  <div class="review-scroll"><table class="review-table"><thead><tr><th>重点</th><th>已核实事实</th><th>建议动作（待确认）</th><th>下月核对</th></tr></thead><tbody>
-   <tr v-for="row in review" :key="row.topic" class="review-row"><th>{{ row.topic }}</th><td>{{ row.fact }}</td><td>{{ row.advice }}</td><td>{{ row.metric }}</td></tr>
-  </tbody></table></div>
+  <h2>九、下月经营核查清单</h2>
+  <MonthlySupplyActions :data="data" />
   <p v-for="note in data.report_quality_notes||[]" :key="note.scope" class="quality-note">{{ note.text }}</p>
  </article>
 </template>
