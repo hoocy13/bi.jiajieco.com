@@ -51,6 +51,7 @@ const routes = [
       { path: 'ai/decisions', component: AiDecisionCenter, meta: { title: '智能洞察', permission: 'ai.decision.view' } },
       { path: 'ai/query', component: SmartQuery, meta: { title: '智能问数', permissionsAny: ['ai.text_to_sql.use', 'ai.assistant.use'] } },
       { path: 'ai/analysis', component: AnalysisWorkspace, meta: { title: '分析工作台', permission: 'ai.decision.view' } },
+      { path: 'tools/document-recognition', component: () => import('../views/data/DocumentRecognition.vue'), meta: { title: '文档识别', permission: 'dashboard.view' } },
       { path: 'ai/text-to-sql', redirect: '/ai/query?mode=query' },
       { path: 'ai/assistant', redirect: '/ai/query?mode=assistant' },
       { path: 'sales', redirect: '/sales/overview' },

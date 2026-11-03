@@ -98,6 +98,14 @@ const menuGroups = computed(() => [
     ],
   },
   {
+    key: 'tools',
+    label: '效率工具',
+    icon: 'Tools',
+    children: [
+      { path: '/tools/document-recognition', label: '文档识别', permission: 'dashboard.view' },
+    ],
+  },
+  {
     key: 'system',
     label: '系统管理',
     icon: 'Setting',
@@ -236,7 +244,7 @@ function selectAppearance(name) {
       </el-header>
 
       <el-main class="main-content" :class="{ 'is-filter-refresh': filterRefresh }">
-        <router-view :key="$route.path.startsWith('/group-buy') ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
+        <router-view :key="$route.path.startsWith('/group-buy') || $route.path.startsWith('/tools/document-recognition') ? $route.path : `${$route.fullPath}-${theme.name}-${theme.resolvedAppearance}`" />
       </el-main>
     </el-container>
   </el-container>

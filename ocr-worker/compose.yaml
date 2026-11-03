@@ -1,0 +1,26 @@
+services:
+  ocr-worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    read_only: true
+    volumes:
+      - layout_models:/home/worker/.paddlex
+      - layout_cache:/home/worker/.cache
+    tmpfs:
+      - /tmp:size=128m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 4g
+    cpus: 2
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  layout_models:
+  layout_cache:

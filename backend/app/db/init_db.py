@@ -12,6 +12,7 @@ from app.models.core_cost_price import CoreCostPriceRevision  # noqa: F401
 from app.models.user import Permission, Role, User
 from app.models.group_buy import GroupBuyBatch, GroupBuyChange  # noqa: F401
 from app.models import group_buy_inbound  # noqa: F401
+from app.models import ocr  # noqa: F401
 
 
 PERMISSION_DEFINITIONS = [
@@ -151,6 +152,20 @@ def seed_roles(db: Session) -> dict[str, Role]:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    if "max_tokens" not in {column["name"] for column in inspect(engine).get_columns("ocr_jobs")}:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ocr_jobs ADD COLUMN max_tokens INTEGER NOT NULL DEFAULT 4096"))
+    if "mode" not in {column["name"] for column in inspect(engine).get_columns("ocr_jobs")}:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ocr_jobs ADD COLUMN mode VARCHAR(16) NOT NULL DEFAULT 'page'"))
+    if "region_ready" not in {column["name"] for column in inspect(engine).get_columns("ocr_workers")}:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE ocr_workers ADD COLUMN region_ready BOOLEAN NOT NULL DEFAULT FALSE"))
+    ocr_columns = {column["name"] for column in inspect(engine).get_columns("ocr_jobs")}
+    for column in ("regions_done", "regions_total"):
+        if column not in ocr_columns:
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE ocr_jobs ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"))
     ensure_user_columns()
     ensure_role_columns()
     ensure_monthly_report_columns()

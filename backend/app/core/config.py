@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     OPENAI_MODEL_ID: str = ""
     OPENAI_TIMEOUT_SECONDS: int = 120
 
+    OCR_WORKER_KEY: str = ""
+
     RAG_ENABLED: bool = False
     RAG_DATABASE_URL: str = ""
     RAG_REDIS_URL: str = ""
