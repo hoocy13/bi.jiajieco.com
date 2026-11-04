@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import MonthlySupplyActions from './MonthlySupplyActions.vue'
+import MonthlyOperatingConclusion from './MonthlyOperatingConclusion.vue'
 const props=defineProps({artifact:Object,month:String})
 const data=computed(()=>props.artifact?.snapshot?.datasets||{})
 
@@ -10,6 +11,7 @@ const data=computed(()=>props.artifact?.snapshot?.datasets||{})
   <h2>九、下月经营核查清单</h2>
   <MonthlySupplyActions :data="data" />
   <p v-for="note in data.report_quality_notes||[]" :key="note.scope" class="quality-note">{{ note.text }}</p>
+  <MonthlyOperatingConclusion :data="data" :month="month" />
  </article>
 </template>
 <style scoped>

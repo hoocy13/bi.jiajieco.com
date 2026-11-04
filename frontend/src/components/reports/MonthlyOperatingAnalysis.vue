@@ -23,15 +23,15 @@ function mix(brand) {
 <template>
   <div v-if="analysis" class="operating-analysis">
     <template v-if="section === 'trend'">
-      <MonthlyReportFigure v-if="analysis.channel_trends" type="trend" :trend="analysis.channel_trends" caption="图4-1　重点渠道连续三个月净销售额" />
-      <div v-if="analysis.channel_trends" class="analysis-table-scroll"><table><caption>表4-1　重点渠道月度销售额（万元）</caption><thead><tr><th>渠道</th><th v-for="month in analysis.channel_trends.months" :key="month">{{ month }}</th></tr></thead><tbody><tr v-for="series in analysis.channel_trends.series" :key="series.name"><td>{{ series.name }}</td><td v-for="(n,i) in series.values" :key="i">{{ amount(n) }}</td></tr></tbody></table></div>
+      <MonthlyReportFigure v-if="analysis.channel_trends" type="trend" :trend="analysis.channel_trends" caption="图4-1　销售变动前三渠道的三个月趋势" />
+      <div v-if="analysis.channel_trends" class="analysis-table-scroll"><table><caption>表4-1　销售变动前三渠道（万元）</caption><thead><tr><th>渠道</th><th v-for="month in analysis.channel_trends.months" :key="month">{{ month }}</th><th>本月增减额</th></tr></thead><tbody><tr v-for="series in analysis.channel_trends.series" :key="series.name"><td>{{ series.name }}</td><td v-for="(n,i) in series.values" :key="i">{{ amount(n) }}</td><td :class="tone(series.values.at(-1)-series.values.at(-2))">{{ signed(series.values.at(-1)-series.values.at(-2)) }}</td></tr></tbody></table></div>
     </template>
     <template v-else-if="section === 'drivers'">
       <figure class="brand-change-figure"><div v-for="channel in analysis.drivers" :key="channel.name" class="driver-block">
         <h4>{{ channel.name }} · {{ signed(channel.change) }}万元</h4>
         <div v-for="row in bars(channel.brands)" :key="row.name" class="change-row"><span>{{ row.name }}</span><div class="track"><i :class="tone(row.change)" :style="{ width: `${row.width / 2}%`, left: row.change >= 0 ? '50%' : 'auto', right: row.change < 0 ? '50%' : 'auto' }" /></div><b :class="tone(row.change)">{{ signed(row.change) }}</b></div>
-      </div><figcaption>图5-1　重点渠道品牌销售增减额（万元）</figcaption></figure>
-      <table><caption>表5-1　重点渠道商品增减额前三（万元）</caption><thead><tr><th>渠道</th><th>商品</th><th>增减额</th></tr></thead><tbody><template v-for="channel in analysis.drivers" :key="channel.name"><tr v-for="row in channel.products" :key="row.name"><td>{{ channel.name }}</td><td class="product-cell">{{ row.name }}</td><td :class="tone(row.change)">{{ signed(row.change) }}</td></tr></template></tbody></table>
+      </div><figcaption>图5-2　变动前三渠道的品牌销售增减额（万元）</figcaption></figure>
+      <table><caption>表5-1　变动前三渠道的商品增减额前三（万元）</caption><thead><tr><th>渠道</th><th>商品</th><th>增减额</th></tr></thead><tbody><template v-for="channel in analysis.drivers" :key="channel.name"><tr v-for="row in channel.products" :key="row.name"><td>{{ channel.name }}</td><td class="product-cell">{{ row.name }}</td><td :class="tone(row.change)">{{ signed(row.change) }}</td></tr></template></tbody></table>
       <p v-if="Math.abs(analysis.headline_gap) > 0.01" class="scope">商品明细与总体金额相差 {{ amount(analysis.headline_gap) }} 万元；本节按商品明细口径。</p>
     </template>
     <template v-else-if="section === 'brands'">

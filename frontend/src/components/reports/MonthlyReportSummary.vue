@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { reportAmount } from '../../utils/monthlyReportFormat'
+import MonthlyBrandShare from './MonthlyBrandShare.vue'
 import MonthlyCustomerFigure from './MonthlyCustomerFigure.vue'
 import MonthlyOperatingAnalysis from './MonthlyOperatingAnalysis.vue'
 import { buildMonthlyComparison, periodMonth } from '../../utils/monthlyReportComparison'
@@ -100,25 +101,28 @@ function tone(value) { return value == null ? '' : Number(value) < 0 ? 'down' : 
       </div>
     </section>
     <section class="summary-panel contribution-panel">
-      <h2>四、重点渠道销售趋势</h2>
+      <h2>四、销售变动最大的三个渠道</h2>
       <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="trend" />
     </section>
     <section class="summary-panel">
       <h2>五、品牌与商品表现</h2>
-      <div class="report-columns brand-product-columns">
-        <div><h3>品牌销售前五</h3><div class="report-bar-chart" role="img" aria-label="品牌销售额对比，单位万元">
-        <div v-for="row in brandBars" :key="row.name" class="report-bar-row">
-          <span>{{ row.name }}</span><div class="report-bar-track"><i :style="{ width: `${row.width}%` }" /></div><b>{{ money(row.paid_amount) }}<small> 万元</small></b>
-        </div>
-      </div><table><thead><tr><th>品牌</th><th>销售额（万元）</th></tr></thead><tbody><tr v-for="row in data.brands || []" :key="row.brand"><td>{{ row.brand }}</td><td>{{ money(row.paid_amount) }}</td></tr></tbody></table></div>
-        <div><h3>正装／小样</h3><div class="report-bar-chart" role="img" aria-label="正装与小样销售额和占比，单位万元">
+      <section class="brand-chapter-block">
+        <h3 class="brand-block-title">5.1　销售结构</h3>
+        <MonthlyBrandShare :rows="data.brands" />
+        <div class="product-type-block"><h3>正装／小样</h3><div class="report-bar-chart" role="img" aria-label="正装与小样销售额和占比，单位万元">
         <div v-for="row in productBars" :key="row.name" class="report-bar-row">
           <span>{{ row.name }}</span><div class="report-bar-track"><i :style="{ width: `${row.width}%` }" /></div><b>{{ money(row.paid_amount) }}<small> 万元 · {{ percent(productTotal ? row.paid_amount / productTotal : null) }}</small></b>
         </div>
       </div><table><thead><tr><th>分类</th><th>销售额（万元）</th><th>两类占比</th></tr></thead><tbody><tr v-for="row in currentProducts" :key="row.product_type"><td>{{ row.product_type }}</td><td>{{ money(row.paid_amount) }}</td><td>{{ percent(productTotal ? row.paid_amount / productTotal : null) }}</td></tr></tbody></table></div>
-      </div>
-      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="brands" />
-      <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="drivers" />
+      </section>
+      <section class="brand-chapter-block">
+        <h3 class="brand-block-title">5.2　品牌与渠道</h3>
+        <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="brands" />
+      </section>
+      <section class="brand-chapter-block">
+        <h3 class="brand-block-title">5.3　商品增减来源</h3>
+        <MonthlyOperatingAnalysis :analysis="data.operating_analysis" section="drivers" />
+      </section>
     </section>
     <section class="summary-panel">
       <h2>六、客户与成交基础</h2>
@@ -226,4 +230,11 @@ h2 { margin-bottom: 24px; }
 .is-exporting h2 { margin-bottom: 22px; }
 .report-bar-row small { font-size: inherit; }
 @media (max-width: 640px) { .summary-panel, .report-intro { padding: 32px 0; } }
+</style>
+
+<style scoped>
+.brand-chapter-block { margin-top:36px; padding:24px 0 32px; border-top:2px solid var(--border); }
+.brand-block-title { font-size:20px; margin:0 0 28px; padding-left:12px; border-left:4px solid var(--accent-strong); }
+.product-type-block { margin-top:40px; }
+.brand-chapter-block :deep(.operating-analysis) { margin-top:24px; }
 </style>
