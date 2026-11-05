@@ -13,6 +13,7 @@ from app.models.user import Permission, Role, User
 from app.models.group_buy import GroupBuyBatch, GroupBuyChange  # noqa: F401
 from app.models import group_buy_inbound  # noqa: F401
 from app.models import ocr  # noqa: F401
+from app.models import inventory_watch  # noqa: F401
 
 
 PERMISSION_DEFINITIONS = [

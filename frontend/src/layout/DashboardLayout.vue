@@ -69,6 +69,7 @@ const menuGroups = computed(() => [
     icon: 'Box',
     children: [
       { path: '/inventory/overview', label: '库存概览', permission: 'inventory.view' },
+      { path: '/inventory/watches', label: '库存关注', permissionsAny: ['sales.view', 'inventory.view'] },
       { path: '/inventory/brand-inventory-flow', label: '品牌进销存', permission: 'inventory.view' },
       { path: '/inventory/turnover', label: '品牌周转', permission: 'inventory.view' },
       { path: '/inventory/health', label: '库存健康度', permission: 'inventory.view' },
@@ -148,7 +149,7 @@ function selectAppearance(name) {
 <template>
   <el-container
     class="app-shell"
-    :class="{ 'is-group-buy': $route.path.startsWith('/group-buy'), 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis'), 'is-sales-profit': $route.path === '/sales/profit-analysis' }"
+    :class="{ 'is-group-buy': $route.path.startsWith('/group-buy'), 'is-brand-analysis': $route.path.startsWith('/sales/brand-analysis'), 'is-sales-profit': $route.path === '/sales/profit-analysis', 'is-inventory-watch': $route.path === '/inventory/watches' }"
   >
     <el-aside width="252px" class="sidebar">
       <div class="brand">
@@ -173,6 +174,10 @@ function selectAppearance(name) {
           <h1>{{ title }}</h1>
         </div>
         <div class="top-actions">
+          <el-dropdown v-if="$route.path === '/inventory/watches'" class="watch-mobile-nav" trigger="click" @command="router.push">
+            <el-button>导航</el-button>
+            <template #dropdown><el-dropdown-menu style="max-height: 60vh; overflow-y: auto"><template v-for="group in menuGroups" :key="group.key"><el-dropdown-item v-for="item in group.children" :key="item.path" :command="item.path">{{ group.label }} · {{ item.label }}</el-dropdown-item></template></el-dropdown-menu></template>
+          </el-dropdown>
           <el-dropdown trigger="click" @command="theme.applyStyle">
             <button class="theme-button" aria-label="选择界面版本">
               <el-icon><component :is="theme.currentStyle.icon" /></el-icon>
@@ -251,6 +256,21 @@ function selectAppearance(name) {
 </template>
 
 <style scoped>
+.watch-mobile-nav { display: none; }
+.app-shell.is-inventory-watch { height: 100dvh; min-height: 0; overflow: hidden; }
+.is-inventory-watch > .el-container { height: 100%; min-width: 0; min-height: 0; }
+.is-inventory-watch .sidebar { height: 100%; min-height: 0; overflow-y: auto; }
+.is-inventory-watch .topbar { flex-shrink: 0; min-width: 0; }
+.is-inventory-watch .main-content { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: auto; }
+@media (max-width: 760px) {
+  .is-inventory-watch > .sidebar { display: none; }
+  .is-inventory-watch > .el-container { min-width: 0; width: 100%; }
+  .is-inventory-watch .main-content { min-width: 0; padding: 12px; }
+  .is-inventory-watch .topbar { height: auto; min-height: 60px; padding: 12px; gap: 8px; }
+  .is-inventory-watch .top-actions { gap: 6px; min-width: 0; }
+  .is-inventory-watch .top-actions > .el-dropdown:not(:last-child):not(.watch-mobile-nav) { display: none; }
+  .is-inventory-watch .watch-mobile-nav { display: inline-flex; }
+}
 .app-shell.is-group-buy{height:100dvh;min-height:0;overflow:hidden}
 .is-group-buy>.el-container{height:100%;min-width:0;min-height:0}
 .is-group-buy .sidebar{height:100%;min-height:0;overflow-y:auto}

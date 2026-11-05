@@ -12,6 +12,7 @@ from app.db.init_db import init_db
 from app.api.routers import group_buy
 from app.api.routers import group_buy_inbound
 from app.api.routers import ocr
+from app.api.routers import inventory_watches
 
 
 @asynccontextmanager
@@ -66,6 +67,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router, prefix=settings.API_PREFIX)
     app.include_router(ocr.router, prefix=settings.API_PREFIX)
+    app.include_router(inventory_watches.router, prefix=settings.API_PREFIX)
     app.include_router(group_buy.router, prefix=settings.API_PREFIX)
     app.include_router(group_buy_inbound.router, prefix=settings.API_PREFIX)
     app.include_router(dashboard.router, prefix=settings.API_PREFIX, dependencies=[Depends(require_permission("dashboard.view"))])

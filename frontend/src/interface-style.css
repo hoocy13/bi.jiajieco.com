@@ -61,7 +61,7 @@
     border: 1px solid var(--glass-edge);
     border-radius: 22px;
   }
-  :root[data-interface-style='glass'] .app-shell:is(.is-group-buy, .is-sales-profit) > .sidebar { height: calc(100% - 24px); }
+  :root[data-interface-style='glass'] .app-shell:is(.is-group-buy, .is-sales-profit, .is-inventory-watch) > .sidebar { height: calc(100% - 24px); }
   :root[data-interface-style='glass'] .topbar { margin: 12px 20px 0; border: 1px solid var(--glass-edge); border-radius: 18px; }
 }
 

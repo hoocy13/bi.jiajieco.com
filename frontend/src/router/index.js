@@ -65,6 +65,7 @@ const routes = [
       { path: 'sales/profit-analysis', component: SalesProfitAnalysis, meta: { title: '销售毛利与价格分析', permission: 'sales.profit.view' } },
                     { path: 'inventory', redirect: '/inventory/overview' },
       { path: 'inventory/overview', component: InventoryOverview, meta: { title: '库存概览', permission: 'inventory.view' } },
+      { path: 'inventory/watches', component: () => import('../views/data/InventoryWatch.vue'), meta: { title: '库存关注', permissionsAny: ['sales.view', 'inventory.view'] } },
       { path: 'inventory/detail', component: InventoryDetail, meta: { title: '库存明细', permission: 'inventory.view' } },
       { path: 'inventory/valuation', component: InventoryValuation, meta: { title: '库存价格估算', permission: 'inventory.view' } },
       { path: 'inventory/brand-arrivals', component: BrandMonthlyArrivals, meta: { title: '采购入库分析', permission: 'inventory.view' } },
