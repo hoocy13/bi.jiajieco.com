@@ -52,7 +52,7 @@ onMounted(fetchData)
       <el-table-column label="操作" width="150"><template #default="{ row }"><el-button v-if="!['pending', 'admin'].includes(row.code)" link type="primary" @click="openEdit(row)">编辑权限</el-button><el-button v-if="!row.is_system && row.user_count === 0" link type="danger" @click="removeRole(row)">删除</el-button></template></el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="editing ? '编辑角色' : '新建角色'" width="680px">
+    <el-dialog append-to-body v-model="dialogVisible" :title="editing ? '编辑角色' : '新建角色'" width="680px">
       <el-form label-position="top">
         <el-form-item label="角色名称"><el-input v-model="form.name" placeholder="例如：运营专员" /></el-form-item>
         <el-form-item label="角色说明"><el-input v-model="form.description" /></el-form-item>

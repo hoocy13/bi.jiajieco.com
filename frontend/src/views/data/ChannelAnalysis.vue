@@ -646,7 +646,7 @@ onMounted(fetchAnalysis)
     </template>
 
     <ChannelProducts v-model="productDrawerVisible" :channel="selectedProductChannel" :period="analysis" />
-    <el-drawer v-model="customerDrawerVisible" size="78%" class="customer-sales-drawer" destroy-on-close>
+    <el-drawer append-to-body v-model="customerDrawerVisible" size="78%" class="customer-sales-drawer" destroy-on-close>
       <template #header>
         <div class="customer-drawer-title">
           <div>

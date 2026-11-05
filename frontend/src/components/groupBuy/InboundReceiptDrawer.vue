@@ -110,7 +110,7 @@ async function close(done){if(busy.value)return;if(draftChanged.value){try{await
 </script>
 
 <template>
-  <el-drawer :model-value="!!modelValue" title="处理入库单" size="min(1380px, 98vw)" :before-close="close" class="receipt-workbench">
+  <el-drawer append-to-body :model-value="!!modelValue" title="处理入库单" size="min(1380px, 98vw)" :before-close="close" class="receipt-workbench">
     <div class="receipt-workspace" v-loading="loading||busy">
       <el-alert v-if="failure" :title="failure" type="error" :closable="false"><el-button link @click="load">刷新单据</el-button></el-alert>
       <template v-if="receipt">
@@ -134,7 +134,7 @@ async function close(done){if(busy.value)return;if(draftChanged.value){try{await
     <template #footer><el-button @click="close()" :disabled="busy">关闭</el-button><el-button v-if="receipt&&!receipt.hold?.waiting&&receipt.rows.some(editable)" @click="holdOpen=true" :disabled="busy">待补下单表</el-button><el-button @click="action('exclude')" :disabled="busy||!selection.length">不属于团购</el-button><el-button type="primary" @click="confirm" :disabled="busy||!canConfirm" :loading="busy">确认所选（{{selection.length}}）</el-button></template>
   </el-drawer>
   <ReceiptHoldDialog :record="holdOpen?receipt:null" :brand="brand" :month="batch(defaultBatch)?.month||new Date().toISOString().slice(0,7)" :options="options" @close="holdOpen=false" @changed="emit('changed');load()"/>
-  <el-dialog :model-value="!!editing" title="调整商品归属" width="min(650px, 96vw)" :close-on-click-modal="false" @close="editing=null">
+  <el-dialog append-to-body :model-value="!!editing" title="调整商品归属" width="min(650px, 96vw)" :close-on-click-modal="false" @close="editing=null">
     <template v-if="editing"><p>{{editing.name}} · 实收 {{n(editing.quantity)}}</p><el-form label-position="top" v-loading="editLoading">
       <el-form-item label="月份 / 批次"><el-select v-model="edit.batch_id" filterable aria-label="单项归属批次" @change="editBatchChanged"><el-option v-for="b in batches" :key="b.id" :value="b.id" :label="`${b.month} · ${b.name}`"/></el-select></el-form-item>
       <el-form-item label="柜台"><el-select v-model="edit.source_id" filterable aria-label="单项归属柜台" @change="edit.product_id='';loadEditOrders()"><el-option v-for="s in sources(edit.batch_id)" :key="s.id" :value="s.id" :label="s.name"/></el-select></el-form-item>
@@ -144,7 +144,7 @@ async function close(done){if(busy.value)return;if(draftChanged.value){try{await
     </el-form></template>
     <template #footer><el-button @click="editing=null">取消</el-button><el-button type="primary" @click="saveEdit" :disabled="editLoading">应用到本项</el-button></template>
   </el-dialog>
-  <el-dialog :model-value="!!history" title="处理记录" width="min(620px,96vw)" @close="history=null"><el-empty v-if="!historyRows.length" description="暂无记录"/><div v-for="h in historyRows" :key="h.id" class="audit-entry">{{({confirm:'确认关联',release:'解除 / 恢复',exclude:'排除',source_update:'源资料更新',source_missing:'源明细待复核'})[h.action]||h.action}} · {{h.operator}} · {{h.created_at.replace('T',' ').slice(0,19)}}<p>{{h.changes.note}}</p><small v-if="h.changes.mode==='substitute'">替代到货：实收 {{h.changes.source_quantity}}，抵扣 {{h.changes.credit_quantity}}</small></div></el-dialog>
+  <el-dialog append-to-body :model-value="!!history" title="处理记录" width="min(620px,96vw)" @close="history=null"><el-empty v-if="!historyRows.length" description="暂无记录"/><div v-for="h in historyRows" :key="h.id" class="audit-entry">{{({confirm:'确认关联',release:'解除 / 恢复',exclude:'排除',source_update:'源资料更新',source_missing:'源明细待复核'})[h.action]||h.action}} · {{h.operator}} · {{h.created_at.replace('T',' ').slice(0,19)}}<p>{{h.changes.note}}</p><small v-if="h.changes.mode==='substitute'">替代到货：实收 {{h.changes.source_quantity}}，抵扣 {{h.changes.credit_quantity}}</small></div></el-dialog>
 </template>
 
 <style scoped>

@@ -47,7 +47,7 @@ watch(() => [visible.value, props.channel, props.period], () => {
 </script>
 
 <template>
-  <el-drawer v-model="visible" size="85%" class="channel-products-drawer" destroy-on-close>
+  <el-drawer append-to-body v-model="visible" size="85%" class="channel-products-drawer" destroy-on-close>
     <template #header><div><h2>{{ channel?.channel_name }} · 销售货品</h2><span>{{ period.start_date }} — {{ period.end_date }}</span></div></template>
     <div class="product-filters">
       <el-input v-model="keyword" placeholder="货品名称 / 品牌" clearable @keyup.enter="search" />

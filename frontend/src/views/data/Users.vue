@@ -91,7 +91,7 @@ onMounted(async () => { await loadRoles(); await fetchUsers() })
     </el-table>
     <div class="permission-pagination"><el-pagination v-model:current-page="query.page" v-model:page-size="query.page_size" layout="total, prev, pager, next" :total="total" @current-change="fetchUsers" /></div>
 
-    <el-dialog v-model="roleDialog" title="分配角色" width="520px">
+    <el-dialog append-to-body v-model="roleDialog" title="分配角色" width="520px">
       <div class="role-user"><strong>{{ selectedUser?.display_name }}</strong><span>{{ selectedUser?.email || selectedUser?.username }}</span></div>
       <el-radio-group v-model="selectedRoleId" class="role-options">
         <el-radio v-for="role in roles" :key="role.id" :value="role.id" border><span>{{ role.name }}</span><small>{{ role.description }}</small></el-radio>
@@ -99,7 +99,7 @@ onMounted(async () => { await loadRoles(); await fetchUsers() })
       <template #footer><el-button @click="roleDialog = false">取消</el-button><el-button type="primary" @click="saveRole">保存角色</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="profileDialog" title="编辑用户信息" width="500px">
+    <el-dialog append-to-body v-model="profileDialog" title="编辑用户信息" width="500px">
       <el-form class="profile-form" label-position="top" @submit.prevent="saveProfile">
         <el-form-item label="姓名" required><el-input v-model="profileForm.display_name" maxlength="64" /></el-form-item>
         <el-form-item label="邮箱"><el-input v-model="profileForm.email" maxlength="255" placeholder="用于邮箱登录" /></el-form-item>

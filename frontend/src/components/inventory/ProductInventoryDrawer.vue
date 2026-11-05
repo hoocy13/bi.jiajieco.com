@@ -46,7 +46,7 @@ defineExpose({ open })
 </script>
 
 <template>
-  <el-drawer v-model="visible" size="78%" class="inventory-detail-drawer">
+  <el-drawer append-to-body v-model="visible" size="78%" class="inventory-detail-drawer">
     <template #header>
       <div class="inventory-detail-title">
         <strong>{{ detail?.product || '商品库存详情' }}</strong>

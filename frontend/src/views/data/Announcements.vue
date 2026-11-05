@@ -52,7 +52,7 @@ onMounted(fetchItems)
       <el-table-column label="更新时间" width="180"><template #default="{ row }">{{ formatDate(row.updated_at) }}</template></el-table-column>
       <el-table-column label="操作" width="190"><template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">编辑</el-button><el-button link type="primary" @click="toggle(row)">{{ row.is_active ? '停用' : '启用' }}</el-button><el-button link type="danger" @click="remove(row)">删除</el-button></template></el-table-column>
     </el-table>
-    <el-dialog v-model="dialogVisible" :title="editing ? '编辑公告' : '新增公告'" width="600px">
+    <el-dialog append-to-body v-model="dialogVisible" :title="editing ? '编辑公告' : '新增公告'" width="600px">
       <el-form label-position="top" @submit.prevent="save">
         <el-form-item label="公告标题" required><el-input v-model="form.title" maxlength="120" show-word-limit /></el-form-item>
         <el-form-item label="公告内容" required><el-input v-model="form.content" type="textarea" :rows="6" maxlength="2000" show-word-limit /></el-form-item>

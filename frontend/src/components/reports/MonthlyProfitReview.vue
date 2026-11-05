@@ -86,7 +86,7 @@ watch(() => route.fullPath, load, { immediate: true })
         <el-pagination layout="total, prev, pager, next" :total="data.total" :page-size="50" :current-page="filters.page" @current-change="v => change({ page: String(v) })" />
       </section>
       </el-collapse-item></el-collapse>
-      <el-drawer :model-value="Boolean(repair)" :title="repair === '缺成本订单' ? '缺成本订单：处理建议' : '待核订单：处理建议'" size="min(620px, 95vw)" @close="repair = ''">
+      <el-drawer append-to-body :model-value="Boolean(repair)" :title="repair === '缺成本订单' ? '缺成本订单：处理建议' : '待核订单：处理建议'" size="min(620px, 95vw)" @close="repair = ''">
         <template v-if="repair === '缺成本订单'">
           <el-alert title="卡片金额是整张订单被隔离的销售额，不全是缺价货品金额。" type="info" :closable="false" />
           <p>当前范围缺成本货品 {{ data.repair_summary?.missing_skus }} 个，对应净销售额 {{ wan(data.repair_summary?.missing_goods_net_sales) }} 万元（包括待核订单中的缺价货品）。</p>
