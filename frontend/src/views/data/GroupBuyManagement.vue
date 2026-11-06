@@ -9,7 +9,22 @@ import { listGroupBatches, createGroupBatch, renameGroupBatch, deleteGroupBatch,
 const route = useRoute(), router = useRouter()
 const today = new Date()
 const month = ref(String(route.query.month || `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`))
-const brand = ref(String(route.query.brand || '兰蔻'))
+const choosingOrder = ref(!Number(route.query.batch))
+const orderArrivals = ref({})
+let orderArrivalSequence=0
+async function loadOrderArrivals(rows){
+  const token=++orderArrivalSequence
+  orderArrivals.value={}
+  let next=0
+  await Promise.all(Array.from({length:Math.min(4,rows.length)},async()=>{
+    while(next<rows.length){
+      const row=rows[next++]
+      try{const r=await getInboundProgress(row.id);if(token===orderArrivalSequence)orderArrivals.value[row.id]={quantity:r.data.summary.received_total}}
+      catch{if(token===orderArrivalSequence)orderArrivals.value[row.id]={error:true}}
+    }
+  }))
+}
+const brand = ref(String(choosingOrder.value ? '' : route.query.brand || ''))
 const brands = ['兰蔻', '资生堂', 'YSL', '植村秀', '赫莲娜']
 const batches = ref([]), batchId = ref(Number(route.query.batch) || null), data = ref(null), loading = ref(false), busy = ref(false)
 const tab = ref(route.query.tab === 'log' ? 'log' : 'order')
@@ -282,19 +297,38 @@ onBeforeRouteLeave(async()=>await discardGuard())
 onBeforeUnmount(()=>window.removeEventListener('beforeunload',beforeUnload))
 async function syncUrl(){
   internalRoute = true
-  try { await router.replace({query:{month:month.value,brand:brand.value,batch:batchId.value||undefined,tab:tab.value,arrivals:showArrival.value?'true':undefined,...Object.fromEntries(Object.entries(filters).filter(([,v])=>v!==''&&v!==false))}}) }
+  try { if(choosingOrder.value){await router.replace({query:{}});return} await router.replace({query:{month:month.value,brand:brand.value,batch:batchId.value||undefined,tab:tab.value,arrivals:showArrival.value?'true':'false',...Object.fromEntries(Object.entries(filters).filter(([,v])=>v!==''&&v!==false))}}) }
   finally { internalRoute = false }
 }
 watch(() => route.query, async q => {
   if (internalRoute || route.path !== '/group-buy') return
   if (!await discardGuard()) { await syncUrl(); return }
+  choosingOrder.value=!Number(q.batch)
+  if(choosingOrder.value){brand.value='';batchId.value=null;data.value=null;await loadList();return}
   month.value = String(q.month || month.value); brand.value = String(q.brand || brand.value)
   batchId.value = Number(q.batch) || null; tab.value = q.tab === 'log' ? 'log' : 'order'
-  showArrival.value=q.arrivals==='true'
+  showArrival.value=q.arrivals!=='false'
   Object.assign(filters, {keyword:String(q.keyword||''), source:String(q.source||''),customer:'',only_gap:q.only_gap==='true',sort_by:String(q.sort_by||'position'),sort_order:q.sort_order==='desc'?'desc':'asc'})
   await loadList(); await loadTable()
 })
-async function loadList(){const r=await listGroupBatches({month:month.value,brand:brand.value});batches.value=r.data.rows;if(!batches.value.some(b=>b.id===batchId.value))batchId.value=batches.value[0]?.id||null}
+async function loadList(){
+  if(!choosingOrder.value&&batchId.value&&!brand.value){const r=await getGroupTable(batchId.value,{page_size:10});month.value=r.data.batch.month;brand.value=r.data.batch.brand}
+  const r=await listGroupBatches(choosingOrder.value?{}:{month:month.value,brand:brand.value})
+  batches.value=[...r.data.rows].sort((a,b)=>b.month.localeCompare(a.month)||b.id-a.id)
+  if(choosingOrder.value)void loadOrderArrivals(batches.value)
+  if(!choosingOrder.value&&!batches.value.some(b=>b.id===batchId.value))batchId.value=batches.value[0]?.id||null
+}
+async function chooseOrder(row){
+  if(!await discardGuard())return
+  choosingOrder.value=false;month.value=row.month;brand.value=row.brand;batchId.value=row.id
+  selected.value=null;pending.value={};filters.keyword='';filters.source='';filters.only_gap=false
+  await loadList();await loadTable()
+}
+async function selectAnotherOrder(){
+  if(!await discardGuard())return
+  ++seq;choosingOrder.value=true;brand.value='';batchId.value=null;data.value=null;selected.value=null;arrival.value=null
+  await loadList();await syncUrl()
+}
 async function loadTable(){
   const current=++seq
   if(!batchId.value){data.value=null;syncUrl();return}
@@ -313,8 +347,8 @@ async function save(){
   finally{busy.value=false}
 }
 async function mutate(fn){if(busy.value)return;busy.value=true;try{await fn();await loadTable();if(showStructure.value)await loadStructure();ElMessage.success('操作已保存');return true}catch(e){if(e.response?.status===409)conflict.value=true;return false}finally{busy.value=false}}
-async function openCreate(){if(!await discardGuard())return;allBatches.value=(await listGroupBatches({})).data.rows;Object.assign(createForm,{month:month.value,brand:brand.value,name:'第一批',copy_from:null});showCreate.value=true}
-async function create(){if(!createForm.month||!createForm.name.trim())return ElMessage.warning('请填写月份和批次名称');await mutate(async()=>{const r=await createGroupBatch({...createForm});month.value=createForm.month;brand.value=createForm.brand;batchId.value=r.data.id;await loadList();showCreate.value=false})}
+async function openCreate(){if(!await discardGuard())return;allBatches.value=(await listGroupBatches({})).data.rows;Object.assign(createForm,{month:month.value,brand:brand.value||'',name:'第一批',copy_from:null});showCreate.value=true}
+async function create(){if(!createForm.month||!createForm.brand||!createForm.name.trim())return ElMessage.warning('请填写月份、品牌和批次名称');await mutate(async()=>{const r=await createGroupBatch({...createForm});choosingOrder.value=false;month.value=createForm.month;brand.value=createForm.brand;batchId.value=r.data.id;await loadList();showCreate.value=false})}
 async function loadManagedBatches() {
   managerLoading.value = true
   try { managedBatches.value = (await listGroupBatches({ month: month.value, brand: brand.value, deleted: showDeletedBatches.value })).data.rows }
@@ -423,14 +457,28 @@ onMounted(async()=>{window.addEventListener('beforeunload',beforeUnload);loading
 <template>
   <section class="group-buy">
     <div class="heading"><div><h2>团购订单与分配</h2></div><div><el-button @click="openBatchManager" :disabled="busy||loading">批次管理</el-button><el-button type="primary" @click="openCreate" :disabled="busy||loading">新建批次</el-button></div></div>
-    <div class="batch-toolbar">
+    <div v-if="choosingOrder" class="order-picker" v-loading="loading">
+      <div class="order-picker-heading"><h3>选择团购订单</h3><span class="soft">按月份从新到旧排列</span></div>
+      <el-table :data="batches" @row-click="chooseOrder" class="order-list" empty-text="暂无团购订单，请新建批次">
+        <el-table-column prop="month" label="月份" width="140" sortable />
+        <el-table-column prop="brand" label="品牌" min-width="150" sortable />
+        <el-table-column prop="name" label="批次" min-width="160" />
+        <el-table-column label="商品数" width="110" align="right"><template #default="{row}">{{n(row.summary.product_count)}}</template></el-table-column>
+        <el-table-column label="下单数量" width="140" align="right"><template #default="{row}">{{n(row.summary.ordered)}}</template></el-table-column>
+        <el-table-column label="已确认到货数量" width="160" align="right"><template #default="{row}"><el-tooltip content="已确认关联的正常到货及替代抵扣数量，待复核和未关联入库不计入。"><span>{{orderArrivals[row.id]?.error?'读取失败':orderArrivals[row.id]?n(orderArrivals[row.id].quantity):'读取中…'}}</span></el-tooltip></template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{row}"><el-tag :type="row.status==='confirmed'?'success':'warning'">{{row.status==='confirmed'?'已确认':'进行中'}}</el-tag></template></el-table-column>
+        <el-table-column width="100"><template #default="{row}"><el-button link type="primary" @click.stop="chooseOrder(row)">打开订单</el-button></template></el-table-column>
+      </el-table>
+    </div>
+    <div v-else class="batch-toolbar">
+      <el-button @click="selectAnotherOrder" :disabled="busy||loading">选择团购订单</el-button>
       <el-date-picker v-model="month" type="month" value-format="YYYY-MM" :clearable="false" @change="queryChange(true)" :disabled="busy||loading" />
       <el-select v-model="brand" @change="queryChange(true)" :disabled="busy||loading"><el-option v-for="b in brands" :key="b" :value="b" :label="b" /></el-select>
       <el-select v-model="batchId" placeholder="选择批次" @change="queryChange()" :disabled="busy||loading"><el-option v-for="b in batches" :key="b.id" :value="b.id" :label="b.name" /></el-select>
-      <template v-if="data"><el-tag :type="locked?'success':'warning'">{{locked?'已确认':'编辑中'}}</el-tag><span class="soft">数据更新：{{data.batch.updated_at.slice(0,10)}}</span></template>
+      <template v-if="data"><el-tag :type="locked?'success':'warning'">{{locked?'已确认':'进行中'}}</el-tag><span class="soft">数据更新：{{data.batch.updated_at.slice(0,10)}}</span></template>
     </div>
-    <el-empty v-if="!batchId && !loading" description="本月该品牌暂无批次，先新建批次，再导入下单与分配表。" />
-    <template v-else-if="data">
+    <el-empty v-if="!choosingOrder && !batchId && !loading" description="本月该品牌暂无批次，先新建批次，再导入下单与分配表。" />
+    <template v-else-if="!choosingOrder && data">
       <el-alert v-if="conflict" type="error" :closable="false" title="保存冲突：其他人已更新此批次。当前输入仍保留，请复制所需数值后刷新核对。" show-icon class="notice" />
       <el-alert v-if="tab==='allocation' && data.batch.summary.missing_count && quotaWarningClosedFor !== data.batch.id" :key="data.batch.id" type="warning" :closable="true" @close="quotaWarningClosedFor=data.batch.id" :title="`${data.batch.summary.missing_count}件商品的分配来源尚未维护额度。请补录可分配总量；吉客云已有分配不代表实际库存。`" class="notice" />
       <div class="sheet" v-loading="loading||busy">
@@ -505,7 +553,7 @@ onMounted(async()=>{window.addEventListener('beforeunload',beforeUnload);loading
       <p class="soft">删除后移入回收站，数据和修改记录保留；恢复时保留删除前的确认状态。同名批次（包括回收站）不能重复建立。</p>
       <el-table v-loading="managerLoading||busy" :data="managedBatches" max-height="420" empty-text="暂无批次">
         <el-table-column prop="name" label="批次名称" min-width="150" />
-        <el-table-column label="状态" width="95"><template #default="{row}"><el-tag :type="row.status==='deleted'?'info':row.status==='confirmed'?'success':'warning'">{{row.status==='deleted'?'已删除':row.status==='confirmed'?'已确认':'编辑中'}}</el-tag></template></el-table-column>
+        <el-table-column label="状态" width="95"><template #default="{row}"><el-tag :type="row.status==='deleted'?'info':row.status==='confirmed'?'success':'warning'">{{row.status==='deleted'?'已删除':row.status==='confirmed'?'已确认':'进行中'}}</el-tag></template></el-table-column>
         <el-table-column label="商品数" width="85"><template #default="{row}">{{n(row.summary.product_count)}}</template></el-table-column>
         <el-table-column label="已分配" width="105"><template #default="{row}">{{n(row.summary.allocated)}}</template></el-table-column>
         <el-table-column label="更新时间" width="175"><template #default="{row}">{{row.updated_at.replace('T',' ').slice(0,19)}}</template></el-table-column>
@@ -581,4 +629,5 @@ onMounted(async()=>{window.addEventListener('beforeunload',beforeUnload);loading
 .matrix td.numeric-value,.matrix td.client-cell,.matrix .receipt-cell,.matrix tfoot .total-line{color:var(--text,#171717)}
 .matrix .quantity{color:var(--text,#171717)}
 .matrix .negative{color:#d54848!important}
+.order-picker{background:var(--surface,#fff);border:1px solid var(--border,#e4e7ed);border-radius:7px;padding:18px;min-height:200px}.order-picker-heading{display:flex;align-items:center;gap:16px;margin-bottom:16px}.order-picker-heading h3{margin:0;font-size:16px}.order-list :deep(.el-table__row){cursor:pointer}
 </style>
