@@ -39,11 +39,14 @@ const routes = [
   { path: '/login', component: Login, meta: { public: true } },
   { path: '/register', component: Register, meta: { public: true } },
   { path: '/pending-access', component: PendingAccess },
+  { path: '/events/:token', component: () => import('../views/data/PublicAnnualEvent.vue'), meta: { public: true, title: '年会赛事观赛' } },
+  { path: '/annual-match/screen', redirect: '/annual-match' },
   {
     path: '/',
     component: DashboardLayout,
     children: [
       { path: 'dashboard', component: Dashboard, meta: { title: '经营总览', permission: 'dashboard.view' } },
+      { path: 'annual-match', component: () => import('../views/data/AnnualMatch.vue'), meta: { title: '年会赛事', permission: 'system.users.manage' } },
       { path: 'group-buy', component: () => import('../views/data/GroupBuyManagement.vue'), meta: { title: '团购管理', permission: 'group_buy.manage' } },
       { path: 'group-buy/inbound', component: () => import('../views/data/GroupBuyInbound.vue'), meta: { title: '采购入库关联', permission: 'group_buy.manage' } },
       { path: 'reports/monthly', component: MonthlyOperatingReport, meta: { title: '经营月报', permission: 'report.monthly.view' } },
@@ -96,6 +99,7 @@ router.beforeEach(async (to) => {
   if (to.path === '/login' && auth.isAuthenticated) {
     return '/dashboard'
   }
+  if (to.meta.public) return true
   if (auth.isAuthenticated && !auth.profileLoaded) await auth.loadProfile()
   if (to.meta.permission && !auth.hasPermission(to.meta.permission)) {
     return '/pending-access'

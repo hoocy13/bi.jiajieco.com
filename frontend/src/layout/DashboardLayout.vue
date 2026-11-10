@@ -104,6 +104,7 @@ const menuGroups = computed(() => [
     icon: 'Tools',
     children: [
       { path: '/tools/document-recognition', label: '文档识别', permission: 'dashboard.view' },
+      { path: '/annual-match', label: '年会赛事', permission: 'system.users.manage' },
     ],
   },
   {

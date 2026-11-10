@@ -9,6 +9,7 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: sqlite:////app/data/bi_admin.db
+      ANNUAL_MATCH_DB_PATH: /app/data/annual_match.db
     volumes:
       - backend_data:/app/data
     expose:

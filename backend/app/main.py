@@ -13,6 +13,7 @@ from app.api.routers import group_buy
 from app.api.routers import group_buy_inbound
 from app.api.routers import ocr
 from app.api.routers import inventory_watches
+from app.api.routers import annual_match
 
 
 @asynccontextmanager
@@ -66,6 +67,8 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(auth.router, prefix=settings.API_PREFIX)
+    app.include_router(annual_match.router, prefix=settings.API_PREFIX)
+    app.include_router(annual_match.public_router, prefix=settings.API_PREFIX)
     app.include_router(ocr.router, prefix=settings.API_PREFIX)
     app.include_router(inventory_watches.router, prefix=settings.API_PREFIX)
     app.include_router(group_buy.router, prefix=settings.API_PREFIX)
