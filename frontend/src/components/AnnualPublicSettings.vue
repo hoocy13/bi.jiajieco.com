@@ -26,7 +26,7 @@ async function copy() {
     <div class="setting"><span>开启公开访问</span><el-switch v-model="enabled" :disabled="busy" aria-label="开启公开访问" /></div>
     <div class="setting"><span>公开队员姓名与比赛位置</span><el-switch v-model="showNames" :disabled="busy" aria-label="公开队员姓名与比赛位置" /></div>
     <div class="setting"><span>公开页允许主持人抽队</span><el-switch v-model="drawEnabled" :disabled="busy" aria-label="公开页允许主持人抽队" /></div>
-    <p class="muted">主持人需登录管理账号，观众只能观看。开启抽队后可先公开空赛程；每场抽取10人并组成两队，共9场；自动保存进度，完整抽选最多保留5次。重抽前请先放弃本次抽选。</p>
+    <p class="muted">主持人需登录管理账号，观众只能观看。开启抽队后可先公开空赛程；19队按每轮5人抽取一支队伍，抽齐后手动安排对阵；自动保存进度，完整抽选最多保留5次。重抽前请先放弃本次抽选。</p>
     <p class="muted">默认仅公开队名。部门、段位、内部评分与演练数据均不公开。关闭后原链接立即停止提供赛事数据。</p>
     <section v-if="settings?.enabled && url" class="sharing"><el-alert v-if="localOnly" title="当前是本地预览链接，部署到外网域名后才能发给外部观众。" type="info" :closable="false" /><img v-if="qr" :src="qr" alt="公开观赛二维码" /><el-input :model-value="url" readonly aria-label="公开观赛链接" /><div><el-button @click="copy">复制链接</el-button><el-button tag="a" :href="url" target="_blank" rel="noopener">预览观赛页</el-button></div></section>
     <template #footer><el-button @click="emit('update:modelValue', false)">关闭</el-button><el-button type="primary" :loading="busy" @click="save">保存设置</el-button></template>

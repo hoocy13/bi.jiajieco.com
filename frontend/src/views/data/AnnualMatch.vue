@@ -202,7 +202,7 @@ onUnmounted(() => { clearInterval(pollTimer); clearInterval(animationTimer); cle
     <el-alert v-if="error" class="event-alert" type="error" :closable="false" :title="error" show-icon><el-button size="small" @click="load()">重新加载</el-button></el-alert>
     <template v-if="state">
       <el-tabs v-if="!screen" v-model="tab">
-        <el-tab-pane label="全赛程" name="schedule" /><el-tab-pane label="18支队伍" name="teams" /><el-tab-pane label="人员与位置" name="players" /><el-tab-pane :label="`抽签记录（${(state.team_draw_history || []).length}）`" name="history" />
+        <el-tab-pane label="全赛程" name="schedule" /><el-tab-pane :label="`${state.tournament.teams.length}支队伍`" name="teams" /><el-tab-pane label="人员与位置" name="players" /><el-tab-pane :label="`抽签记录（${(state.team_draw_history || []).length}）`" name="history" />
       </el-tabs>
       <AnnualTournament v-if="screen || tab === 'schedule' || tab === 'teams'" :tournament="state.tournament" :revision="state.revision" :mode="mode" :screen="screen" :busy="busy || dirty" :view="screen ? 'schedule' : tab" :run-command="command" />
       <template v-if="!screen && tab === 'draw'">
@@ -212,7 +212,7 @@ onUnmounted(() => { clearInterval(pollTimer); clearInterval(animationTimer); cle
           <div v-if="!bulkMatches.length" class="matchup">
             <article v-for="(team, t) in ['red', 'blue']" :key="team" class="team" :class="team">
               <div class="team-heading"><span>{{ team === 'red' ? '红队' : '蓝队' }}</span></div>
-              <div v-for="(role, i) in roles" :key="role" class="player-slot"><span class="slot-role">{{ role }}</span><strong>{{ slotName(t, i) }}</strong><span class="slot-note">{{ !countdown && i * 2 + t < reveal && slots[t * 5 + i] ? (slots[t * 5 + i].rank === 11 ? '随机位置' : slots[t * 5 + i].rank === 10 ? '已同意补位' : `第${slots[t * 5 + i].rank + 1}意向`) : '5V5' }}</span><el-button v-if="!screen && state.draft && !countdown && reveal === 10" link size="small" :disabled="busy" @click="replace(t * 5 + i)">替换</el-button></div>
+              <div v-for="(role, i) in roles" :key="role" class="player-slot"><span class="slot-role">{{ role }}</span><strong>{{ slotName(t, i) }}</strong><span class="slot-note">{{ !countdown && i * 2 + t < reveal && slots[t * 5 + i] ? (slots[t * 5 + i].rank === 20 ? '协调补位' : slots[t * 5 + i].rank === 11 ? '随机位置' : slots[t * 5 + i].rank === 10 ? '已同意补位' : `第${slots[t * 5 + i].rank + 1}意向`) : '5V5' }}</span><el-button v-if="!screen && state.draft && !countdown && reveal === 10" link size="small" :disabled="busy" @click="replace(t * 5 + i)">替换</el-button></div>
             </article>
             <div class="versus">VS</div>
           </div>
@@ -244,11 +244,11 @@ onUnmounted(() => { clearInterval(pollTimer); clearInterval(animationTimer); cle
       </template>
       <section v-if="!screen && tab === 'players'" class="config-panel">
         <div class="coverage"><span>共 {{ players.length }} 人 · {{ players.filter(p => p.roles.length).length }} 人填写位置 · 未填写则随机分配</span><el-tag v-for="r in roles" :key="r" :type="coverage(r) < 2 ? 'danger' : 'info'">{{ r }} {{ coverage(r) }} 人</el-tag></div>
-        <el-alert title="位置按第一至第五意向依次填写；全部留空则随机分配位置；已填写的优先按意向匹配，不根据英雄推断。" type="info" :closable="false" show-icon />
+        <el-alert :title="state.tournament_settings?.allow_offrole ? '优先按意向分配，打野优先使用填写过打野的人；仅在位置不足时安排少量跨意向补位。' : '位置按第一至第五意向依次填写；全部留空则随机分配位置。'" type="info" :closable="false" show-icon />
         <div class="config-actions"><el-input v-model="search" placeholder="搜索姓名" clearable style="width: 220px" /><span>共 {{ shownPlayers.length }} 人</span><el-button type="primary" :disabled="!dirty || busy || configLocked" @click="command('save', { players })">保存配置</el-button><el-button :disabled="!dirty || busy" @click="dirty = false; state = null; load()">撤销修改</el-button><span v-if="configLocked" class="muted">队伍已固定或有待确认抽签，暂不可修改配置</span></div>
         <el-table :data="shownPlayers" row-key="id" height="540" stripe>
           <el-table-column prop="name" label="姓名" width="120" sortable><template #default="{ row }"><el-input v-model="row.name" :disabled="configLocked" maxlength="30" @input="dirty = true" /></template></el-table-column>
-          <el-table-column label="到场" width="85"><template #default="{ row }"><el-switch v-model="row.present" :disabled="configLocked" @change="dirty = true" /></template></el-table-column>
+          <el-table-column prop="department" label="部门" min-width="110" sortable /><el-table-column prop="highest_rank" label="历史最高段位" min-width="125" sortable /><el-table-column label="到场" width="85"><template #default="{ row }"><el-switch v-model="row.present" :disabled="configLocked" @change="dirty = true" /></template></el-table-column>
           <el-table-column v-for="i in 5" :key="i" :label="`第${i}意向`" min-width="125"><template #default="{ row }"><el-select :model-value="row.roles[i - 1] || ''" :disabled="configLocked || i > row.roles.length + 1" :placeholder="i === 1 ? '不填则随机' : '选填'" clearable @change="value => { const next = [...row.roles]; if (value) next[i - 1] = value; else next.splice(i - 1, 1); row.roles = next; dirty = true }"><el-option v-for="r in roles" :key="r" :label="r" :value="r" :disabled="row.roles.includes(r) && row.roles[i - 1] !== r" /></el-select></template></el-table-column>
           <el-table-column label="接受补位" width="100"><template #default="{ row }"><el-switch v-model="row.fill" :disabled="configLocked" @change="dirty = true" /></template></el-table-column>
           <el-table-column label="本轮状态" width="100"><template #default="{ row }"><el-tag :type="played.has(row.id) ? 'success' : row.roles.length ? 'info' : 'warning'">{{ played.has(row.id) ? '已上场' : row.roles.length ? '待抽选' : '随机抽选' }}</el-tag></template></el-table-column>
@@ -257,7 +257,7 @@ onUnmounted(() => { clearInterval(pollTimer); clearInterval(animationTimer); cle
       <section v-if="!screen && tab === 'history'" class="history-panel">
         <p class="muted">自动保留最近5次完整抽队快照，包含队伍、替补、签位和已保存比分。超过5次后自动淘汰最早记录。</p>
         <el-empty v-if="!state.team_draw_history?.length" description="尚无抽队记录" />
-        <el-collapse><el-collapse-item v-for="(record, index) in [...(state.team_draw_history || [])].reverse()" :key="record.id" :name="record.id" :title="`${new Date(record.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} · 18队 · ${record.id === state.tournament.id ? '当前使用' : record.status === 'abandoned' ? '已放弃' : '历史快照'}`"><p v-if="record.status === 'abandoned'">放弃原因：{{ record.reason }}</p><div class="config-actions"><el-button @click="historyPreview = record.tournament">查看完整队伍</el-button><el-button v-if="record.id !== state.tournament.id" :disabled="busy || state.tournament.matches.some(m=>m.score_a || m.score_b)" @click="restoreDraw(record)">恢复这次结果</el-button><span>替补：{{ record.tournament.reserves.map(p=>p.name).join('、') || '无' }}</span></div></el-collapse-item></el-collapse>
+        <el-collapse><el-collapse-item v-for="(record, index) in [...(state.team_draw_history || [])].reverse()" :key="record.id" :name="record.id" :title="`${new Date(record.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })} · ${record.tournament.teams.length}队 · ${record.id === state.tournament.id ? '当前使用' : record.status === 'abandoned' ? '已放弃' : '历史快照'}`"><p v-if="record.status === 'abandoned'">放弃原因：{{ record.reason }}</p><div class="config-actions"><el-button @click="historyPreview = record.tournament">查看完整队伍</el-button><el-button v-if="record.id !== state.tournament.id" :disabled="busy || state.tournament.matches.some(m=>m.score_a || m.score_b)" @click="restoreDraw(record)">恢复这次结果</el-button><span>替补：{{ record.tournament.reserves.map(p=>p.name).join('、') || '无' }}</span></div></el-collapse-item></el-collapse>
         <el-dialog :model-value="!!historyPreview" title="抽队记录 · 完整阵容" width="min(1100px, 95vw)" @update:model-value="value => { if (!value) historyPreview = null }"><AnnualTournament v-if="historyPreview" :tournament="historyPreview" screen view="teams" /></el-dialog>
       </section>
     </template>

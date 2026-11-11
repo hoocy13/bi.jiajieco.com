@@ -1,0 +1,78 @@
+"""19-team roster draws with manually assigned matches and qualification."""
+from uuid import uuid4
+from datetime import datetime, timezone
+
+def bracket19(teams=None, seed='template', actor=None):
+    teams = teams or [dict(id=f'T{i:02}', name=chr(64+i), players=[]) for i in range(1,20)]
+    bye = None
+    matches = []
+    def add(key, stage, number, sources, bo=3):
+        matches.append(dict(id=key, stage=stage, number=number, sources=sources, best_of=bo, score_a=0, score_b=0, winner=None, bans=[]))
+    for i in range(9): add(f'A{i+1}', 'opening', i+1, [f'team:pending-A{i+1}-0', f'team:pending-A{i+1}-1'])
+    add('P1', 'playin', 1, ['team:pending-bye', 'loser:pending'], 3)
+    for i in range(5): add(f'B{i+1}', 'second', i+1, [f'team:pending-B{i+1}-0',f'team:pending-B{i+1}-1'])
+    add('C1', 'qualifier', 1, ['winner:pending1','winner:pending2'], 5)
+    for i in range(2): add(f'S{i+1}','semi',i+1,[f'finalist:{i*2}',f'finalist:{i*2+1}'],5)
+    add('F1','final',1,['winner:S1','winner:S2'],5)
+    return dict(id=uuid4().hex if actor is not None else 'template',generated=False,format='19-10-5-4',rules_version=3,draw_unit='team',seed=seed,teams=teams,matches=matches,reserves=[],bye_team_id=bye,created_by=actor,created_at=datetime.now(timezone.utc).isoformat())
+
+def choose_pair(t, key, team_ids):
+    if t.get('draw_plan') or not t.get('generated'): raise ValueError('请先抽齐全部队伍，再填写对阵')
+    match=next((m for m in t['matches'] if m['id']==key),None)
+    if not match or match['stage'] not in ['opening','second']: raise ValueError('只支持首轮或10进5对阵设置')
+    if match['score_a'] or match['score_b']: raise ValueError('已有比分的对局不能重新配对')
+    if not team_ids or len(team_ids)!=2 or len(set(team_ids))!=2: raise ValueError('请选择两支不同队伍')
+    if match['stage']=='opening':
+        candidates={team['id'] for team in t['teams']}
+        if t.get('bye_team_id'): candidates.discard(t['bye_team_id'])
+    else:
+        upstream=[m for m in t['matches'] if m['stage'] in ['opening','playin']]
+        if not all(m['winner'] for m in upstream): raise ValueError('请先完成首轮及晋级资格赛')
+        candidates={m['winner'] for m in upstream}
+    winners={m['id']:m['winner'] for m in t['matches']}
+    occupied={source.split(':')[1] if source.startswith('team:') else winners.get(source.split(':')[1]) for m in t['matches'] if m['stage']==match['stage'] and m['id']!=key for source in m['sources']}
+    if not set(team_ids)<=candidates or set(team_ids)&occupied: raise ValueError('队伍不符合本轮资格或已在其他对局中安排')
+    match['sources']=['team:'+key for key in team_ids] if match['stage']=='opening' else ['winner:'+next(m['id'] for m in upstream if m['winner']==identity) for identity in team_ids]
+
+def choose_bye(t, team_id):
+    if t.get('bye_team_id'): raise ValueError('首轮待赛队伍已确认')
+    opening=[m for m in t['matches'] if m['stage']=='opening']
+    identities={team['id'] for team in t['teams']}
+    assigned={source.split(':')[1] for m in opening for source in m['sources'] if source.startswith('team:') and source.split(':')[1] in identities}
+    if len(assigned)!=18 or team_id not in identities-assigned: raise ValueError('请先填写9场首轮对阵，再确认剩余的一支待赛队伍')
+    t['bye_team_id']=team_id
+    next(m for m in t['matches'] if m['id']=='P1')['sources'][0]='team:'+team_id
+
+def choose_playin(t, team_id, actor):
+    match = next(m for m in t['matches'] if m['id']=='P1')
+    if not t.get('bye_team_id'): raise ValueError('请先确认首轮待赛队伍')
+    if t.get('playin_opponent'): raise ValueError('首轮资格赛对手已锁定')
+    opening = [m for m in t['matches'] if m['stage']=='opening']
+    if not all(m['winner'] for m in opening): raise ValueError('请先完成首轮9场比赛')
+    candidates = [m for m in opening if sorted([m['score_a'],m['score_b']])==[1,2]]
+    origin = next((m for m in candidates if any(s=='team:'+team_id for s in m['sources']) and m['winner']!=team_id), None)
+    if not origin: raise ValueError('请选择一支首轮1:2落败的队伍；没有符合条件的队伍时需另定规则')
+    t.update(playin_opponent=team_id,playin_selected_by=actor,playin_selected_at=datetime.now(timezone.utc).isoformat())
+    match['sources']=['team:'+t['bye_team_id'],'loser:'+origin['id']]
+
+def draw_qualifier(t, actor, team_ids=None):
+    if t.get('qualification_slots'): raise ValueError('四强资格赛队伍已锁定')
+    candidates=[m for m in t['matches'] if m['stage']=='second']
+    if len(candidates)!=5 or not all(m['winner'] for m in candidates): raise ValueError('请先完成10进5的五场比赛')
+    if sum(sorted([m['score_a'],m['score_b']])==[0,2] for m in candidates)>=4:
+        raise ValueError('出现4支以上2:0胜队，特殊赛制待定；系统不会自动淘汰2:0胜队')
+    if not team_ids or len(team_ids)!=2 or len(set(team_ids))!=2: raise ValueError('请手动选择第四名和第五名两支胜队')
+    selected=[next((m for m in candidates if m['winner']==team_id),None) for team_id in team_ids]
+    if any(m is None or sorted([m['score_a'],m['score_b']])!=[1,2] for m in selected):
+        raise ValueError('只能选择2:1胜队，2:0胜队直接晋级，不参加加赛')
+    chosen=[m['id'] for m in selected]
+    t['qualification_slots']=chosen
+    t['qualification_selection']='manual-ranking'
+    next(m for m in t['matches'] if m['id']=='C1')['sources']=['winner:'+key for key in chosen]
+    t['challenge_drawn_by']=actor
+    t['challenge_drawn_at']=datetime.now(timezone.utc).isoformat()
+
+def finalists(t):
+    matches={m['id']:m for m in t['matches']}
+    if not t.get('qualification_slots'): return []
+    return [matches['C1']['winner']]+[matches[f'B{i}']['winner'] for i in range(1,6) if f'B{i}' not in t['qualification_slots']]

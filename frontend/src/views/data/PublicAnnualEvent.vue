@@ -5,10 +5,73 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import AnnualTournament from '../../components/AnnualTournament.vue'
 const route = useRoute()
+const drawTotal = computed(() => data.value?.tournament.draw_total || 9)
+const teamOnly = computed(() => data.value?.tournament.draw_unit === 'team')
+const drawProgress = computed(() => teamOnly.value ? (data.value?.tournament.drawn_teams || 0) : (data.value?.tournament.drawn_matches || 0))
+const currentDrawNumber = computed(() => drawReady.value ? drawProgress.value+1 : drawProgress.value || 1)
+const nextDrawTeam = computed(() => data.value?.tournament.teams.find(team => !(team.drawn ?? !!team.players.length)))
+const displayTeamCode = computed(() => drawReady.value ? nextDrawTeam.value?.id : displayDrawTeams.value[0]?.id)
+const byeDraw = computed(() => false)
 const hostAllowed = ref(false)
+const hostRoleMap = ref({})
 const drawing = ref(false)
 const revealing = ref(false)
 const drawReady = ref(false)
+const rollingNames = ref([])
+const lockedSlots = ref([])
+const nameTicks = ref([])
+const nameDurations = ref([])
+const drawRoles = ['对抗路', '打野', '中路', '发育路', '游走']
+const nameTimers = new Map()
+function stopNameTimers() {
+  for (const [timer, finish] of nameTimers) { clearTimeout(timer); finish() }
+  nameTimers.clear()
+}
+const displayDrawTeams = computed(() => {
+  if (!data.value) return []
+  const count = data.value.tournament.drawn_matches || 0
+  const t = data.value.tournament
+  const pending = drawing.value && drawReady.value
+  const ids = teamOnly.value ? (pending ? [nextDrawTeam.value?.id] : t.last_draw_team_ids) : pending ? (count < 9 ? t.matches.filter(m=>m.stage==='opening')[count]?.sources.map(s=>s.split(':')[1]) : [t.bye_team_id]) : t.last_draw_team_ids
+  const selection = ids?.length ? ids.map(id=>t.teams.find(team=>team.id===id)).filter(Boolean) : t.teams.slice(Math.max(0,count-1)*2,Math.max(0,count-1)*2+2)
+  return selection.map(team => ({ ...team,
+    players: drawing.value && !team.players.length && data.value.show_names
+      ? drawRoles.map((role, i) => ({ id: String(i), role, name: '待揭晓' })) : team.players,
+  }))
+})
+async function settleNames() {
+  if (reducedMotion.matches || !data.value.show_names) return
+  const names = displayDrawTeams.value.flatMap(team => team.players.map(player => player.name))
+  const selected = new Set(names)
+  const knownNames = [...Object.keys(hostRoleMap.value), ...data.value.tournament.teams.flatMap(team=>team.players.map(player=>player.name))]
+  const candidateNames = [...new Set(knownNames)].filter(name=>!selected.has(name))
+  const pool = candidateNames.length >= 10 ? candidateNames : ['王＊＊','李＊＊','张＊＊','陈＊＊','刘＊＊','赵＊＊','周＊＊','林＊＊','吴＊＊','郑＊＊']
+  rollingNames.value = names.map(() => '待揭晓')
+  lockedSlots.value = []
+  nameTicks.value = names.map(() => 0)
+  nameDurations.value = names.map(() => 85 + Math.floor(Math.random() * 70))
+  await Promise.all(names.map((name, index) => new Promise(resolve => {
+    const started = performance.now()
+    const duration = 1900 + Math.random() * 1700
+    const tick = () => {
+      const elapsed = performance.now() - started
+      if (elapsed >= duration) {
+        rollingNames.value[index] = name
+        lockedSlots.value.push(index)
+        resolve()
+        return
+      }
+      const candidates = pool.filter(value => value !== rollingNames.value[index])
+      rollingNames.value[index] = candidates[Math.floor(Math.random() * candidates.length)] || name
+      nameTicks.value[index]++
+      const delay = nameDurations.value[index] * (1 + .45 * elapsed / duration)
+      const timer = setTimeout(() => { nameTimers.delete(timer); tick() }, delay)
+      nameTimers.set(timer, resolve)
+    }
+    const timer = setTimeout(() => { nameTimers.delete(timer); tick() }, Math.random() * 180)
+    nameTimers.set(timer, resolve)
+  })))
+}
 async function enterDraw() {
   drawReady.value = true
   tab.value = 'draw'
@@ -24,11 +87,33 @@ async function checkHost() {
     const response = await fetch(`${base}/auth/me`, { headers: { Authorization: `Bearer ${token}` }, credentials: 'omit' })
     const result = await response.json()
     hostAllowed.value = response.ok && !!result.data?.permissions?.includes('system.users.manage')
+    if (hostAllowed.value) {
+      const rosterResponse = await fetch(`${base}/annual-match/real`, { headers: { Authorization: `Bearer ${token}` }, credentials: 'omit' })
+      if (rosterResponse.ok) {
+        const roster = await rosterResponse.json()
+        hostRoleMap.value = Object.fromEntries((roster.data?.players || []).map(p=>[p.name,{roles:p.roles,fill:p.fill}]))
+      }
+    }
   } catch { hostAllowed.value = false }
+}
+function intentionLabel(player) {
+  const preferences = hostRoleMap.value[player.name]
+  if (!preferences) return '已就位'
+  const rank=preferences.roles.indexOf(player.role)
+  return rank>=0 ? `第${rank+1}意向` : !preferences.roles.length ? '随机位置' : preferences.fill ? '同意补位' : '协调补位'
+}
+async function replayNames() {
+  if (drawing.value) return
+  drawReady.value=false
+  drawing.value=true
+  try { await nextTick(); await settleNames() }
+  finally { stopNameTimers(); rollingNames.value=[]; drawing.value=false }
 }
 async function drawTeams() {
   if (drawing.value || !hostAllowed.value || !data.value?.draw_enabled) return
   drawing.value = true
+  rollingNames.value = []
+  lockedSlots.value = []
   try {
     const base = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '')
     const response = await fetch(`${base}/public/annual-events/${encodeURIComponent(route.params.token)}/draw`, {
@@ -44,11 +129,12 @@ async function drawTeams() {
     tab.value = 'draw'
     await nextTick()
     snapScroll(true)
+    await settleNames()
     clearTimeout(revealTimer)
     revealTimer = setTimeout(() => { revealing.value = false }, reducedMotion.matches ? 0 : 900)
-    ElMessage.success('本场10人已抽取，结果已自动保存')
+    ElMessage.success('本次阵容已抽取，结果已自动保存')
   } catch (e) { ElMessage.error(e.message); await load() }
-  finally { drawing.value = false }
+  finally { stopNameTimers(); rollingNames.value = []; drawing.value = false }
 }
 
 const data = ref(null)
@@ -113,15 +199,24 @@ let generation = 0
 const teams = computed(() => Object.fromEntries((data.value?.tournament.teams || []).map(t => [t.id, t])))
 function sourceName(source) {
   const [kind, id] = source.split(':')
-  if (kind === 'team') return teams.value[id]?.name || '待定'
+  if (kind === 'team') return teams.value[id]?.drawn === false && data.value.tournament.generated ? '待定' : teams.value[id]?.name || '待定'
   const t = data.value.tournament
   const match = key => t.matches.find(m => m.id === key)
   if (kind === 'challenger') return teams.value[match(t.challenge_slot)?.winner]?.name || '挑战队伍待选择'
+  if (kind === 'loser') {
+    const origin=match(id)
+    if(!origin?.winner) return '1:2败队待填写'
+    return teams.value[origin.sources.map(s=>s.split(':')[1]).find(key=>key!==origin.winner)]?.name || '待定'
+  }
+  if (kind === 'finalist') {
+    const origins=['C1',...t.matches.filter(m=>m.stage==='second'&&!t.qualification_slots?.includes(m.id)).map(m=>m.id)]
+    return t.qualification_slots?.length ? teams.value[match(origins[Number(id)])?.winner]?.name || '1/4待定' : '1/4待定'
+  }
   if (kind === 'qualified') return teams.value[match('C1')?.winner && (id === t.challenge_slot ? match('C1').winner : match(id)?.winner)]?.name || '1/4待定'
   return teams.value[match(id)?.winner]?.name || (match(id)?.stage === 'semi' ? '1/2待定' : '待定')
 }
 function ready(match) { return match.sources.every(s => !/待定|待选择/.test(sourceName(s))) }
-const labels = { opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
+const labels = { playin: '晋级资格赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
 async function load() {
   if (drawing.value) return
   controller?.abort()
@@ -147,16 +242,29 @@ async function load() {
 }
 watch(() => route.params.token, () => { data.value = null; load() })
 onMounted(() => { checkHost(); load(); timer = setInterval(load, 5000); window.addEventListener('wheel', wheelSnap, { passive: false }); window.addEventListener('touchstart', touchBegin, { passive: true }); window.addEventListener('touchend', touchFinish, { passive: true }) })
-onUnmounted(() => { clearTimeout(revealTimer); window.removeEventListener('wheel', wheelSnap); window.removeEventListener('touchstart', touchBegin); window.removeEventListener('touchend', touchFinish); clearInterval(timer); controller?.abort(); generation++ })
+onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEventListener('wheel', wheelSnap); window.removeEventListener('touchstart', touchBegin); window.removeEventListener('touchend', touchFinish); clearInterval(timer); controller?.abort(); generation++ })
 </script>
 <template>
   <main class="public-event" v-loading="loading">
     <header class="public-header"><a class="event-brand" href="#" @click.prevent="backToTop"><strong>王者荣耀</strong><span>5V5 年会赛事</span></a><nav class="main-nav" aria-label="赛事导航"><button v-for="item in menuItems" :key="item.id" :class="{ active: tab === item.id }" :aria-pressed="tab === item.id" @click="selectView(item.id)">{{ item.name }}</button><button @click="rulesVisible = true">赛事规则</button></nav><button class="header-share" @click="share">分享赛事 ↗</button></header>
-    <section class="event-hero"><div class="hero-copy"><span class="hero-kicker">王者荣耀 · 年会挑战赛</span><h1>峡谷集结<br><em>向冠军进发</em></h1><p>18支队伍，同场竞逐。</p><div class="hero-actions"><button class="primary-action" @click="selectView('schedule')">查看全赛程 <span>→</span></button><button class="secondary-action" @click="selectView('teams')">参赛队伍</button></div></div></section>
+    <section class="event-hero"><div class="hero-copy"><span class="hero-kicker">王者荣耀 · 年会挑战赛</span><h1>峡谷集结<br><em>向冠军进发</em></h1><p>{{ data?.tournament.team_count || 18 }}支队伍，同场竞逐。</p><div class="hero-actions"><button class="primary-action" @click="selectView('schedule')">查看全赛程 <span>→</span></button><button class="secondary-action" @click="selectView('teams')">参赛队伍</button></div></div></section>
     <el-alert v-if="error" :title="error" type="info" :closable="false"><el-button size="small" @click="load">重新加载</el-button></el-alert>
     <section v-if="data" ref="matchPanel" class="event-content"><div class="section-heading"><div><span class="heading-mark"></span><h2>{{ tab === 'teams' ? '参赛队伍' : tab === 'matches' ? '比赛列表' : '赛事进程' }}</h2></div><div class="view-switch" aria-label="观赛视图"><button v-for="item in [{id:'schedule',name:'晋级图'},{id:'matches',name:'比赛列表'},{id:'teams',name:'队伍阵容'}]" :key="item.id" :class="{active:tab===item.id}" :aria-pressed="tab===item.id" @click="selectView(item.id)">{{ item.name }}</button></div></div>
-      <div v-if="data.draw_enabled" class="public-draw-bar"><div><b>首战对局抽签 · {{ data.tournament.drawn_matches || 0 }} / 9 场</b><p>每场抽取10人，按位置组成两队；本轮人员不重复。</p></div><el-button v-if="hostAllowed" type="primary" :loading="drawing" :disabled="drawing || data.tournament.drawn_matches >= 9" @click="enterDraw">{{ data.tournament.drawn_matches >= 9 ? '首战抽签已完成' : `抽取第${(data.tournament.drawn_matches || 0) + 1}场 · 10人` }}</el-button><el-button v-if="data.tournament.drawn_matches" @click="drawReady=false;tab='draw'">查看最近对局</el-button></div>
-      <section v-if="tab === 'draw'" :class="['opening-draw', {revealing}]" :aria-busy="drawing"><h2>{{ drawing ? '正在抽取首战阵容…' : drawReady ? `第 ${(data.tournament.drawn_matches || 0) + 1} 场 · 待抽取` : data.tournament.drawn_matches ? `第 ${data.tournament.drawn_matches} 场首战对局` : '首战对局抽签' }}</h2><div v-if="drawReady && !drawing" class="draw-waiting"><span class="waiting-vs">VS</span><p>红蓝双方各5人，阵容即将揭晓</p><el-button v-if="hostAllowed" type="primary" size="large" @click="drawTeams">开始抽取</el-button></div><div v-else-if="drawing" class="draw-animation" role="status"><i></i><b>集结队友</b><span>对抗路 · 打野 · 中路 · 发育路 · 游走</span></div><div v-else-if="data.tournament.drawn_matches" class="opening-sides"><article v-for="(team, index) in data.tournament.teams.slice((data.tournament.drawn_matches - 1) * 2, data.tournament.drawn_matches * 2)" :key="team.id" :class="['opening-team', index ? 'blue' : 'red']"><h3>{{ team.name }} 队 · {{ index ? '蓝方' : '红方' }}</h3><p v-for="player in team.players" :key="player.id"><span>{{ player.role }}</span><b>{{ player.name }}</b></p><p v-if="!team.players.length">队员姓名未公开</p></article></div></section>
+      <div v-if="data.draw_enabled" class="public-draw-bar"><div><b>队伍抽签 · {{ drawProgress }} / {{ drawTotal }} 队</b></div><el-button v-if="hostAllowed" type="primary" :loading="drawing" :disabled="drawing || drawProgress >= drawTotal" @click="enterDraw">{{ drawProgress >= drawTotal ? '本轮队伍已抽齐' : `抽取 ${nextDrawTeam?.id || ''} · 5人` }}</el-button><el-button v-if="drawProgress" class="draw-secondary-button" @click="drawReady=false;tab='draw'">查看最近队伍</el-button></div>
+      <section v-if="tab === 'draw'" :class="['opening-draw', 'classic-arena', {revealing}]" :aria-busy="drawing">
+        <header class="classic-arena-meta"><span>第{{ currentDrawNumber }}轮抽取 · 队伍编号 {{ displayTeamCode || '待定' }}</span><span>{{ drawing ? '正在揭晓' : drawReady ? '等待开始' : '已自动保存' }}</span></header>
+        <div class="classic-arena-title"><span>集结队友</span><h2>{{ drawing ? '战队集结 · 阵容揭晓' : drawReady ? '战队集结 · 等待抽取' : '战队集结 · 阵容就位' }}</h2><p>对抗路 / 打野 / 中路 / 发育路 / 游走</p></div>
+        <div v-if="drawReady && !drawing" class="draw-waiting"><span class="waiting-team-code">{{ nextDrawTeam?.id || '待定' }}</span><p>第{{ drawProgress+1 }}轮抽取</p><el-button v-if="hostAllowed" type="primary" size="large" @click="drawTeams">开始抽取</el-button></div>
+        <div v-else-if="drawing || data.tournament.drawn_matches" class="opening-sides classic-matchup" :class="{single:displayDrawTeams.length===1}">
+          <article v-for="(team, index) in displayDrawTeams" :key="team.id" :class="['opening-team', index ? 'blue' : 'red']">
+            <h3><span>{{ team.name }} 战队<small>队伍编号 {{ team.id }}</small></span><em>TEAM {{ team.id.replace('T','') }}</em></h3>
+            <p v-for="(player, position) in team.players" :key="player.id"><span class="classic-role">{{ player.role }}</span><b :style="{'--name-duration':`${(nameDurations[index * 5 + position] || 200) / 1000}s`}" :class="{ 'name-rolling': drawing && !lockedSlots.includes(index * 5 + position), 'name-locked': drawing && lockedSlots.includes(index * 5 + position) }"><span :key="drawing && !lockedSlots.includes(index * 5 + position) ? nameTicks[index * 5 + position] : player.id">{{ drawing ? (rollingNames[index * 5 + position] || '待揭晓') : player.name }}</span></b><small v-if="hostAllowed" class="classic-intent">{{ drawing && !lockedSlots.includes(index * 5 + position) ? '5V5' : intentionLabel(player) }}</small></p>
+            <p v-if="!team.players.length">{{ drawing ? '正在抽取阵容…' : '队员姓名未公开' }}</p>
+          </article>
+
+        </div>
+        <footer v-if="!drawReady && data.tournament.drawn_matches" class="classic-arena-actions"><el-button v-if="hostAllowed && data.draw_enabled && drawProgress < drawTotal" type="primary" :disabled="drawing" @click="enterDraw">抽取下一支队伍</el-button><el-button v-if="data.show_names" class="draw-secondary-button" :disabled="drawing" @click="replayNames">重播揭晓</el-button></footer>
+      </section>
       <Transition name="spectator-view" mode="out-in"><div :key="tab" class="view-content" :class="{ revealing }">
       <div v-if="tab === 'matches'" class="stage-filter" aria-label="比赛阶段"><button v-for="item in [{id:'all',name:'全部比赛'}, ...Object.entries(labels).map(([id,name])=>({id,name}))]" :key="item.id" :class="{active:stage===item.id}" :aria-pressed="stage===item.id" @click="stage=item.id">{{ item.name }}</button></div>
       <AnnualTournament v-if="tab !== 'matches' && tab !== 'draw'" :tournament="data.tournament" :view="tab" :screen="true" public-view :hide-names="!data.show_names" />
@@ -165,7 +273,7 @@ onUnmounted(() => { clearTimeout(revealTimer); window.removeEventListener('wheel
     </section>
     <section v-else-if="!loading && !error" class="empty">正在获取赛事…</section>
     <aside class="quick-actions" aria-label="观赛工具"><button aria-label="全屏观赛" @click="fullscreen"><span>⛶</span>全屏</button><button aria-label="分享赛事" @click="share"><span>↗</span>分享</button><button aria-label="返回顶部" @click="backToTop"><span>↑</span>顶部</button></aside>
-    <el-dialog v-model="rulesVisible" title="赛事规则" width="min(560px, 94vw)"><div class="rules-copy"><p><b>首轮赛</b>18支队伍两两对战，9场BO3决出9支胜队。</p><p><b>四强争夺赛</b>8支胜队进行4场BO3，另1支胜队进入待定席位。</p><p><b>四强资格赛</b>由管理员为待定队选择1支暂晋级队作为对手，进行BO5。胜者接替对应四强席位，败者淘汰，其他3队直接晋级。</p><p><b>半决赛与决赛</b>均为BO5，先赢3局晋级。本阶段及资格赛可记录逐局Ban。</p></div></el-dialog>
+    <el-dialog v-model="rulesVisible" title="赛事规则" width="min(560px, 94vw)"><div class="rules-copy"><p><b>首轮赛</b>{{ data.tournament.team_count === 19 ? '18队打9场BO3，9支胜队晋级；轮空队与手动选择的1:2败队打BO3，胜者取得第10个名额。' : '18支队伍两两对战，9场BO3决出9支胜队。' }}</p><p><b>四强争夺赛</b>{{ data.tournament.team_count === 19 ? '10队进行5场BO3，决出5支胜队。' : '8支胜队进行4场BO3，另1支胜队进入待定席位。' }}</p><p><b>四强资格赛</b>{{ data.tournament.team_count === 19 ? '2:0胜队直接进四强；积分第四、第五名的两支2:1胜队手动填入BO5资格赛，胜者晋级。出现4支以上2:0胜队时暂停晋级，特殊规则另定。' : '管理员为待定队选择暂晋级对手，BO5胜者晋级，其他3队直接晋级。' }}</p><p><b>半决赛与决赛</b>均为BO5，先赢3局晋级。本阶段及资格赛可记录逐局Ban。</p></div></el-dialog>
     <el-dialog v-model="shareVisible" title="分享赛事" width="min(400px, 94vw)"><div class="share-content"><img :src="shareQr" alt="观赛链接二维码" /><p>扫码查看赛程与比赛结果</p><el-button type="primary" @click="copyLink">复制观赛链接</el-button></div></el-dialog>
   </main>
 </template>
@@ -206,4 +314,20 @@ onUnmounted(() => { clearTimeout(revealTimer); window.removeEventListener('wheel
 
 <style scoped>
 .draw-waiting{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;min-height:300px}.waiting-vs{font-size:64px;font-weight:800;color:#9cd6ff;letter-spacing:8px;text-shadow:0 0 30px #538fbf77}.draw-waiting p{color:#9cb8ce}.draw-waiting .el-button{min-width:180px;background:#538fbf;border-color:#8fc5ee}
+</style>
+
+<style scoped>
+.opening-team p b>span{display:inline-block;color:inherit;font-size:inherit;min-width:4em}.name-rolling{color:#b9dcf7}.name-rolling>span{animation:name-jump var(--name-duration,.2s) ease-out}.name-locked{color:#fff;text-shadow:0 0 14px #8bc9ff55}@keyframes name-jump{from{transform:translateY(-6px);opacity:.35;filter:blur(1px)}to{transform:translateY(0);opacity:1;filter:none}}@media(prefers-reduced-motion:reduce){.name-rolling>span{animation:none}}
+</style>
+
+<style scoped>
+.classic-arena{min-height:560px;padding:26px 30px 24px;border:1px solid #354757;border-radius:14px;background:radial-gradient(ellipse at 20% 100%,#702d491e,transparent 60%),radial-gradient(ellipse at 90% 100%,#2073a42b,transparent 60%),#0e1b28;box-sizing:border-box;justify-content:flex-start}.classic-arena-meta{display:flex;justify-content:space-between;gap:16px;padding-bottom:18px;border-bottom:1px solid #ffffff0c;color:#8da3b8;font-size:11px;letter-spacing:1px}.classic-arena-title{padding:30px 0 26px;text-align:center}.classic-arena-title>span{color:#ceb47b;font-size:11px;letter-spacing:7px}.classic-arena-title h2{font-size:clamp(24px,2.2vw,36px);font-weight:700;letter-spacing:3px;margin:14px 0}.classic-arena-title p{font-size:12px;color:#8ba1b5;margin:0}.classic-matchup{display:grid;grid-template-columns:minmax(0,1fr) 86px minmax(0,1fr);gap:14px;max-width:none;width:100%;margin:12px auto 0;align-items:center}.classic-matchup.single{grid-template-columns:minmax(0,620px);justify-content:center}.classic-matchup .opening-team{padding:23px 22px;border-color:#ffffff18;background:#ffffff03;min-width:0}.classic-matchup .opening-team.red{grid-column:1;grid-row:1;background:linear-gradient(140deg,#b1446210,#ffffff03)}.classic-matchup .opening-team.blue{grid-column:3;grid-row:1;background:linear-gradient(140deg,#318bc210,#ffffff03)}.classic-matchup .opening-team h3{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:0 0 15px;font-size:21px}.classic-matchup .opening-team h3>span{min-width:0;overflow-wrap:anywhere}.classic-matchup .opening-team h3 small{font-size:13px;opacity:.75;margin-left:14px}.classic-matchup .opening-team h3 em{font-size:9px;letter-spacing:2px;font-style:normal;opacity:.75;white-space:nowrap}.classic-matchup .opening-team p{grid-template-columns:4em minmax(0,1fr) auto;gap:16px;min-height:58px;padding:0}.classic-matchup .opening-team .classic-role{font-size:12px;color:#99a9bb}.classic-matchup .opening-team p b{font-size:clamp(21px,1.8vw,29px);letter-spacing:1px}.classic-intent{font-size:11px;color:#ba8b9b;white-space:nowrap}.blue .classic-intent{color:#7faed1}.classic-vs{grid-column:2;grid-row:1;display:flex;flex-direction:column;align-items:center;gap:10px;color:#d0b57d}.classic-vs strong{font-size:36px;font-weight:650}.classic-vs>span{font-size:10px;letter-spacing:3px}.classic-arena-actions{display:flex;justify-content:center;gap:12px;margin-top:26px}.classic-arena-actions .el-button{margin:0}.classic-matchup .opening-team p b>span{min-width:0;max-width:100%;overflow-wrap:anywhere}@media(max-width:700px){.classic-arena{padding:18px 12px}.classic-matchup{grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr);gap:7px}.classic-matchup .opening-team{padding:14px 10px}.classic-matchup .opening-team h3{font-size:16px;flex-wrap:wrap;gap:6px}.classic-matchup .opening-team h3 small{display:block;margin:5px 0 0}.classic-matchup .opening-team h3 em{display:none}.classic-matchup .opening-team p{grid-template-columns:3em minmax(0,1fr);gap:7px;min-height:65px}.classic-matchup .opening-team p b{font-size:18px}.classic-matchup .opening-team .classic-role{font-size:10px}.classic-intent{grid-column:2;font-size:9px;margin-top:-12px}.classic-vs strong{font-size:22px}.classic-vs>span{display:none}.classic-arena-title h2{font-size:23px}.classic-arena-meta{font-size:10px}}
+</style>
+
+<style scoped>
+.waiting-team-code{font-size:64px;color:#a8d7fa;font-weight:750;letter-spacing:5px}.classic-matchup.single{grid-template-columns:minmax(0,760px)}.classic-matchup.single .opening-team h3>span{display:flex;align-items:baseline;gap:20px}.classic-matchup.single .opening-team h3 small{margin:0;color:#93acc0;font-size:13px}.classic-matchup.single .opening-team.red{background:linear-gradient(135deg,#538fbf12,#ffffff03);border-color:#4a6880}.classic-matchup.single .opening-team.red h3{color:#9ed1f6}.classic-matchup.single .classic-intent{color:#92b8d5}@media(max-width:700px){.classic-matchup.single .opening-team h3>span{flex-wrap:wrap;gap:8px}}
+</style>
+
+<style scoped>
+.public-event .draw-secondary-button{background:#e8f3fb;border-color:#bad2e5;color:#244b68;font-weight:600}.public-event .draw-secondary-button:hover,.public-event .draw-secondary-button:focus-visible{background:#fff;border-color:#8cb9d9;color:#173c59}.public-event .draw-secondary-button.is-disabled{background:#d9e6f0;border-color:#b7ccd9;color:#718ca0}
 </style>

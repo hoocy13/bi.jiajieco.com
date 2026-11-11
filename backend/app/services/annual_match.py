@@ -62,13 +62,13 @@ def read_state(mode, path=None):
         db.execute('INSERT OR IGNORE INTO activity VALUES (?, ?)', (mode, json.dumps(initial_state(mode), ensure_ascii=False)))
         state = json.loads(db.execute('SELECT body FROM activity WHERE mode=?', (mode,)).fetchone()[0])
         if not state.get('tournament'):
-            state['tournament'] = bracket()
+            state['tournament'] = bracket(team_count=state.get('tournament_settings', {}).get('team_count', 18))
         for i, team in enumerate(state['tournament']['teams']):
             team.setdefault('name', chr(65 + i))
         return state
 
 
-def match_round(players, seed):
+def match_round(players, seed, team_count=None, allow_offrole=False):
     """Maximize complete matches globally, then optimize position preferences.
 
     Each role needs two players per match. A min-cost residual network handles
@@ -77,7 +77,8 @@ def match_round(players, seed):
     players = copy.deepcopy(players)
     rng = random.Random(seed)
     rng.shuffle(players)
-    for games in range(len(players) // 10, 0, -1):
+    for teams_count in ([team_count] if team_count else range(len(players) // 10 * 2, 0, -2)):
+        games = (teams_count + 1) // 2
         source = 0
         role_base = len(players) + 1
         sink = role_base + 5
@@ -94,16 +95,18 @@ def match_round(players, seed):
         for i, player in enumerate(players):
             edge(source, i + 1, 1, 0)
             for r, role in enumerate(ROLES):
-                if player['roles'] and role not in player['roles'] and not player['fill']:
+                if player['roles'] and role not in player['roles'] and not player['fill'] and not allow_offrole:
                     continue
-                rank = player['roles'].index(role) if role in player['roles'] else (11 if not player['roles'] else 10)
+                rank = player['roles'].index(role) if role in player['roles'] else (11 if not player['roles'] else 10 if player['fill'] else 20)
                 cost = (player.get('round_penalty', 0) + rank) * 100000 + rng.randrange(100)
+                if rank == 20: cost += 10000000
+                if role == '打野' and role not in player['roles']: cost += 100000000
                 assignments.append((player, r, rank, edge(i + 1, role_base + r, 1, cost)))
         for r in range(5):
-            edge(role_base + r, sink, games * 2, 0)
+            edge(role_base + r, sink, teams_count, 0)
 
         flow = 0
-        while flow < games * 10:
+        while flow < teams_count * 5:
             distance = [float('inf')] * len(graph)
             previous = [None] * len(graph)
             distance[source] = 0
@@ -130,7 +133,7 @@ def match_round(players, seed):
                 graph[end][item[1]][2] += 1
                 end = start
             flow += 1
-        if flow != games * 10:
+        if flow != teams_count * 5:
             continue
 
         by_role = [[] for _ in ROLES]
@@ -143,6 +146,7 @@ def match_round(players, seed):
         for game in range(games):
             slots = []
             for team_index, team in enumerate(('red', 'blue')):
+                if game * 2 + team_index >= teams_count: break
                 for r in range(5):
                     slots.append(dict(by_role[r][game * 2 + team_index], team=team))
             matches.append(slots)
@@ -265,7 +269,7 @@ def mutate(mode, revision, action, payload=None, path=None, actor=None):
         remember_draw(state, state.get('tournament'))
         state['revision'] += 1
         if not state.get('tournament'):
-            state['tournament'] = bracket()
+            state['tournament'] = bracket(team_count=state.get('tournament_settings', {}).get('team_count', 18))
         for i, team in enumerate(state['tournament']['teams']):
             team.setdefault('name', chr(65 + i))
         state.setdefault('audit', []).append(dict(action=action, revision=state['revision'], actor=actor,
@@ -287,10 +291,10 @@ def public_state(token, path=None):
     teams = []
     for team in tournament['teams']:
         players = [dict(id=str(i), name=p['name'], role=p['role']) for i, p in enumerate(team['players'])] if settings.get('show_names') else []
-        teams.append(dict(id=team['id'], name=team['name'], players=players))
+        teams.append(dict(id=team['id'], name=team['name'], players=players, drawn=bool(team['players'])))
     matches = [{key: copy.deepcopy(m[key]) for key in
                 ('id', 'stage', 'number', 'sources', 'best_of', 'score_a', 'score_b', 'winner', 'bans')} for m in tournament['matches']]
     updated = max([settings.get('updated_at', '')] + [m.get('updated_at', '') for m in tournament['matches']])
     return dict(updated_at=updated, show_names=bool(settings.get('show_names')), draw_enabled=bool(settings.get('draw_enabled')), revision=state['revision'], tournament=dict(
         format=tournament['format'], generated=bool(tournament.get('generated')), teams=teams, matches=matches,
-        challenge_slot=tournament.get('challenge_slot'), drawn_matches=tournament.get('drawn_matches', 9 if tournament.get('generated') else 0), reserves=[]))
+        challenge_slot=tournament.get('challenge_slot'), qualification_slots=tournament.get('qualification_slots', []), playin_opponent=tournament.get('playin_opponent'), rules_version=tournament.get('rules_version'), bye_team_id=tournament.get('bye_team_id'), last_draw_team_ids=tournament.get('last_draw_team_ids', []), team_count=len(tournament['teams']), draw_total=len(tournament['teams']) if tournament.get('draw_unit')=='team' else 10 if len(tournament['teams']) == 19 else 9, draw_unit=tournament.get('draw_unit','match'), draw_round=tournament.get('draw_round',1), drawn_teams=sum(bool(team['players']) for team in tournament['teams']), drawn_matches=tournament.get('drawn_matches', (10 if len(tournament['teams']) == 19 else 9) if tournament.get('generated') else 0), reserves=[]))

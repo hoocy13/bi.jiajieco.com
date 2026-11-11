@@ -18,6 +18,10 @@ class Player(BaseModel):
     present: bool
     roles: list[str] = Field(max_length=5)
     fill: bool
+    department: str = Field(default="", max_length=50)
+    highest_rank: str = Field(default="", max_length=30)
+    strength_rank: str = Field(default="", max_length=30)
+    note: str = Field(default="", max_length=200)
 
 
 class BanGame(BaseModel):
@@ -31,6 +35,7 @@ class Command(BaseModel):
     players: list[Player] | None = Field(default=None, max_length=200)
     id: str | None = None
     team_id: str | None = None
+    team_ids: list[str] | None = Field(default=None, min_length=2, max_length=2)
     name: str | None = Field(default=None, min_length=1, max_length=20)
     slot: int | None = None
     reason: str = Field(default='', max_length=200)
@@ -49,7 +54,7 @@ def get_state(mode: Mode):
 
 
 @router.post('/{mode}/{action}')
-def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename'], body: Command, user: User = Depends(get_current_user)):
+def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye'], body: Command, user: User = Depends(get_current_user)):
     if action == 'save' and body.players is None:
         raise HTTPException(422, '缺少人员配置')
     try:
