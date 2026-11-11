@@ -68,7 +68,31 @@ def read_state(mode, path=None):
         return state
 
 
-def match_round(players, seed, team_count=None, allow_offrole=False):
+def match_round(players, seed, team_count=None, allow_offrole=False, same_team_names=None):
+    if not same_team_names:
+        return _match_round(players, seed, team_count, allow_offrole)
+    from itertools import permutations
+    names = list(dict.fromkeys(same_team_names))
+    members = [next((p for p in players if p['name'] == name), None) for name in names]
+    if not 2 <= len(names) <= 5 or any(p is None for p in members):
+        raise ValueError('同队配置需要2至5名有效参赛人员')
+    rng = random.Random(str(seed) + '-same-team')
+    options = list(permutations(ROLES, len(members)))
+    rng.shuffle(options)
+    def role_cost(player, role):
+        if role in player['roles']: return player['roles'].index(role)
+        if role == '打野': return 10000
+        return 11 if not player['roles'] else 10 if player['fill'] else 1000
+    options.sort(key=lambda roles: sum(role_cost(p, role) for p, role in zip(members, roles)))
+    for roles in options:
+        fixed = {p['id']: role for p, role in zip(members, roles)}
+        configured = [dict(p, fixed_role=fixed.get(p['id'])) for p in players]
+        groups = _match_round(configured, seed, team_count, allow_offrole, set(fixed))
+        if groups: return groups
+    raise ValueError('同队配置无法满足位置约束，请调整配置或补位设置')
+
+
+def _match_round(players, seed, team_count=None, allow_offrole=False, same_team_ids=None):
     """Maximize complete matches globally, then optimize position preferences.
 
     Each role needs two players per match. A min-cost residual network handles
@@ -95,6 +119,7 @@ def match_round(players, seed, team_count=None, allow_offrole=False):
         for i, player in enumerate(players):
             edge(source, i + 1, 1, 0)
             for r, role in enumerate(ROLES):
+                if player.get('fixed_role') and player['fixed_role'] != role: continue
                 if player['roles'] and role not in player['roles'] and not player['fill'] and not allow_offrole:
                     continue
                 rank = player['roles'].index(role) if role in player['roles'] else (11 if not player['roles'] else 10 if player['fill'] else 20)
@@ -142,6 +167,11 @@ def match_round(players, seed, team_count=None, allow_offrole=False):
                 by_role[r].append(dict(id=player['id'], name=player['name'], role=ROLES[r], rank=rank))
         for group in by_role:
             rng.shuffle(group)
+        if same_team_ids:
+            target = rng.randrange(teams_count)
+            for group in by_role:
+                index = next((i for i, p in enumerate(group) if p['id'] in same_team_ids), None)
+                if index is not None: group[target], group[index] = group[index], group[target]
         matches = []
         for game in range(games):
             slots = []

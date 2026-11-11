@@ -261,7 +261,7 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         seed = uuid4().hex
         if team_count == 19:
             roster, selection = pool, dict(rule='95-full-roster-jungle-first')
-            groups = matcher(roster, seed, team_count=19, allow_offrole=state.get('tournament_settings', {}).get('allow_offrole', False))
+            groups = matcher(roster, seed, team_count=19, allow_offrole=state.get('tournament_settings', {}).get('allow_offrole', False), **({'same_team_names': state['tournament_settings']['same_team_names']} if state.get('tournament_settings', {}).get('same_team_names') else {}))
         else:
             roster, selection = select_roster(pool, seed)
             groups = matcher(roster, seed)

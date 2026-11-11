@@ -216,7 +216,7 @@ function sourceName(source) {
   return teams.value[match(id)?.winner]?.name || (match(id)?.stage === 'semi' ? '1/2待定' : '待定')
 }
 function ready(match) { return match.sources.every(s => !/待定|待选择/.test(sourceName(s))) }
-const labels = { playin: '晋级资格赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
+const labels = { playin: '突围挑战赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
 async function load() {
   if (drawing.value) return
   controller?.abort()

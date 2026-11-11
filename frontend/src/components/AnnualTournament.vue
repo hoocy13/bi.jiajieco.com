@@ -18,7 +18,7 @@ const completed = computed(() => matches.value.filter(m => m.winner).length)
 const champion = computed(() => teamMap.value[matchMap.value.F1?.winner])
 const nineteen = computed(() => tournament.value?.format === '19-10-5-4')
 const newFormat = computed(() => tournament.value?.format === '18-9-4-wildcard')
-const stages = { playin: '晋级资格赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
+const stages = { playin: '突围挑战赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
 const columns = computed(() => {
   const opening = ids => ids.flatMap(id => (matchMap.value[id]?.sources || []).map(source => source.split(':')[1]))
   return [
@@ -124,16 +124,16 @@ function resolveSource(source) {
   const [kind, id] = source.split(':')
   if (kind === 'team') {
     const team=teamMap.value[id]
-    if (tournament.value.generated && tournament.value.drawn_matches !== undefined && (team?.drawn === false || !props.publicView && !team?.players?.length)) return {name:'待抽取'}
-    return team || {name:nineteen.value?'对阵待填写':'待抽签'}
+    if (tournament.value.generated && tournament.value.drawn_matches !== undefined && (team?.drawn === false || !props.publicView && !team?.players?.length)) return {name:'待定'}
+    return team || {name:'待定'}
   }
   if (kind === 'challenger') {
     const slot = tournament.value?.challenge_slot
-    return teamMap.value[matchMap.value[slot]?.winner] || { name: '待选择挑战队伍' }
+    return teamMap.value[matchMap.value[slot]?.winner] || { name: '待定' }
   }
   if (kind === 'loser') {
     const match=matchMap.value[id]
-    if(!match?.winner) return {name:'1:2败队待填写'}
+    if(!match?.winner) return {name:'待定'}
     return teamMap.value[match.sources.map(s=>s.split(':')[1]).find(key=>key!==match.winner)] || {name:'待定'}
   }
   if (kind === 'finalist') {
@@ -142,7 +142,7 @@ function resolveSource(source) {
   }
   if (kind === 'qualified') {
     if (!matchMap.value.C1?.winner) return { name: '1/4待定' }
-    return teamMap.value[id === tournament.value.challenge_slot ? matchMap.value.C1.winner : matchMap.value[id]?.winner] || { name: '待晋级' }
+    return teamMap.value[id === tournament.value.challenge_slot ? matchMap.value.C1.winner : matchMap.value[id]?.winner] || { name: '1/4待定' }
   }
   const winner = matchMap.value[id]?.winner
   return teamMap.value[winner] || { name: matchMap.value[id]?.stage === 'semi' ? '1/2待定' : '待定', origin: id }
@@ -243,7 +243,7 @@ watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = 
     <div v-else class="team-directory"><article v-for="team in tournament.teams" :key="team.id" class="directory-card"><button class="directory-title" @click="openTeam(team)"><b>{{ team.name }}</b><span>{{ team.id }}</span></button><el-button v-if="!screen && tournament.generated" text size="small" :disabled="busy" @click="renameTeam(team)" :aria-label="`修改${team.name}队名`">改名</el-button><template v-if="team.players.length"><div v-for="p in team.players" :key="p.id" class="directory-player"><span>{{ p.role }}</span><strong>{{ p.name }}</strong></div></template><p v-else class="empty-team">{{ hideNames ? '队员姓名未公开' : '等待抽取队员' }}</p></article></div>
 
 
-    <el-dialog v-model="byeDialog" title="指定首轮待赛队伍" width="min(480px,94vw)"><p class="score-hint">先填写9场首轮对阵，再确认剩余的一支队伍。它将在晋级资格赛中对战手动选择的1:2败队。</p><el-select v-model="selectedBye" placeholder="选择队伍" :disabled="!teamsComplete || byeCandidates.length!==1"><el-option v-for="team in byeCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" /></el-select><template #footer><el-button @click="byeDialog=false">取消</el-button><el-button type="primary" :disabled="!teamsComplete || byeCandidates.length!==1 || !selectedBye || busy" @click="saveBye">确认待赛队伍</el-button></template></el-dialog>
+    <el-dialog v-model="byeDialog" title="指定首轮待赛队伍" width="min(480px,94vw)"><p class="score-hint">先填写9场首轮对阵，再确认剩余的一支队伍。它将在突围挑战赛中对战手动选择的1:2败队。</p><el-select v-model="selectedBye" placeholder="选择队伍" :disabled="!teamsComplete || byeCandidates.length!==1"><el-option v-for="team in byeCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" /></el-select><template #footer><el-button @click="byeDialog=false">取消</el-button><el-button type="primary" :disabled="!teamsComplete || byeCandidates.length!==1 || !selectedBye || busy" @click="saveBye">确认待赛队伍</el-button></template></el-dialog>
     <el-drawer v-model="drawer" append-to-body size="min(560px, 100vw)" :title="selectedTeam ? `${selectedTeam.name} · 队员名单` : selected ? `${stages[selected.stage]} · BO${selected.best_of}` : '比赛详情'" class="tournament-drawer">
       <template v-if="selectedTeam"><p v-if="!selectedTeam.players.length">{{ hideNames ? '队员姓名未公开' : '队伍尚未生成' }}</p><div v-for="p in selectedTeam.players" :key="p.id" class="roster-line"><span>{{ p.role }}</span><b>{{ p.name }}</b></div></template>
       <template v-else-if="selected">
