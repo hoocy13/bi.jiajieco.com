@@ -55,7 +55,7 @@ class NineteenTests(unittest.TestCase):
         self.command('tournament-challenge',{'team_ids':chosen});self.assertEqual(len(set(self.state['tournament']['qualification_slots'])),2)
         with self.assertRaises(ValueError):self.command('tournament-challenge',{'team_ids':chosen})
         with self.assertRaises(ValueError):self.command('tournament-score',dict(id='B4',score_a=2,score_b=0))
-        for key in ['C1','S1','S2','F1']:self.command('tournament-score',dict(id=key,score_a=3,score_b=0))
+        for key in ['C1','S1','S2','F1']:self.command('tournament-score',dict(id=key,score_a=2 if key=='C1' else 3,score_b=0))
         self.assertEqual(sum(bool(m['winner']) for m in self.state['tournament']['matches']),19)
         with self.assertRaises(ValueError):self.command('tournament-score',dict(id='B1',score_a=0,score_b=2))
     def test_sweep_winners_protected_and_special_cases_pause(self):
@@ -85,5 +85,64 @@ class NineteenTests(unittest.TestCase):
             self.assertEqual(sum(p['rank']==20 for p in slots),3)
             junglers=[p for p in slots if p['role']=='打野']
             self.assertEqual(len(junglers),19);self.assertTrue(all(p['rank']==0 for p in junglers))
+
+    def test_random_pairing_and_both_challenges(self):
+        self.command('tournament-generate')
+        self.command('tournament-random-pairing')
+        t=self.state['tournament']
+        assigned=[s.split(':')[1] for m in t['matches'] if m['stage']=='opening' for s in m['sources']]+[t['bye_team_id']]
+        self.assertEqual(len(set(assigned)),19)
+        before=json.dumps(t,sort_keys=True)
+        with self.assertRaises(ValueError):self.command('tournament-random-pairing')
+        self.assertEqual(json.dumps(service.read_state('real')['tournament'],sort_keys=True),before)
+        with self.assertRaises(ValueError):self.command('tournament-random-playin')
+        for i in range(1,10):self.command('tournament-score',dict(id=f'A{i}',score_a=2,score_b=1 if i in [2,4] else 0))
+        self.command('tournament-random-playin')
+        t=self.state['tournament'];p=next(m for m in t['matches'] if m['stage']=='playin')
+        self.assertEqual(p['sources'][0],'team:'+t['bye_team_id'])
+        self.assertIn(p['sources'][1],['loser:A2','loser:A4'])
+        self.assertEqual(t['playin_selection'],'random')
+        with self.assertRaises(ValueError):self.command('tournament-random-playin')
+        self.command('tournament-score',dict(id='P1',score_a=2,score_b=0))
+        winners=[m['winner'] for m in self.state['tournament']['matches'] if m['stage'] in ['opening','playin']]
+        for i in range(5):self.command('tournament-pair',dict(id=f'B{i+1}',team_ids=winners[i*2:i*2+2]))
+        for i in range(1,6):self.command('tournament-score',dict(id=f'B{i}',score_a=2,score_b=0 if i<=3 else 1))
+        self.command('tournament-random-qualifier')
+        self.assertEqual(set(self.state['tournament']['qualification_slots']),{'B4','B5'})
+        self.assertEqual(self.state['tournament']['qualification_selection'],'random')
+        with self.assertRaises(ValueError):self.command('tournament-random-qualifier')
+
+    def test_random_challenge_does_not_select_sweep_or_missing_candidates(self):
+        from app.services.annual_nineteen import random_playin,random_qualifier
+        t=bracket(team_count=19)
+        for m in t['matches']:
+            if m['stage'] in ['opening','second']:m.update(winner=m['id'],score_a=2,score_b=0)
+        with self.assertRaises(ValueError):random_playin(t,1)
+        with self.assertRaises(ValueError):random_qualifier(t,1)
+        self.assertNotIn('qualification_slots',t)
+
+    def test_same_team_setting_is_not_public(self):
+        with closing(sqlite3.connect(self.path)) as db,db:
+            state=service.read_state('real');state['tournament_settings']['same_team_names']=['选手0','选手1','选手2']
+            db.execute("UPDATE activity SET body=? WHERE mode='real'",(json.dumps(state),))
+        self.command('tournament-public',dict(enabled=True,draw_enabled=True,show_names=True))
+        public=service.public_state(self.state['public_view']['token'])
+        self.assertNotIn('same_team_names',json.dumps(public))
+        self.assertNotIn('tournament_settings',public)
+
+    def test_unstarted_qualifier_is_bo3_and_four_close_winners_pause(self):
+        from app.services.annual_nineteen import normalize_unstarted_rules,random_qualifier
+        t=bracket(team_count=19)
+        qualifier=next(m for m in t['matches'] if m['stage']=='qualifier')
+        self.assertEqual(qualifier['best_of'],3)
+        qualifier['best_of']=5
+        normalize_unstarted_rules(t)
+        self.assertEqual(qualifier['best_of'],3)
+        qualifier.update(best_of=5,score_a=1)
+        normalize_unstarted_rules(t)
+        self.assertEqual(qualifier['best_of'],5)
+        for m in t['matches']:
+            if m['stage']=='second':m.update(winner=m['id'],score_a=2,score_b=0 if m['id']=='B1' else 1)
+        with self.assertRaises(ValueError):random_qualifier(t,1)
 
 if __name__=='__main__':unittest.main()

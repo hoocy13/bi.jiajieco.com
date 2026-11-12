@@ -159,4 +159,16 @@ class PublicEventTests(unittest.TestCase):
         self.assertEqual((m['score_a'], m['score_b']), (2, 1))
         self.assertIsNotNone(m['winner'])
 
+
+
+    def test_readable_alias_preserves_visibility_and_old_link(self):
+        s = self.publish(self.generate())
+        alias = self.client.get('/api/v1/public/annual-events/annual-games')
+        self.assertEqual(alias.status_code, 200)
+        self.assertEqual(alias.json(), self.get(s).json())
+        self.assertEqual(self.client.get('/api/v1/public/annual-events/unknown-event').status_code, 404)
+        self.assertIn(self.client.post('/api/v1/public/annual-events/annual-games/draw',json={'revision':s['revision']}).status_code,[401,403])
+        self.publish(s, enabled=False)
+        self.assertEqual(self.client.get('/api/v1/public/annual-events/annual-games').status_code,404)
+
 if __name__ == '__main__': unittest.main()

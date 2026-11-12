@@ -63,6 +63,8 @@ def read_state(mode, path=None):
         state = json.loads(db.execute('SELECT body FROM activity WHERE mode=?', (mode,)).fetchone()[0])
         if not state.get('tournament'):
             state['tournament'] = bracket(team_count=state.get('tournament_settings', {}).get('team_count', 18))
+        from app.services.annual_nineteen import normalize_unstarted_rules
+        normalize_unstarted_rules(state['tournament'])
         for i, team in enumerate(state['tournament']['teams']):
             team.setdefault('name', chr(65 + i))
         return state
@@ -300,6 +302,8 @@ def mutate(mode, revision, action, payload=None, path=None, actor=None):
         state['revision'] += 1
         if not state.get('tournament'):
             state['tournament'] = bracket(team_count=state.get('tournament_settings', {}).get('team_count', 18))
+        from app.services.annual_nineteen import normalize_unstarted_rules
+        normalize_unstarted_rules(state['tournament'])
         for i, team in enumerate(state['tournament']['teams']):
             team.setdefault('name', chr(65 + i))
         state.setdefault('audit', []).append(dict(action=action, revision=state['revision'], actor=actor,
@@ -309,8 +313,16 @@ def mutate(mode, revision, action, payload=None, path=None, actor=None):
 
 
 
+def resolve_public_token(identifier, path=None):
+    # Human-readable alias for the single current public annual event.
+    if identifier == 'annual-games':
+        return read_state('real', path).get('public_view', {}).get('token', '')
+    return identifier
+
+
 def public_state(token, path=None):
     """Explicit allowlist: never publish administrative state or demo data."""
+    token = resolve_public_token(token, path)
     state = read_state('real', path)
     settings = state.get('public_view', {})
     tournament = state.get('tournament', {})

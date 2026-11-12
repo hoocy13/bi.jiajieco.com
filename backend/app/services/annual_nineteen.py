@@ -11,7 +11,7 @@ def bracket19(teams=None, seed='template', actor=None):
     for i in range(9): add(f'A{i+1}', 'opening', i+1, [f'team:pending-A{i+1}-0', f'team:pending-A{i+1}-1'])
     add('P1', 'playin', 1, ['team:pending-bye', 'loser:pending'], 3)
     for i in range(5): add(f'B{i+1}', 'second', i+1, [f'team:pending-B{i+1}-0',f'team:pending-B{i+1}-1'])
-    add('C1', 'qualifier', 1, ['winner:pending1','winner:pending2'], 5)
+    add('C1', 'qualifier', 1, ['winner:pending1','winner:pending2'], 3)
     for i in range(2): add(f'S{i+1}','semi',i+1,[f'finalist:{i*2}',f'finalist:{i*2+1}'],5)
     add('F1','final',1,['winner:S1','winner:S2'],5)
     return dict(id=uuid4().hex if actor is not None else 'template',generated=False,format='19-10-5-4',rules_version=3,draw_unit='team',seed=seed,teams=teams,matches=matches,reserves=[],bye_team_id=bye,created_by=actor,created_at=datetime.now(timezone.utc).isoformat())
@@ -76,3 +76,44 @@ def finalists(t):
     matches={m['id']:m for m in t['matches']}
     if not t.get('qualification_slots'): return []
     return [matches['C1']['winner']]+[matches[f'B{i}']['winner'] for i in range(1,6) if f'B{i}' not in t['qualification_slots']]
+
+
+def random_pairing(t, actor):
+    import secrets
+    if t.get('rules_version') != 3 or not t.get('generated') or t.get('draw_plan'):
+        raise ValueError('请先抽齐19支队伍')
+    opening = [m for m in t['matches'] if m['stage']=='opening']
+    if t.get('bye_team_id') or any(m['score_a'] or m['score_b'] or any(not s.startswith('team:pending') for s in m['sources']) for m in opening):
+        raise ValueError('首轮签位已经确定，不能重复抽取或覆盖现有对阵')
+    identities = [team['id'] for team in t['teams'] if len(team['players'])==5]
+    if len(identities)!=19 or len(set(identities))!=19: raise ValueError('需要19支完整且不同的队伍')
+    secrets.SystemRandom().shuffle(identities)
+    for i,m in enumerate(opening):choose_pair(t,m['id'],identities[i*2:i*2+2])
+    choose_bye(t,identities[-1])
+    t.update(pairing_selection='random',pairing_drawn_by=actor,pairing_drawn_at=datetime.now(timezone.utc).isoformat())
+
+
+def random_playin(t, actor):
+    import secrets
+    opening=[m for m in t['matches'] if m['stage']=='opening']
+    if not all(m['winner'] for m in opening):raise ValueError('请先完成首轮9场比赛')
+    candidates=[source.split(':')[1] for m in opening if sorted([m['score_a'],m['score_b']])==[1,2] for source in m['sources'] if source!='team:'+m['winner']]
+    if not candidates:raise ValueError('没有首轮1:2败队，特殊情况待定')
+    choose_playin(t,secrets.choice(candidates),actor)
+    t['playin_selection']='random'
+
+
+def random_qualifier(t, actor):
+    import secrets
+    matches=[m for m in t['matches'] if m['stage']=='second']
+    if not all(m['winner'] for m in matches):raise ValueError('请先完成10进5的五场比赛')
+    candidates=[m['winner'] for m in matches if sorted([m['score_a'],m['score_b']])==[1,2]]
+    if len(candidates) not in [2,3]:raise ValueError('当前2:1胜队数量需要主办方另定突围安排；系统暂不自动抽取')
+    draw_qualifier(t,actor,secrets.SystemRandom().sample(candidates,2))
+    t['qualification_selection']='random'
+
+
+def normalize_unstarted_rules(t):
+    if t and t.get('format')=='19-10-5-4':
+        for m in t.get('matches',[]):
+            if m['stage']=='qualifier' and not (m['score_a'] or m['score_b'] or m['winner']): m['best_of']=3

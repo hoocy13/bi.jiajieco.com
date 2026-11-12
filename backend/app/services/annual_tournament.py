@@ -164,6 +164,8 @@ def remember_draw(state, tournament):
 
 def mutate_tournament(state, action, payload, actor, mode, matcher):
     existing = state.get('tournament')
+    from app.services.annual_nineteen import normalize_unstarted_rules
+    normalize_unstarted_rules(existing)
     if action == 'tournament-public':
         if mode != 'real':
             raise ValueError('模拟演练不能公开')
@@ -299,6 +301,11 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         team['name'] = name
         if existing.get('draw_plan'):
             next(t for t in existing['draw_plan'] if t['id'] == team['id'])['name'] = name
+        return
+    if action in ['tournament-random-pairing','tournament-random-playin','tournament-random-qualifier']:
+        if existing.get('rules_version')!=3: raise ValueError('当前不是19队赛制')
+        from app.services.annual_nineteen import random_pairing,random_playin,random_qualifier
+        {'tournament-random-pairing':random_pairing,'tournament-random-playin':random_playin,'tournament-random-qualifier':random_qualifier}[action](existing,actor)
         return
     if action in ['tournament-pair','tournament-bye']:
         if existing.get('rules_version')!=3: raise ValueError('当前版本不支持手动安排常规对阵')

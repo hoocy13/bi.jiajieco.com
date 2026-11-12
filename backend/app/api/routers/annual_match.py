@@ -54,7 +54,7 @@ def get_state(mode: Mode):
 
 
 @router.post('/{mode}/{action}')
-def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye'], body: Command, user: User = Depends(get_current_user)):
+def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye', 'tournament-random-pairing', 'tournament-random-playin', 'tournament-random-qualifier'], body: Command, user: User = Depends(get_current_user)):
     if action == 'save' and body.players is None:
         raise HTTPException(422, '缺少人员配置')
     try:
@@ -69,7 +69,7 @@ public_router = APIRouter(prefix='/public/annual-events', tags=['public-annual-e
 @public_router.get('/{token}')
 def get_public_event(token: str):
     from fastapi.responses import JSONResponse
-    if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
+    if token != 'annual-games' and (len(token) != 32 or any(c not in '0123456789abcdef' for c in token)):
         raise HTTPException(404, '赛事尚未公开或链接已失效')
     try:
         return JSONResponse(content=ok(service.public_state(token)), headers={'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow'})
@@ -80,7 +80,7 @@ def get_public_event(token: str):
 @public_router.post('/{token}/draw', dependencies=[Depends(require_permission('system.users.manage'))])
 def public_draw(token: str, body: Command, user: User = Depends(get_current_user)):
     try:
-        service.mutate('real', body.revision, 'tournament-public-draw', {'token': token}, actor=user.id)
+        service.mutate('real', body.revision, 'tournament-public-draw', {'token': service.resolve_public_token(token)}, actor=user.id)
         return ok(service.public_state(token))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc

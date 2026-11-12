@@ -132,7 +132,7 @@ async function drawTeams() {
     await settleNames()
     clearTimeout(revealTimer)
     revealTimer = setTimeout(() => { revealing.value = false }, reducedMotion.matches ? 0 : 900)
-    ElMessage.success('本次阵容已抽取，结果已自动保存')
+    ElMessage({ message: '阵容已保存', type: 'success', customClass: 'annual-save-toast', offset: 80, duration: 2200, grouping: true })
   } catch (e) { ElMessage.error(e.message); await load() }
   finally { stopNameTimers(); rollingNames.value = []; drawing.value = false }
 }
@@ -147,6 +147,24 @@ const shareQr = ref('')
 const stage = ref('all')
 const matchPanel = ref(null)
 const menuItems = [{ id: 'schedule', name: '赛事进程' }, { id: 'matches', name: '比赛列表' }, { id: 'teams', name: '参赛队伍' }]
+const currentMatch = computed(() => {
+  const matches = data.value?.tournament.matches || []
+  return matches.find(m => !m.winner && (m.score_a || m.score_b))
+    || matches.find(m => !m.winner && ready(m))
+    || matches.find(m => !m.winner)
+    || matches.at(-1)
+})
+let pendingMatchFocus = null
+function focusCurrentMatch() {
+  if (tab.value !== 'matches' || !pendingMatchFocus) return
+  const card = matchPanel.value?.querySelector(`[data-match-id="${pendingMatchFocus}"]`)
+  if (!card) return
+  pendingMatchFocus = null
+  snapUntil = performance.now() + 950
+  const headerHeight = document.querySelector('.public-header')?.getBoundingClientRect().height || 64
+  const top = Math.max(0, window.scrollY + card.getBoundingClientRect().top - headerHeight - 24)
+  window.scrollTo({top, behavior: reducedMotion.matches ? 'instant' : 'smooth'})
+}
 const filteredMatches = computed(() => (data.value?.tournament.matches || []).filter(m => stage.value === 'all' || m.stage === stage.value))
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let navigationVersion = 0
@@ -184,10 +202,15 @@ function touchFinish(event) {
 }
 async function selectView(value) {
   const version = ++navigationVersion
+  if (value === 'matches' && currentMatch.value) {
+    stage.value = currentMatch.value.stage
+    pendingMatchFocus = currentMatch.value.id
+  } else pendingMatchFocus = null
   tab.value = value
   await nextTick()
   if (version !== navigationVersion) return
-  snapScroll(true)
+  if (value === 'matches') focusCurrentMatch()
+  else snapScroll(true)
 }
 async function share() { shareQr.value = await QRCode.toDataURL(location.href, { width: 240, margin: 2 }); shareVisible.value = true }
 async function copyLink() { try { await navigator.clipboard.writeText(location.href); ElMessage.success('观赛链接已复制') } catch { ElMessage.info('请复制地址栏中的观赛链接') } }
@@ -216,7 +239,7 @@ function sourceName(source) {
   return teams.value[match(id)?.winner]?.name || (match(id)?.stage === 'semi' ? '1/2待定' : '待定')
 }
 function ready(match) { return match.sources.every(s => !/待定|待选择/.test(sourceName(s))) }
-const labels = { playin: '突围挑战赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强资格赛', semi: '半决赛', final: '决赛' }
+const labels = { playin: '突围挑战赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强突围赛', semi: '半决赛', final: '决赛' }
 async function load() {
   if (drawing.value) return
   controller?.abort()
@@ -265,20 +288,34 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
         </div>
         <footer v-if="!drawReady && data.tournament.drawn_matches" class="classic-arena-actions"><el-button v-if="hostAllowed && data.draw_enabled && drawProgress < drawTotal" type="primary" :disabled="drawing" @click="enterDraw">抽取下一支队伍</el-button><el-button v-if="data.show_names" class="draw-secondary-button" :disabled="drawing" @click="replayNames">重播揭晓</el-button></footer>
       </section>
-      <Transition name="spectator-view" mode="out-in"><div :key="tab" class="view-content" :class="{ revealing }">
+      <Transition name="spectator-view" mode="out-in" @after-enter="focusCurrentMatch"><div :key="tab" class="view-content" :class="{ revealing }">
       <div v-if="tab === 'matches'" class="stage-filter" aria-label="比赛阶段"><button v-for="item in [{id:'all',name:'全部比赛'}, ...Object.entries(labels).map(([id,name])=>({id,name}))]" :key="item.id" :class="{active:stage===item.id}" :aria-pressed="stage===item.id" @click="stage=item.id">{{ item.name }}</button></div>
       <AnnualTournament v-if="tab !== 'matches' && tab !== 'draw'" :tournament="data.tournament" :view="tab" :screen="true" public-view :hide-names="!data.show_names" />
-      <section v-else-if="tab === 'matches'" class="match-list"><article v-for="m in filteredMatches" :key="m.id"><header><b>{{ labels[m.stage] }}</b><span>BO{{ m.best_of }} · {{ m.winner ? '已结束' : m.score_a || m.score_b ? '进行中' : ready(m) ? '待开赛' : '待晋级' }}</span></header><div><strong>{{ sourceName(m.sources[0]) }}</strong><b>{{ ready(m) ? m.score_a : '—' }} : {{ ready(m) ? m.score_b : '—' }}</b><strong>{{ sourceName(m.sources[1]) }}</strong></div><details v-if="m.bans.some(b=>b.red.length || b.blue.length)"><summary>逐局Ban</summary><p v-for="b in m.bans" :key="b.game">第{{ b.game }}局 · 红方：{{ b.red.join('、') || '无' }} / 蓝方：{{ b.blue.join('、') || '无' }}</p></details></article></section>
+      <section v-else-if="tab === 'matches'" class="match-list"><article v-for="m in filteredMatches" :key="m.id" :data-match-id="m.id" :class="{'current-match':m.id===currentMatch?.id}"><header><b>{{ labels[m.stage] }}</b><span>BO{{ m.best_of }} · {{ m.winner ? '已结束' : m.score_a || m.score_b ? '进行中' : ready(m) ? '待开赛' : '待晋级' }}</span></header><div><strong>{{ sourceName(m.sources[0]) }}</strong><b>{{ ready(m) ? m.score_a : '—' }} : {{ ready(m) ? m.score_b : '—' }}</b><strong>{{ sourceName(m.sources[1]) }}</strong></div><details v-if="m.bans.some(b=>b.red.length || b.blue.length)"><summary>逐局Ban</summary><p v-for="b in m.bans" :key="b.game">第{{ b.game }}局 · 红方：{{ b.red.join('、') || '无' }} / 蓝方：{{ b.blue.join('、') || '无' }}</p></details></article></section>
       </div></Transition>
     </section>
     <section v-else-if="!loading && !error" class="empty">正在获取赛事…</section>
     <aside class="quick-actions" aria-label="观赛工具"><button aria-label="全屏观赛" @click="fullscreen"><span>⛶</span>全屏</button><button aria-label="分享赛事" @click="share"><span>↗</span>分享</button><button aria-label="返回顶部" @click="backToTop"><span>↑</span>顶部</button></aside>
-    <el-dialog v-model="rulesVisible" title="赛事规则" width="min(560px, 94vw)"><div class="rules-copy"><p><b>首轮赛</b>{{ data.tournament.team_count === 19 ? '18队打9场BO3，9支胜队晋级；轮空队与手动选择的1:2败队打BO3，胜者取得第10个名额。' : '18支队伍两两对战，9场BO3决出9支胜队。' }}</p><p><b>四强争夺赛</b>{{ data.tournament.team_count === 19 ? '10队进行5场BO3，决出5支胜队。' : '8支胜队进行4场BO3，另1支胜队进入待定席位。' }}</p><p><b>四强资格赛</b>{{ data.tournament.team_count === 19 ? '2:0胜队直接进四强；积分第四、第五名的两支2:1胜队手动填入BO5资格赛，胜者晋级。出现4支以上2:0胜队时暂停晋级，特殊规则另定。' : '管理员为待定队选择暂晋级对手，BO5胜者晋级，其他3队直接晋级。' }}</p><p><b>半决赛与决赛</b>均为BO5，先赢3局晋级。本阶段及资格赛可记录逐局Ban。</p></div></el-dialog>
+    <el-dialog v-model="rulesVisible" title="赛事规则" width="min(700px, 94vw)" class="annual-rules-dialog">
+      <div class="rules-copy">
+        <template v-if="data.tournament.team_count === 19">
+          <div class="rules-flow" aria-label="晋级流程">19队抽签 → 10强 → 5支胜队 → 四强 → 🏆 决赛</div>
+          <section><h3>参赛与组队</h3><p>95名选手组成19支战队，每队5人。同一轮每人仅进入一支队伍。</p><p>优先让每队安排填写过打野意向的选手，再尽量按第一至第五意向分配其他位置；未填写位置的选手随机安排，必要时少量协调补位。历史最高段位仅供参考，不直接代表个人位置实力。</p></section>
+          <section><h3>首轮：19进10 · BO3</h3><p>19支队伍随机抽取签位，18队进行9场比赛，9支胜队晋级，另1队轮空。</p><p><b>突围挑战赛 · BO3</b>从首轮以1:2落败的队伍中随机抽取1队，与轮空队比赛，胜者获得第10个晋级名额。没有符合条件的败队时，由主办方另定安排。</p><div class="rules-example">轮空队与抽中的1:2败队 → BO3 → 胜者进10强</div></section>
+          <section><h3>10进5与四强突围赛 · BO3</h3><p>10队进行5场比赛，产生5支胜队。以2:0获胜的队伍直接晋级四强，不参加突围加赛。</p><p>四强突围赛属于10进5阶段：从2:1胜队中随机安排加赛，决出正式四强。</p><ul><li>2支2:1胜队：两队对决，胜者晋级。</li><li>3支2:1胜队：随机抽取两队对决，败者淘汰，其余胜队晋级。</li><li>4支2:1胜队：随机两两对决。两场结束后仅产生3支晋级队伍，最后一个四强名额的补齐方式待主办方赛前确认。</li><li>不足2支或5队均为2:1胜队：特殊规则由主办方另行公布。</li></ul><div class="rules-example">2:0获胜队伍直接晋级；2:1获胜队伍进入突围候选范围。</div></section>
+          <section><h3>半决赛与决赛 · BO5</h3><p>正式四强进行半决赛，胜者进入决赛，决出冠军。</p></section>
+          <section><h3>英雄与Ban规则</h3><p>所有BO3均不Ban英雄；所有BO5均设Ban英雄环节，具体数量与操作方式由主办方赛前统一公布。BO3为三局两胜，BO5为五局三胜。</p></section>
+          <section><h3>四强阶段数据记录</h3><p>从半决赛开始，每小局保留结算截图，记录选手、英雄、击杀、死亡、助攻、英雄伤害、承受伤害、经济及参团率等，以游戏结算页面可获取的数据为准，用于赛后复盘和数据分析，不影响当场胜负判定。</p></section>
+        </template>
+        <template v-else><section><h3>首轮与四强争夺赛</h3><p>18队两两对战，9场BO3决出9支胜队；8支胜队进行4场BO3，另1队进入待定席位。</p></section><section><h3>四强资格赛</h3><p>管理员为待定队选择暂晋级对手，BO5胜者晋级，其余3队直接晋级。</p></section><section><h3>半决赛与决赛</h3><p>均为BO5，先赢3局晋级。所有BO3不Ban英雄，所有BO5设Ban英雄环节。</p></section></template>
+        <p class="rules-ownership">本赛事规则最终解释权归主办方所有。</p>
+      </div>
+    </el-dialog>
     <el-dialog v-model="shareVisible" title="分享赛事" width="min(400px, 94vw)"><div class="share-content"><img :src="shareQr" alt="观赛链接二维码" /><p>扫码查看赛程与比赛结果</p><el-button type="primary" @click="copyLink">复制观赛链接</el-button></div></el-dialog>
   </main>
 </template>
 <style scoped>
-.public-event{position:relative;isolation:isolate;min-height:100dvh;padding:0 3vw 44px;background:#0a1624;color:#edf5fc;--el-bg-color:#15273a;--el-text-color-primary:#edf5fc;--el-text-color-regular:#b3c8dd;--el-border-color-lighter:#344d66}.public-event::before,.public-event::after{content:"";position:fixed;inset:64px 0 0;z-index:-1;pointer-events:none;background-image:url('../../assets/annual-tournament-bg.png');background-repeat:no-repeat}.public-event::before{background-size:cover;background-position:center;filter:blur(28px);opacity:.18;transform:scale(1.04)}.public-event::after{background-size:cover;background-position:left top;opacity:.36}.public-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:64px;margin:0 -3vw;padding:0 3vw;background:#071421f2;border-bottom:1px solid #6b9bc02b;backdrop-filter:blur(16px)}.event-brand{display:flex;align-items:center;gap:16px;text-decoration:none;color:#eef7ff;white-space:nowrap}.event-brand strong{font-size:23px;letter-spacing:1px}.event-brand>span{font-size:12px;color:#91adc5;padding-left:16px;border-left:1px solid #456078}.main-nav{display:flex;align-self:stretch;gap:30px}.main-nav button{position:relative;background:none;border:0;color:#a9bfd1;font-size:14px;padding:0 4px;cursor:pointer}.main-nav button.active,.main-nav button:hover{color:#c1e6ff}.main-nav button.active::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;background:#70bfff;box-shadow:0 0 16px #66b7ff}.header-share,.secondary-action{border:1px solid #547591;background:#142b40aa;color:#d3e9fb;border-radius:3px;padding:10px 18px;cursor:pointer}.event-hero{min-height:clamp(290px,30vw,510px);display:flex;justify-content:flex-end;align-items:center;padding:45px 8% 35px}.hero-copy{max-width:490px;text-shadow:0 2px 24px #07121f}.hero-kicker{font-size:12px;letter-spacing:5px;color:#b0d7f5}.hero-copy h1{font-size:clamp(34px,4vw,72px);line-height:1.18;letter-spacing:4px;margin:22px 0;font-weight:800}.hero-copy h1 em{font-style:normal;color:#b6ddfa}.hero-copy p{font-size:14px;color:#a9c5dc;letter-spacing:2px}.hero-actions{display:flex;gap:14px;margin-top:28px}.primary-action{display:flex;align-items:center;justify-content:space-between;gap:40px;background:#72b7ee;border:1px solid #9ccefa;color:#071d30;font-size:14px;font-weight:650;padding:13px 22px;cursor:pointer;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}.primary-action:hover{background:#a0d5ff}.secondary-action:hover,.header-share:hover{background:#234969}.event-content{scroll-margin-top:85px;padding:26px clamp(14px,2vw,32px);border:1px solid #608bb833;background:#091a2bce;backdrop-filter:blur(5px);border-radius:6px}.section-heading,.section-heading>div{display:flex;align-items:center;justify-content:space-between;gap:14px}.section-heading{margin-bottom:26px}.heading-mark{width:4px;height:25px;background:#84c8fb;transform:skew(-12deg)}h2{margin:0;font-size:24px;letter-spacing:2px;font-weight:600}.view-switch{display:flex;gap:0;border:1px solid #3e5a72;border-radius:3px;overflow:hidden}.view-switch button,.stage-filter button{border:0;background:#12283c;color:#9bb8ce;padding:10px 20px;font-size:12px;cursor:pointer}.view-switch button.active{background:#508bb8;color:#fff}.stage-filter{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px}.stage-filter button{border:1px solid #354d64;border-radius:3px}.stage-filter button.active{border-color:#84c8fb;color:#c9eaff;background:#254766}.public-event :deep(.tournament.is-screen){display:block}.public-event :deep(.bracket-board){padding-top:18px!important;border:0;background:transparent;border-radius:0}.public-event :deep(.bracket-board::before){display:none}.public-event :deep(.bracket-tree){height:clamp(470px,60vh,860px);flex:none}.public-event :deep(.tournament-summary b){font-size:12px;font-weight:400;color:#a9c1d5}.public-event :deep(.directory-card){background:#14283bda}.public-event :deep(.directory-title){color:#edf5fc}.public-event :deep(.match-card){background:#10263bea;border-color:#42617b}.public-event :deep(.match-card:hover){border-color:#a1d6ff;box-shadow:0 0 18px #56b9ff20}.public-event :deep(.bracket-lines path){stroke:#4f7391}.public-event :deep(.bracket-intro>span:first-child){color:#a1cbe9}.public-event :deep(.final-column .match-card){border-color:#8cc0e5}.match-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.match-list article{background:#12283ce8;border:1px solid #365571;border-radius:5px;padding:18px}.match-list header{display:flex;justify-content:space-between;font-size:12px;color:#9ab8d0}.match-list article>div{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:24px 0}.match-list article>div>b{color:#a7d9ff;white-space:nowrap}.match-list details{font-size:12px;color:#9ab8d0}.empty{padding:80px 0;text-align:center;color:#91a4b6}.quick-actions{position:fixed;right:10px;bottom:30px;display:flex;flex-direction:column;gap:1px;z-index:22;box-shadow:0 5px 24px #0005}.quick-actions button{display:flex;flex-direction:column;align-items:center;gap:3px;border:1px solid #4d709158;background:#10273beb;color:#b5d3e9;padding:10px 8px;cursor:pointer;font-size:10px}.quick-actions button>span{font-size:21px;line-height:1}.quick-actions button:hover{background:#285271}.rules-copy p{line-height:1.9;margin:0 0 18px}.rules-copy b{display:block;color:var(--el-text-color-primary)}.share-content{display:flex;flex-direction:column;align-items:center;gap:12px}.share-content img{width:220px;height:220px}.share-content p{margin:0 0 8px;font-size:13px}button:focus-visible,a:focus-visible{outline:2px solid #b2e1ff;outline-offset:4px}
+.public-event{position:relative;isolation:isolate;min-height:100dvh;padding:0 3vw 44px;background:#0a1624;color:#edf5fc;--el-bg-color:#15273a;--el-text-color-primary:#edf5fc;--el-text-color-regular:#b3c8dd;--el-border-color-lighter:#344d66}.public-event::before,.public-event::after{content:"";position:fixed;inset:64px 0 0;z-index:-1;pointer-events:none;background-image:url('../../assets/annual-tournament-bg.png');background-repeat:no-repeat}.public-event::before{background-size:cover;background-position:center;filter:blur(28px);opacity:.18;transform:scale(1.04)}.public-event::after{background-size:cover;background-position:left top;opacity:.36}.public-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:24px;min-height:64px;margin:0 -3vw;padding:0 3vw;background:#071421f2;border-bottom:1px solid #6b9bc02b;backdrop-filter:blur(16px)}.event-brand{display:flex;align-items:center;gap:16px;text-decoration:none;color:#eef7ff;white-space:nowrap}.event-brand strong{font-size:23px;letter-spacing:1px}.event-brand>span{font-size:12px;color:#91adc5;padding-left:16px;border-left:1px solid #456078}.main-nav{display:flex;align-self:stretch;gap:30px}.main-nav button{position:relative;background:none;border:0;color:#a9bfd1;font-size:14px;padding:0 4px;cursor:pointer}.main-nav button.active,.main-nav button:hover{color:#c1e6ff}.main-nav button.active::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;background:#70bfff;box-shadow:0 0 16px #66b7ff}.header-share,.secondary-action{border:1px solid #547591;background:#142b40aa;color:#d3e9fb;border-radius:3px;padding:10px 18px;cursor:pointer}.event-hero{min-height:clamp(290px,30vw,510px);display:flex;justify-content:flex-end;align-items:center;padding:45px 8% 35px}.hero-copy{max-width:490px;text-shadow:0 2px 24px #07121f}.hero-kicker{font-size:12px;letter-spacing:5px;color:#b0d7f5}.hero-copy h1{font-size:clamp(34px,4vw,72px);line-height:1.18;letter-spacing:4px;margin:22px 0;font-weight:800}.hero-copy h1 em{font-style:normal;color:#b6ddfa}.hero-copy p{font-size:14px;color:#a9c5dc;letter-spacing:2px}.hero-actions{display:flex;gap:14px;margin-top:28px}.primary-action{display:flex;align-items:center;justify-content:space-between;gap:40px;background:#72b7ee;border:1px solid #9ccefa;color:#071d30;font-size:14px;font-weight:650;padding:13px 22px;cursor:pointer;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}.primary-action:hover{background:#a0d5ff}.secondary-action:hover,.header-share:hover{background:#234969}.event-content{scroll-margin-top:85px;padding:26px clamp(14px,2vw,32px);border:1px solid #608bb833;background:#091a2bce;backdrop-filter:blur(5px);border-radius:6px}.section-heading,.section-heading>div{display:flex;align-items:center;justify-content:space-between;gap:14px}.section-heading{margin-bottom:26px}.heading-mark{width:4px;height:25px;background:#84c8fb;transform:skew(-12deg)}h2{margin:0;font-size:24px;letter-spacing:2px;font-weight:600}.view-switch{display:flex;gap:8px;border:0;background:transparent}.view-switch button,.stage-filter button{border:0;background:#12283c;color:#9bb8ce;padding:10px 20px;font-size:12px;cursor:pointer}.view-switch button{position:relative;background:transparent;border:0;color:#8faabe}.view-switch button:hover{background:transparent;color:#c5deef}.view-switch button.active{background:transparent;color:#c5e6fb}.view-switch button.active::after{content:"";position:absolute;left:20px;right:20px;bottom:0;height:2px;background:#629dc5;border-radius:2px}.stage-filter{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:22px}.stage-filter button{border:1px solid #354d64;border-radius:3px}.stage-filter button.active{border-color:#84c8fb;color:#c9eaff;background:#254766}.public-event :deep(.tournament.is-screen){display:block}.public-event :deep(.bracket-board){padding-top:18px!important;border:0;background:transparent;border-radius:0}.public-event :deep(.bracket-board::before){display:none}.public-event :deep(.bracket-tree){height:clamp(470px,60vh,860px);flex:none}.public-event :deep(.tournament-summary b){font-size:12px;font-weight:400;color:#a9c1d5}.public-event :deep(.directory-card){background:#14283bda}.public-event :deep(.directory-title){color:#edf5fc}.public-event :deep(.match-card){background:#10263bea;border-color:#42617b}.public-event :deep(.match-card:hover){border-color:#a1d6ff;box-shadow:0 0 18px #56b9ff20}.public-event :deep(.bracket-lines path){stroke:#4f7391}.public-event :deep(.bracket-intro>span:first-child){color:#a1cbe9}.public-event :deep(.final-column .match-card){border-color:#8cc0e5}.match-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.match-list article{background:#12283ce8;border:1px solid #365571;border-radius:5px;padding:18px}.match-list header{display:flex;justify-content:space-between;font-size:12px;color:#9ab8d0}.match-list article>div{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:24px 0}.match-list article>div>b{color:#a7d9ff;white-space:nowrap}.match-list details{font-size:12px;color:#9ab8d0}.empty{padding:80px 0;text-align:center;color:#91a4b6}.quick-actions{position:fixed;right:10px;bottom:30px;display:flex;flex-direction:column;gap:1px;z-index:22;box-shadow:0 5px 24px #0005}.quick-actions button{display:flex;flex-direction:column;align-items:center;gap:3px;border:1px solid #4d709158;background:#10273beb;color:#b5d3e9;padding:10px 8px;cursor:pointer;font-size:10px}.quick-actions button>span{font-size:21px;line-height:1}.quick-actions button:hover{background:#285271}.rules-copy p{line-height:1.9;margin:0 0 18px}.rules-copy b{display:block;color:var(--el-text-color-primary)}.share-content{display:flex;flex-direction:column;align-items:center;gap:12px}.share-content img{width:220px;height:220px}.share-content p{margin:0 0 8px;font-size:13px}button:focus-visible,a:focus-visible{outline:2px solid #b2e1ff;outline-offset:4px}
 @media(max-width:1000px){.main-nav{gap:16px}.event-brand>span{display:none}.header-share{padding:8px 12px}.event-content{padding:20px 12px}.view-switch button{padding:9px 12px}.match-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:650px){.public-event{padding:0 12px 28px}.public-header{margin:0 -12px;padding:10px 12px;gap:10px;flex-wrap:wrap;min-height:64px}.event-brand strong{font-size:20px}.header-share{font-size:11px}.main-nav{order:3;width:100%;gap:0;justify-content:space-between;height:36px}.main-nav button{font-size:12px;padding:0 8px}.public-event::before,.public-event::after{inset:98px 0 0}.event-hero{min-height:300px;padding:125px 16px 25px;align-items:flex-end;justify-content:flex-end}.hero-copy{max-width:250px}.hero-kicker{display:none}.hero-copy h1{font-size:30px;margin:0 0 14px;letter-spacing:2px}.hero-copy p{font-size:11px;margin:0}.hero-actions{gap:8px;margin-top:18px}.primary-action{font-size:12px;padding:10px 14px;gap:18px}.secondary-action{font-size:12px;padding:10px 14px}.section-heading{align-items:flex-start;flex-direction:column;gap:18px}.section-heading h2{font-size:20px}.view-switch{width:100%}.view-switch button{flex:1}.event-content{scroll-margin-top:115px}.match-list{grid-template-columns:1fr}.public-event :deep(.team-directory){grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.quick-actions{right:4px;bottom:18px}.quick-actions button{padding:8px 6px}.stage-filter{gap:6px}.stage-filter button{padding:8px 10px;font-size:11px}.public-event::after{opacity:.4}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
@@ -329,5 +366,34 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
 </style>
 
 <style scoped>
-.public-event .draw-secondary-button{background:#e8f3fb;border-color:#bad2e5;color:#244b68;font-weight:600}.public-event .draw-secondary-button:hover,.public-event .draw-secondary-button:focus-visible{background:#fff;border-color:#8cb9d9;color:#173c59}.public-event .draw-secondary-button.is-disabled{background:#d9e6f0;border-color:#b7ccd9;color:#718ca0}
+.public-event .draw-secondary-button{background:#132b3e;border-color:#34546d;color:#9fbacf;font-weight:500;box-shadow:none}.public-event .draw-secondary-button:hover,.public-event .draw-secondary-button:focus-visible{background:#1a354b;border-color:#537994;color:#cee5f5}.public-event .draw-secondary-button.is-disabled{background:#112536;border-color:#2a4357;color:#607d92}
+</style>
+
+<style>
+.el-message.annual-save-toast{min-width:0;padding:11px 18px;gap:9px;border:1px solid #456782;border-radius:24px;background:#122a3eee;color:#d2e6f5;box-shadow:0 8px 28px #020c1840;backdrop-filter:blur(12px)}
+.el-message.annual-save-toast .el-message__content{color:#d2e6f5;font-size:13px;line-height:20px;font-weight:500;letter-spacing:.5px}
+.el-message.annual-save-toast .el-message__icon{color:#8fc5e8;font-size:16px;margin-right:0}
+</style>
+
+<style scoped>
+.rules-copy{max-height:68dvh;overflow-y:auto;scrollbar-width:auto;scrollbar-color:auto;scrollbar-gutter:stable;overscroll-behavior:contain;padding-right:12px;color:var(--el-text-color-regular);font-size:14px;overflow-wrap:anywhere}
+.rules-copy section{padding:18px 0;border-bottom:1px solid var(--el-border-color-lighter)}
+.rules-copy h3{margin:0 0 10px;color:var(--el-text-color-primary);font-size:16px;line-height:1.6}
+.rules-copy section p{margin:0 0 10px}.rules-copy section p:last-child{margin-bottom:0}
+.rules-copy ul{padding-left:22px;margin:10px 0;line-height:1.9}.rules-copy li+li{margin-top:7px}
+.rules-flow,.rules-example{border:1px solid #628baa40;background:#628baa10;border-radius:8px;padding:12px 14px;line-height:1.9;font-size:13px}
+.rules-copy .rules-ownership{margin:18px 0 0;font-size:12px;text-align:center;color:var(--el-text-color-secondary)}
+</style>
+
+<style scoped>
+.rules-copy::-webkit-scrollbar{width:6px;height:6px}
+.rules-copy::-webkit-scrollbar-track{background:transparent}
+.rules-copy::-webkit-scrollbar-thumb{background:#496981;border-radius:8px}
+.rules-copy::-webkit-scrollbar-thumb:hover{background:#7194af}
+.rules-copy::-webkit-scrollbar-button{display:none;width:0;height:0}
+.rules-copy::-webkit-scrollbar-corner{background:transparent}
+</style>
+
+<style scoped>
+.match-list article.current-match{border-color:#77afd5;box-shadow:inset 3px 0 #77afd5,0 0 0 1px #77afd51a}
 </style>
