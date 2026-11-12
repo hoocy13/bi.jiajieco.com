@@ -193,4 +193,28 @@ class PublicEventTests(unittest.TestCase):
         self.assertNotIn('tournament_settings',response.json()['data'])
         self.assertEqual(self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'}).status_code,409)
 
+    def test_stage_switches_independent_of_roster_draw(self):
+        from types import SimpleNamespace
+        from app.api.deps import get_current_user
+        from app.services.annual_tournament import bracket
+        import sqlite3,json
+        from contextlib import closing
+        s=read_state('real')
+        s.update(players=[dict(id=str(i),name=f'P{i}',present=True,roles=[ROLES[i%5]],fill=False) for i in range(95)],tournament_settings={'team_count':19},tournament=bracket(team_count=19))
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute("UPDATE activity SET body=? WHERE mode='real'",(json.dumps(s),))
+        s=mutate('real',s['revision'],'tournament-generate')
+        s=mutate('real',s['revision'],'tournament-public',{'enabled':True,'draw_enabled':False,'opening_draw_enabled':True,'playin_draw_enabled':False,'qualifier_draw_enabled':False,'semi_draw_enabled':True})
+        public=self.get(s).json()['data']
+        self.assertFalse(public['draw_enabled'])
+        self.assertEqual(public['tournament']['draw_permissions'],dict(opening=True,second=False,playin=False,qualifier=False,semi=True))
+        self.client.app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=3,role=SimpleNamespace(is_active=True,permissions=[SimpleNamespace(code='system.users.manage')]))
+        url='/api/v1/public/annual-events/annual-games/lottery'
+        self.assertEqual(self.client.post(url,json={'revision':s['revision'],'draw_kind':'playin'}).status_code,409)
+        response=self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'})
+        self.assertEqual(response.status_code,200,response.text)
+        revision=response.json()['data']['revision']
+        response=self.client.post(url,json={'revision':revision,'draw_kind':'reset','reason':'测试重抽'})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['data']['tournament']['drawn_teams'],19)
+
 if __name__ == '__main__': unittest.main()

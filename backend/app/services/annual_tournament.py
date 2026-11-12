@@ -73,9 +73,13 @@ def update_score(tournament, key, score_a, score_b, actor, bans=None):
     match = next((m for m in tournament['matches'] if m['id'] == key), None)
     if match is None:
         raise ValueError('找不到该场比赛')
+    if match['stage']=='semi' and tournament.get('qualification_mode')=='four-paired':
+        from app.services.annual_nineteen import finalists
+        if not all(finalists(tournament)):raise ValueError('最后一个四强席位待主办方确认，暂不能开始半决赛')
     sides = participants(tournament, match)
     if not all(sides):
         raise ValueError('上游比赛尚未结束，暂不能录入本场比分')
+    if tournament.get('qualification_mode')=='four-paired' and match['stage']=='second' and [score_a,score_b]!=[match['score_a'],match['score_b']]:raise ValueError('四强突围对阵已锁定，不能修改10进5结果')
     target = match['best_of'] // 2 + 1
     if any(type(score) is not int or not 0 <= score <= target for score in (score_a, score_b)):
         raise ValueError(f'本场比分须为 0 至 {target} 的整数')
@@ -95,6 +99,7 @@ def update_score(tournament, key, score_a, score_b, actor, bans=None):
                 dependencies.add(tournament['challenge_slot'])
             if child['stage'] == 'semi':
                 dependencies.add('C1')
+                if tournament.get('qualification_mode')=='four-paired':dependencies.add('C2')
                 if tournament['format'] == '19-10-5-4': dependencies.update(f'B{i}' for i in range(1,6))
             if dependencies & affected:
                 affected.add(child['id'])
@@ -175,6 +180,39 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         settings.setdefault('token', uuid4().hex)
         settings.update(enabled=bool(payload.get('enabled')), show_names=bool(payload.get('show_names')), draw_enabled=bool(payload.get('draw_enabled')),
                         updated_at=datetime.now(timezone.utc).isoformat(), updated_by=actor)
+        for key in ['opening_draw_enabled','second_draw_enabled','playin_draw_enabled','qualifier_draw_enabled','semi_draw_enabled']:
+            if key in payload:settings[key]=bool(payload[key])
+        return
+    if action == 'tournament-reset-qualifier':
+        reason=payload.get('reason','').strip()
+        if not reason:raise ValueError('请填写撤销理由')
+        if not existing or existing.get('format')!='19-10-5-4' or not existing.get('qualification_slots'):raise ValueError('当前没有四强突围抽签')
+        if any(m['score_a'] or m['score_b'] or m['winner'] for m in existing['matches'] if m['stage'] in ['qualifier','semi','final']):raise ValueError('突围赛或后续已有比分，不能撤销抽签')
+        remember_draw(state,existing)
+        record=next(r for r in state['team_draw_history'] if r['id']==existing['id'])
+        record.update(reason=reason,reset_by=actor,reset_at=datetime.now(timezone.utc).isoformat())
+        replacement=copy.deepcopy(existing);replacement['id']=uuid4().hex
+        replacement['matches']=[m for m in replacement['matches'] if m['id']!='C2']
+        for m in replacement['matches']:
+            if m['id']=='C1':m['sources']=['winner:pending1','winner:pending2']
+            if m['stage']=='semi':m['sources']=[f'finalist:{(m['number']-1)*2}',f'finalist:{(m['number']-1)*2+1}']
+        for key in ['qualification_slots','qualification_mode','qualification_selection','challenge_drawn_by','challenge_drawn_at','semi_pairing_drawn','semi_pairing_drawn_by','semi_pairing_drawn_at']:
+            replacement.pop(key,None)
+        state['tournament']=replacement
+        return
+    if action == 'tournament-reset-pairing':
+        reason=payload.get('reason','').strip()
+        if not reason:raise ValueError('请填写重置理由')
+        if not existing or existing.get('format')!='19-10-5-4' or not existing.get('generated') or existing.get('draw_plan') or any(len(t['players'])!=5 for t in existing['teams']):raise ValueError('请先抽齐19支队伍')
+        if any(m['score_a'] or m['score_b'] or m['winner'] for m in existing['matches']):raise ValueError('已有比分，不能重置签位')
+        remember_draw(state,existing)
+        record=next(r for r in state['team_draw_history'] if r['id']==existing['id'])
+        record.update(reason=reason,reset_by=actor,reset_at=datetime.now(timezone.utc).isoformat())
+        replacement=bracket(copy.deepcopy(existing['teams']),uuid4().hex,actor)
+        replacement.update(id=uuid4().hex,generated=True,drawn_teams=19,drawn_matches=19,draw_unit='team')
+        for key in ['snapshot','selection','simulated_roster','simulated_results']:
+            if key in existing:replacement[key]=copy.deepcopy(existing[key])
+        state['tournament']=replacement
         return
     if action == 'tournament-abandon':
         if not existing or not existing.get('generated'):
@@ -302,10 +340,10 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         if existing.get('draw_plan'):
             next(t for t in existing['draw_plan'] if t['id'] == team['id'])['name'] = name
         return
-    if action in ['tournament-random-pairing','tournament-random-playin','tournament-random-qualifier','tournament-random-semi']:
+    if action in ['tournament-random-pairing','tournament-random-second','tournament-random-playin','tournament-random-qualifier','tournament-random-semi']:
         if existing.get('rules_version')!=3: raise ValueError('当前不是19队赛制')
-        from app.services.annual_nineteen import random_pairing,random_playin,random_qualifier,random_semis
-        {'tournament-random-pairing':random_pairing,'tournament-random-playin':random_playin,'tournament-random-qualifier':random_qualifier,'tournament-random-semi':random_semis}[action](existing,actor)
+        from app.services.annual_nineteen import random_second,random_pairing,random_playin,random_qualifier,random_semis
+        {'tournament-random-second':random_second,'tournament-random-pairing':random_pairing,'tournament-random-playin':random_playin,'tournament-random-qualifier':random_qualifier,'tournament-random-semi':random_semis}[action](existing,actor)
         return
     if action in ['tournament-pair','tournament-bye']:
         if existing.get('rules_version')!=3: raise ValueError('当前版本不支持手动安排常规对阵')

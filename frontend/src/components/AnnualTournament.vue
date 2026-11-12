@@ -1,4 +1,5 @@
 <script setup>
+import { finalistTeamIds, semifinalTeamId } from '../utils/annualFinalists'
 import { computed, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import AnnualNineteenBracket from './AnnualNineteenBracket.vue'
@@ -66,7 +67,7 @@ const selectedBye=ref('')
 const teamsComplete=computed(()=>tournament.value?.generated && !tournament.value.draw_plan)
 const canRandomPair=computed(()=>teamsComplete.value&&!tournament.value.bye_team_id&&matches.value.filter(m=>m.stage==='opening').every(m=>m.sources.every(s=>s.startsWith('team:pending'))))
 async function randomDraw(kind){
- const labels={pairing:'随机分配19队首轮签位',playin:'随机抽取首轮1:2败队',qualifier:'随机抽取两支2:1胜队'}
+ const labels={pairing:'随机分配19队首轮签位',playin:'随机抽取首轮1:2败队',qualifier:'随机抽取四强突围对阵'}
  try{await ElMessageBox.confirm('抽取后锁定结果，不能重复抽取覆盖。',labels[kind]);if(await props.runCommand('tournament-random-'+kind,{revision:drawer.value?openedRevision.value:props.revision}))drawer.value=false}catch{}
 }
 const pairingReady=computed(()=>teamsComplete.value&&(selected.value?.stage==='opening'||matches.value.filter(m=>['opening','playin'].includes(m.stage)).every(m=>m.winner)))
@@ -122,7 +123,7 @@ const openedRevision = ref(0)
 const selected = computed(() => matchMap.value[selectedId.value])
 const sides = computed(() => selected.value ? selected.value.sources.map(resolveSource) : [])
 const target = computed(() => (selected.value?.best_of || 3) === 5 ? 3 : 2)
-const editable = computed(() => !props.screen && tournament.value?.generated && sides.value.every(t => t.id))
+const editable = computed(() => !props.screen && tournament.value?.generated && !(selected.value?.stage==='semi'&&tournament.value.qualification_mode==='four-paired'&&!finalistTeamIds(tournament.value).every(Boolean)) && sides.value.every(t => t.id))
 const detailTab = ref('score')
 
 function resolveSource(source) {
@@ -142,8 +143,7 @@ function resolveSource(source) {
     return teamMap.value[match.sources.map(s=>s.split(':')[1]).find(key=>key!==match.winner)] || {name:'待定'}
   }
   if (kind === 'finalist') {
-    const origins=['C1',...matches.value.filter(m=>m.stage==='second'&&!tournament.value.qualification_slots?.includes(m.id)).map(m=>m.id)]
-    return tournament.value.qualification_slots?.length ? teamMap.value[matchMap.value[origins[Number(id)]]?.winner] || {name:'1/4待定'} : {name:'1/4待定'}
+    return teamMap.value[semifinalTeamId(tournament.value,Number(id))] || {name:'1/4待定'}
   }
   if (kind === 'qualified') {
     if (!matchMap.value.C1?.winner) return { name: '1/4待定' }
@@ -153,11 +153,13 @@ function resolveSource(source) {
   return teamMap.value[winner] || { name: matchMap.value[id]?.stage === 'semi' ? '1/2待定' : '待定', origin: id }
 }
 function status(match) {
+  if(match.stage==='semi'&&tournament.value.qualification_mode==='four-paired'&&!finalistTeamIds(tournament.value).every(Boolean))return '席位待确认'
   if (match.winner) return '已结束'
   if (match.score_a || match.score_b) return '进行中'
   return match.sources.every(s => resolveSource(s).id) && tournament.value?.generated ? '待开赛' : '待晋级'
 }
 function score(match, side) {
+  if(status(match)==='席位待确认')return '—'
   return tournament.value?.generated && match.sources.every(s => resolveSource(s).id) ? (side === 0 ? match.score_a : match.score_b) : '—'
 }
 function openMatch(id) {
@@ -254,7 +256,7 @@ watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = 
       <template v-else-if="selected">
         <section v-if="nineteen && ['opening','second'].includes(selected.stage) && !screen && !selected.score_a && !selected.score_b" class="opponent-choice"><h3>手动填写{{ selected.stage==='opening'?'首轮':'10进5' }}对阵</h3><p class="score-hint">组队不指定对手。抽齐全部队伍后，在此填写双方；同一轮每队只安排一次。</p><el-select v-model="pairA" :disabled="!pairingReady || busy" placeholder="队伍一"><el-option v-for="team in pairCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" :disabled="team.id===pairB" /></el-select><el-select v-model="pairB" :disabled="!pairingReady || busy" placeholder="队伍二"><el-option v-for="team in pairCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" :disabled="team.id===pairA" /></el-select><el-button type="primary" :disabled="!pairingReady || !pairA || !pairB || busy" @click="savePair">确认对阵</el-button></section>
         <section v-if="nineteen && selected.stage==='playin' && !screen && !tournament.playin_opponent" class="opponent-choice"><h3>突围挑战赛</h3><el-button type="primary" :disabled="!openingDone || !tournament.bye_team_id || !playinCandidates.length || busy" @click="randomDraw('playin')">随机抽取挑战队伍</el-button><p class="score-hint">首轮9场结束后，为轮空队选择一支1:2败队，BO3胜者进入10进5。同分时由主办方确认。</p><el-select v-model="selectedOpponent" :disabled="!openingDone || busy" placeholder="选择1:2落败队伍"><el-option v-for="team in playinCandidates" :key="team.id" :label="team.name" :value="team.id" /></el-select><el-button type="primary" :disabled="!openingDone || !selectedOpponent || busy" @click="chooseNineteen">确认对手</el-button><p v-if="openingDone&&!playinCandidates.length" class="score-hint">没有1:2败队，特殊情况待定，请主办方另定规则。</p></section>
-        <section v-if="nineteen && selected.stage==='qualifier' && !screen && !tournament.qualification_slots?.length" class="opponent-choice"><h3>四强突围赛</h3><el-button type="primary" :disabled="!secondDone || exceptional || rankedCandidates.length&lt;2 || busy" @click="randomDraw('qualifier')">随机抽取两支2:1胜队</el-button><p class="score-hint">2:0胜队直接晋级。从2:1胜队中随机抽取两队加赛，胜者进入四强。也可由主办方手动指定。</p><el-alert v-if="exceptional" title="4支以上胜队2:0获胜，特殊情况待定；不会自动淘汰2:0队伍。" type="warning" :closable="false" /><el-select v-model="fourthTeam" :disabled="!secondDone || exceptional || busy" placeholder="第四名"><el-option v-for="team in rankedCandidates" :key="team.id" :label="team.name" :value="team.id" :disabled="team.id===fifthTeam" /></el-select><el-select v-model="fifthTeam" :disabled="!secondDone || exceptional || busy" placeholder="第五名"><el-option v-for="team in rankedCandidates" :key="team.id" :label="team.name" :value="team.id" :disabled="team.id===fourthTeam" /></el-select><el-button type="primary" :disabled="!secondDone || exceptional || !fourthTeam || !fifthTeam || busy" @click="chooseNineteen">确认资格赛</el-button></section>
+        <section v-if="nineteen && selected.stage==='qualifier' && !screen && !tournament.qualification_slots?.length" class="opponent-choice"><h3>四强突围赛</h3><el-button type="primary" :disabled="!secondDone || exceptional || rankedCandidates.length&lt;2 || busy" @click="randomDraw('qualifier')">{{rankedCandidates.length===4?'四队两两抽签':'抽取突围对阵'}}</el-button><p class="score-hint">2:0胜队直接晋级。2或3支候选队抽两队加赛；4支候选队随机分成两组，最后席位另行确认。</p><el-alert v-if="exceptional" title="4支以上胜队2:0获胜，特殊情况待定；不会自动淘汰2:0队伍。" type="warning" :closable="false" /><el-select v-if="rankedCandidates.length!==4" v-model="fourthTeam" :disabled="!secondDone || exceptional || busy" placeholder="第四名"><el-option v-for="team in rankedCandidates" :key="team.id" :label="team.name" :value="team.id" :disabled="team.id===fifthTeam" /></el-select><el-select v-if="rankedCandidates.length!==4" v-model="fifthTeam" :disabled="!secondDone || exceptional || busy" placeholder="第五名"><el-option v-for="team in rankedCandidates" :key="team.id" :label="team.name" :value="team.id" :disabled="team.id===fourthTeam" /></el-select><el-button v-if="rankedCandidates.length!==4" type="primary" :disabled="!secondDone || exceptional || !fourthTeam || !fifthTeam || busy" @click="chooseNineteen">确认资格赛</el-button></section>
         <section v-if="selected.stage === 'qualifier' && !nineteen && !screen && !tournament.challenge_slot" class="opponent-choice"><h3>选择资格赛对手</h3><p class="score-hint">第二轮结束后，从4支暂晋级队伍中手动选择一队。保存后锁定。</p><el-select v-model="selectedOpponent" :disabled="!canDrawChallenge || busy" placeholder="选择挑战队伍" aria-label="资格赛挑战队伍"><el-option v-for="team in challengeCandidates" :key="team.id" :label="`${team.name} 队`" :value="team.id" /></el-select><el-button type="primary" :disabled="!canDrawChallenge || !selectedOpponent || busy" @click="chooseOpponent">确认对手</el-button></section>
         <el-tabs v-model="detailTab"><el-tab-pane label="比分与阵容" name="score" /><el-tab-pane v-if="selected.best_of === 5" label="逐局 Ban" name="ban" /></el-tabs>
         <template v-if="detailTab === 'score'">

@@ -61,6 +61,7 @@ def draw_qualifier(t, actor, team_ids=None):
     if len(candidates)!=5 or not all(m['winner'] for m in candidates): raise ValueError('请先完成10进5的五场比赛')
     if sum(sorted([m['score_a'],m['score_b']])==[0,2] for m in candidates)>=4:
         raise ValueError('出现4支以上2:0胜队，特殊赛制待定；系统不会自动淘汰2:0胜队')
+    if sum(sorted([m['score_a'],m['score_b']])==[1,2] for m in candidates)==4:raise ValueError('四支2:1胜队请使用随机两两配对')
     if not team_ids or len(team_ids)!=2 or len(set(team_ids))!=2: raise ValueError('请手动选择第四名和第五名两支胜队')
     selected=[next((m for m in candidates if m['winner']==team_id),None) for team_id in team_ids]
     if any(m is None or sorted([m['score_a'],m['score_b']])!=[1,2] for m in selected):
@@ -75,6 +76,8 @@ def draw_qualifier(t, actor, team_ids=None):
 def finalists(t):
     matches={m['id']:m for m in t['matches']}
     if not t.get('qualification_slots'): return []
+    if t.get('qualification_mode')=='four-paired':
+        return [m['winner'] for m in t['matches'] if m['stage']=='second' and m['id'] not in t['qualification_slots']]+[matches['C1']['winner'],matches['C2']['winner'],None]
     return [matches['C1']['winner']]+[matches[f'B{i}']['winner'] for i in range(1,6) if f'B{i}' not in t['qualification_slots']]
 
 
@@ -108,6 +111,16 @@ def random_qualifier(t, actor):
     matches=[m for m in t['matches'] if m['stage']=='second']
     if not all(m['winner'] for m in matches):raise ValueError('请先完成10进5的五场比赛')
     candidates=[m['winner'] for m in matches if sorted([m['score_a'],m['score_b']])==[1,2]]
+    if t.get('qualification_slots') or any(m['score_a'] or m['score_b'] or m['winner'] for m in t['matches'] if m['stage']=='qualifier'):raise ValueError('四强突围对阵已锁定')
+    if len(candidates)==4:
+        chosen=[m['id'] for m in matches if m['winner'] in candidates]
+        secrets.SystemRandom().shuffle(chosen)
+        first=next(m for m in t['matches'] if m['id']=='C1')
+        first['sources']=['winner:'+key for key in chosen[:2]]
+        second=dict(id='C2',stage='qualifier',number=2,sources=['winner:'+key for key in chosen[2:]],best_of=3,score_a=0,score_b=0,winner=None,bans=[])
+        t['matches'].insert(t['matches'].index(first)+1,second)
+        t.update(qualification_slots=chosen,qualification_mode='four-paired',qualification_selection='random',challenge_drawn_by=actor,challenge_drawn_at=datetime.now(timezone.utc).isoformat())
+        return
     if len(candidates) not in [2,3]:raise ValueError('当前2:1胜队数量需要主办方另定突围安排；系统暂不自动抽取')
     draw_qualifier(t,actor,secrets.SystemRandom().sample(candidates,2))
     t['qualification_selection']='random'
@@ -128,3 +141,16 @@ def random_semis(t, actor):
     slots=list(range(4));secrets.SystemRandom().shuffle(slots)
     for i,m in enumerate(semis):m['sources']=[f'finalist:{key}' for key in slots[i*2:i*2+2]]
     t.update(semi_pairing_drawn=True,semi_pairing_drawn_by=actor,semi_pairing_drawn_at=datetime.now(timezone.utc).isoformat())
+
+
+def random_second(t, actor):
+    import secrets
+    upstream=[m for m in t['matches'] if m['stage'] in ['opening','playin']]
+    matches=[m for m in t['matches'] if m['stage']=='second']
+    if len(upstream)!=10 or not all(m['winner'] for m in upstream):raise ValueError('请先完成首轮及突围挑战赛')
+    identities=[m['winner'] for m in upstream]
+    if len(set(identities))!=10:raise ValueError('需要10支不同的晋级队伍')
+    if len(matches)!=5 or t.get('second_pairing_drawn') or any(m['score_a'] or m['score_b'] or m['winner'] or any(not s.startswith('team:pending') for s in m['sources']) for m in matches):raise ValueError('10进5对阵已确定，不能覆盖')
+    secrets.SystemRandom().shuffle(identities)
+    for i,m in enumerate(matches):choose_pair(t,m['id'],identities[i*2:i*2+2])
+    t.update(second_pairing_drawn=True,second_pairing_drawn_by=actor,second_pairing_drawn_at=datetime.now(timezone.utc).isoformat())

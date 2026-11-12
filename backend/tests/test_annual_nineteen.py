@@ -18,6 +18,57 @@ class NineteenTests(unittest.TestCase):
     def command(self,action,payload=None):
         self.state=service.mutate('real',self.state['revision'],action,payload)
         return self.state
+    def test_random_second_pairs_ten_winners_once(self):
+        self.command('tournament-generate')
+        with self.assertRaises(ValueError):self.command('tournament-random-second')
+        self.command('tournament-random-pairing')
+        for i in range(1,10):self.command('tournament-score',dict(id=f'A{i}',score_a=2,score_b=1))
+        self.command('tournament-random-playin')
+        self.command('tournament-score',dict(id='P1',score_a=2,score_b=1))
+        expected={m['winner'] for m in self.state['tournament']['matches'] if m['stage'] in ['opening','playin']}
+        self.command('tournament-random-second')
+        t=self.state['tournament'];by_id={m['id']:m for m in t['matches']}
+        ids=[by_id[source.split(':')[1]]['winner'] for m in t['matches'] if m['stage']=='second' for source in m['sources']]
+        self.assertEqual(len(ids),10);self.assertEqual(set(ids),expected)
+        with self.assertRaises(ValueError):self.command('tournament-random-second')
+
+    def test_four_close_winners_pair_and_wait_for_last_seat(self):
+        from app.services.annual_nineteen import finalists
+        self.command('tournament-generate');self.command('tournament-random-pairing')
+        for i in range(1,10):self.command('tournament-score',dict(id=f'A{i}',score_a=2,score_b=1))
+        self.command('tournament-random-playin');self.command('tournament-score',dict(id='P1',score_a=2,score_b=0))
+        self.command('tournament-random-second')
+        for i in range(1,6):self.command('tournament-score',dict(id=f'B{i}',score_a=2,score_b=0 if i==1 else 1))
+        protected=next(m['winner'] for m in self.state['tournament']['matches'] if m['id']=='B1')
+        with self.assertRaises(ValueError):self.command('tournament-challenge',{'team_ids':[m['winner'] for m in self.state['tournament']['matches'] if m['id'] in ['B2','B3']]})
+        self.command('tournament-random-qualifier')
+        t=self.state['tournament'];q=[m for m in t['matches'] if m['stage']=='qualifier']
+        self.assertEqual(len(q),2);self.assertTrue(all(m['best_of']==3 for m in q))
+        self.assertEqual({source for m in q for source in m['sources']},{f'winner:B{i}' for i in range(2,6)})
+        with self.assertRaises(ValueError):self.command('tournament-random-qualifier')
+        from copy import deepcopy
+        before=deepcopy(self.state['tournament'])
+        with self.assertRaises(ValueError):self.command('tournament-reset-qualifier',{'reason':' '})
+        self.command('tournament-reset-qualifier',{'reason':'测试撤销'})
+        reset=self.state['tournament']
+        self.assertNotEqual(reset['id'],before['id'])
+        self.assertEqual([m for m in reset['matches'] if m['stage'] in ['opening','playin','second']],[m for m in before['matches'] if m['stage'] in ['opening','playin','second']])
+        self.assertEqual(reset['teams'],before['teams'])
+        self.assertNotIn('qualification_slots',reset)
+        self.assertFalse(any(m['id']=='C2' for m in reset['matches']))
+        self.assertTrue(any(r['id']==before['id'] and r['reason']=='测试撤销' for r in self.state['team_draw_history']))
+        self.command('tournament-random-qualifier')
+        with self.assertRaises(ValueError):self.command('tournament-score',dict(id='B1',score_a=2,score_b=1))
+        for key in ['C1','C2']:self.command('tournament-score',dict(id=key,score_a=2,score_b=1))
+        with self.assertRaises(ValueError):self.command('tournament-reset-qualifier',{'reason':'不允许撤销已计分抽签'})
+        entries=finalists(self.state['tournament'])
+        self.assertEqual(entries[0],protected);self.assertEqual(len({x for x in entries if x}),3);self.assertIsNone(entries[-1])
+        with self.assertRaises(ValueError):self.command('tournament-random-semi')
+        with self.assertRaises(ValueError):self.command('tournament-score',dict(id='S1',score_a=1,score_b=0))
+        self.command('tournament-public',dict(enabled=True,show_names=False))
+        public=service.public_state(self.state['public_view']['token'])['tournament']
+        self.assertEqual(public['qualification_mode'],'four-paired');self.assertEqual(public['finalist_team_ids'],entries)
+
     def test_incremental_95_and_full_bracket(self):
         self.command('tournament-public',{'enabled':True,'draw_enabled':True,'show_names':True})
         token=self.state['public_view']['token']
@@ -130,7 +181,7 @@ class NineteenTests(unittest.TestCase):
         self.assertNotIn('same_team_names',json.dumps(public))
         self.assertNotIn('tournament_settings',public)
 
-    def test_unstarted_qualifier_is_bo3_and_four_close_winners_pause(self):
+    def test_unstarted_qualifier_is_bo3_and_scored_rules_preserved(self):
         from app.services.annual_nineteen import normalize_unstarted_rules,random_qualifier
         t=bracket(team_count=19)
         qualifier=next(m for m in t['matches'] if m['stage']=='qualifier')
@@ -157,5 +208,24 @@ class NineteenTests(unittest.TestCase):
         self.assertEqual(set(slots),{f'finalist:{i}' for i in range(4)})
         self.assertTrue(t['semi_pairing_drawn'])
         with self.assertRaises(ValueError):random_semis(t,1)
+
+    def test_reset_pairing_preserves_teams_and_history(self):
+        from copy import deepcopy
+        self.command('tournament-generate');self.command('tournament-random-pairing')
+        before=deepcopy(self.state['tournament'])
+        with self.assertRaises(ValueError):self.command('tournament-reset-pairing',{'reason':'  '})
+        self.command('tournament-reset-pairing',{'reason':'测试重抽'})
+        t=self.state['tournament']
+        self.assertEqual(t['teams'],before['teams'])
+        self.assertNotEqual(t['id'],before['id'])
+        self.assertIsNone(t['bye_team_id'])
+        self.assertTrue(all('pending' in source for m in t['matches'] if m['stage']=='opening' for source in m['sources']))
+        record=next(r for r in self.state['team_draw_history'] if r['id']==before['id'])
+        self.assertEqual(record['tournament']['matches'],before['matches'])
+        self.assertEqual(record['reason'],'测试重抽')
+        self.command('tournament-restore',{'id':before['id']})
+        self.assertEqual(self.state['tournament']['matches'],before['matches'])
+        self.command('tournament-score',dict(id='A1',score_a=1,score_b=0))
+        with self.assertRaises(ValueError):self.command('tournament-reset-pairing',{'reason':'测试重抽'})
 
 if __name__=='__main__':unittest.main()

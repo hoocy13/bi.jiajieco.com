@@ -1,9 +1,11 @@
 <script setup>
+import { finalistTeamIds, semifinalTeamId } from '../../utils/annualFinalists'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import AnnualTournament from '../../components/AnnualTournament.vue'
+import AnnualPairingDraw from '../../components/AnnualPairingDraw.vue'
 const route = useRoute()
 const drawTotal = computed(() => data.value?.tournament.draw_total || 9)
 const teamOnly = computed(() => data.value?.tournament.draw_unit === 'team')
@@ -110,6 +112,13 @@ async function replayNames() {
   finally { stopNameTimers(); rollingNames.value=[]; drawing.value=false }
 }
 const pairingBusy=ref(false)
+const pairingStage=ref(null)
+const pairingChoice=ref(null)
+async function enterHostLottery(item){
+ if(!item.ready||pairingBusy.value||drawing.value)return
+ pairingChoice.value=item
+ await selectView('lottery')
+}
 const hostLotteryChoices=computed(()=>{
  const t=data.value?.tournament
  if(!t || t.team_count!==19)return []
@@ -122,24 +131,35 @@ const hostLotteryChoices=computed(()=>{
  const fourReady=qualifier?.winner&&t.qualification_slots?.length===2&&second.every(m=>m.winner)
  return [
   {kind:'opening',label:'随机抽取首轮签位',ready:complete&&!t.bye_team_id&&opening.every(m=>m.sources.every(s=>s.startsWith('team:pending')))},
+  {kind:'second',label:'抽取10进5对阵',ready:complete&&matches.filter(m=>['opening','playin'].includes(m.stage)).every(m=>m.winner)&&second.every(m=>!m.score_a&&!m.score_b&&!m.winner&&m.sources.every(s=>s.startsWith('team:pending')))},
   {kind:'playin',label:'抽取突围挑战队伍',ready:complete&&t.bye_team_id&&!t.playin_opponent&&opening.every(m=>m.winner)&&opening.some(close)},
-  {kind:'qualifier',label:'抽取四强突围对阵',ready:complete&&!t.qualification_slots?.length&&second.every(m=>m.winner)&&[2,3].includes(second.filter(close).length)},
+  {kind:'qualifier',label:'抽取四强突围对阵',ready:complete&&!t.qualification_slots?.length&&second.every(m=>m.winner)&&[2,3,4].includes(second.filter(close).length)},
   {kind:'semi',label:'随机抽取四强对阵',ready:complete&&fourReady&&!t.semi_pairing_drawn&&matches.filter(m=>m.stage==='semi').every(m=>!m.score_a&&!m.score_b&&!m.winner)}
- ]
+ ].filter(item=>data.value.tournament.draw_permissions?.[item.kind]??data.value.draw_enabled)
 })
+const canResetPairing=computed(()=>{const t=data.value?.tournament;return t?.generated&&t.drawn_teams===19&&(t.bye_team_id||t.matches.some(m=>m.stage==='opening'&&m.sources.some(s=>!s.startsWith('team:pending'))))&&!t.matches.some(m=>m.score_a||m.score_b||m.winner)&&(t.draw_permissions?.opening??data.value.draw_enabled)})
+async function resetPairing(){
+ if(!canResetPairing.value||pairingBusy.value)return
+ let reason
+ try{const result=await ElMessageBox.prompt('保留队伍，重抽签位','重置签位',{inputPlaceholder:'填写理由',inputValidator:value=>!!value?.trim()||'请填写理由',inputType:'textarea',confirmButtonText:'重置',cancelButtonText:'取消'});reason=result.value.trim()}catch{return}
+ const item={kind:'reset',label:'签位已重置',ready:true,reason}
+ await runHostLottery(item)
+ pairingChoice.value=null
+ await selectView('schedule')
+}
 async function runHostLottery(item){
- if(pairingBusy.value||!item.ready)return
- try{await ElMessageBox.confirm('确认后保存并锁定抽签结果。',item.label)}catch{return}
+ if(pairingBusy.value||!item?.ready||!hostAllowed.value||!(data.value?.tournament.draw_permissions?.[item.kind==='reset'?'opening':item.kind]??data.value?.draw_enabled))return
  pairingBusy.value=true
+ controller?.abort();generation++
  try{
   const base=(import.meta.env.VITE_API_BASE_URL||'/api/v1').replace(/\/$/,'')
-  const response=await fetch(`${base}/public/annual-events/${encodeURIComponent(route.params.token)}/lottery`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('jjc_token')||''}`},body:JSON.stringify({revision:data.value.revision,draw_kind:item.kind}),credentials:'omit'})
+  const response=await fetch(`${base}/public/annual-events/${encodeURIComponent(route.params.token)}/lottery`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('jjc_token')||''}`},body:JSON.stringify({revision:data.value.revision,draw_kind:item.kind,reason:item.reason}),credentials:'omit'})
   const result=await response.json()
   if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'抽签失败，请刷新重试')
+  if(item.kind!=='reset')await pairingStage.value?.reveal(result.data.tournament)
   data.value=result.data
-  await selectView('schedule')
-  ElMessage({message:'对阵已保存',type:'success',customClass:'annual-save-toast',offset:80,duration:2200})
- }catch(e){ElMessage.error(e.message);await load()}finally{pairingBusy.value=false}
+  ElMessage({message:item.kind==='reset'?'签位已重置，队伍已保留':'对阵已保存',type:'success',customClass:'annual-save-toast',offset:80,duration:2200})
+ }catch(e){ElMessage.error(e.message);pairingBusy.value=false;await load()}finally{pairingBusy.value=false}
 }
 async function drawTeams() {
   if (drawing.value || !hostAllowed.value || !data.value?.draw_enabled) return
@@ -233,6 +253,7 @@ function touchFinish(event) {
   else if (movement < 0 && window.scrollY <= top + 24 && window.scrollY > 20) snapScroll(false)
 }
 async function selectView(value) {
+  if(pairingBusy.value)return
   const version = ++navigationVersion
   if (value === 'matches' && currentMatch.value) {
     stage.value = currentMatch.value.stage
@@ -264,16 +285,16 @@ function sourceName(source) {
     return teams.value[origin.sources.map(s=>s.split(':')[1]).find(key=>key!==origin.winner)]?.name || '待定'
   }
   if (kind === 'finalist') {
-    const origins=['C1',...t.matches.filter(m=>m.stage==='second'&&!t.qualification_slots?.includes(m.id)).map(m=>m.id)]
-    return t.qualification_slots?.length ? teams.value[match(origins[Number(id)])?.winner]?.name || '1/4待定' : '1/4待定'
+    return teams.value[semifinalTeamId(t,Number(id))]?.name || '1/4待定'
+
   }
   if (kind === 'qualified') return teams.value[match('C1')?.winner && (id === t.challenge_slot ? match('C1').winner : match(id)?.winner)]?.name || '1/4待定'
   return teams.value[match(id)?.winner]?.name || (match(id)?.stage === 'semi' ? '1/2待定' : '待定')
 }
-function ready(match) { return match.sources.every(s => !/待定|待选择/.test(sourceName(s))) }
+function ready(match) { if(match.stage==='semi'&&data.value?.tournament.qualification_mode==='four-paired'&&!finalistTeamIds(data.value.tournament).every(Boolean))return false; return match.sources.every(s => !/待定|待选择/.test(sourceName(s))) }
 const labels = { playin: '突围挑战赛', opening: '首轮赛', second: '四强争夺赛', qualifier: '四强突围赛', semi: '半决赛', final: '决赛' }
 async function load() {
-  if (drawing.value) return
+  if (drawing.value || pairingBusy.value) return
   controller?.abort()
   controller = new AbortController()
   const current = ++generation
@@ -306,7 +327,8 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
     <el-alert v-if="error" :title="error" type="info" :closable="false"><el-button size="small" @click="load">重新加载</el-button></el-alert>
     <section v-if="data" ref="matchPanel" class="event-content"><div class="section-heading"><div><span class="heading-mark"></span><h2>{{ tab === 'teams' ? '参赛队伍' : tab === 'matches' ? '比赛列表' : '赛事进程' }}</h2></div><div class="view-switch" aria-label="观赛视图"><button v-for="item in [{id:'schedule',name:'晋级图'},{id:'matches',name:'比赛列表'},{id:'teams',name:'队伍阵容'}]" :key="item.id" :class="{active:tab===item.id}" :aria-pressed="tab===item.id" @click="selectView(item.id)">{{ item.name }}</button></div></div>
       <div v-if="data.draw_enabled" class="public-draw-bar"><div><b>队伍抽签 · {{ drawProgress }} / {{ drawTotal }} 队</b></div><el-button v-if="hostAllowed" type="primary" :loading="drawing" :disabled="drawing || drawProgress >= drawTotal" @click="enterDraw">{{ drawProgress >= drawTotal ? '本轮队伍已抽齐' : `抽取 ${nextDrawTeam?.id || ''} · 5人` }}</el-button><el-button v-if="drawProgress" class="draw-secondary-button" @click="drawReady=false;tab='draw'">查看最近队伍</el-button></div>
-      <div v-if="hostAllowed && data.draw_enabled && hostLotteryChoices.length" class="host-lottery"><span>主持人抽签</span><el-button v-for="item in hostLotteryChoices" :key="item.kind" class="draw-secondary-button" :disabled="!item.ready || pairingBusy || drawing" :loading="pairingBusy" @click="runHostLottery(item)">{{item.label}}</el-button></div>
+      <div v-if="hostAllowed && (hostLotteryChoices.length || canResetPairing)" class="host-lottery"><span>主持人抽签</span><el-button v-for="item in hostLotteryChoices" :key="item.kind" class="draw-secondary-button" :disabled="!item.ready || pairingBusy || drawing" :loading="pairingBusy" @click="enterHostLottery(item)">{{item.label}}</el-button><el-button v-if="canResetPairing" class="draw-secondary-button" :disabled="pairingBusy || drawing" @click="resetPairing">重置签位，保留队伍</el-button></div>
+      <AnnualPairingDraw v-if="tab==='lottery' && pairingChoice" ref="pairingStage" :key="pairingChoice.kind" :kind="pairingChoice.kind" :title="pairingChoice.label" :tournament="data.tournament" :busy="pairingBusy" @start="runHostLottery(pairingChoice)" @back="selectView('schedule')" />
       <section v-if="tab === 'draw'" :class="['opening-draw', 'classic-arena', {revealing}]" :aria-busy="drawing">
         <header class="classic-arena-meta"><span>第{{ currentDrawNumber }}轮抽取 · 队伍编号 {{ displayTeamCode || '待定' }}</span><span>{{ drawing ? '正在揭晓' : drawReady ? '等待开始' : '已自动保存' }}</span></header>
         <div class="classic-arena-title"><span>集结队友</span><h2>{{ drawing ? '战队集结 · 阵容揭晓' : drawReady ? '战队集结 · 等待抽取' : '战队集结 · 阵容就位' }}</h2><p>对抗路 / 打野 / 中路 / 发育路 / 游走</p></div>
@@ -323,7 +345,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
       </section>
       <Transition name="spectator-view" mode="out-in" @after-enter="focusCurrentMatch"><div :key="tab" class="view-content" :class="{ revealing }">
       <div v-if="tab === 'matches'" class="stage-filter" aria-label="比赛阶段"><button v-for="item in [{id:'all',name:'全部比赛'}, ...Object.entries(labels).map(([id,name])=>({id,name}))]" :key="item.id" :class="{active:stage===item.id}" :aria-pressed="stage===item.id" @click="stage=item.id">{{ item.name }}</button></div>
-      <AnnualTournament v-if="tab !== 'matches' && tab !== 'draw'" :tournament="data.tournament" :view="tab" :screen="true" public-view :hide-names="!data.show_names" />
+      <AnnualTournament v-if="tab !== 'matches' && tab !== 'draw' && tab !== 'lottery'" :tournament="data.tournament" :view="tab" :screen="true" public-view :hide-names="!data.show_names" />
       <section v-else-if="tab === 'matches'" class="match-list"><article v-for="m in filteredMatches" :key="m.id" :data-match-id="m.id" :class="{'current-match':m.id===currentMatch?.id}"><header><b>{{ labels[m.stage] }}</b><span>BO{{ m.best_of }} · {{ m.winner ? '已结束' : m.score_a || m.score_b ? '进行中' : ready(m) ? '待开赛' : '待晋级' }}</span></header><div><strong>{{ sourceName(m.sources[0]) }}</strong><b>{{ ready(m) ? m.score_a : '—' }} : {{ ready(m) ? m.score_b : '—' }}</b><strong>{{ sourceName(m.sources[1]) }}</strong></div><details v-if="m.bans.some(b=>b.red.length || b.blue.length)"><summary>逐局Ban</summary><p v-for="b in m.bans" :key="b.game">第{{ b.game }}局 · 红方：{{ b.red.join('、') || '无' }} / 蓝方：{{ b.blue.join('、') || '无' }}</p></details></article></section>
       </div></Transition>
     </section>
