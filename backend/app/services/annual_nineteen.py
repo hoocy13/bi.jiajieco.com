@@ -117,3 +117,14 @@ def normalize_unstarted_rules(t):
     if t and t.get('format')=='19-10-5-4':
         for m in t.get('matches',[]):
             if m['stage']=='qualifier' and not (m['score_a'] or m['score_b'] or m['winner']): m['best_of']=3
+
+
+def random_semis(t, actor):
+    import secrets
+    semis=[m for m in t['matches'] if m['stage']=='semi']
+    if t.get('semi_pairing_drawn') or any(m['score_a'] or m['score_b'] or m['winner'] for m in semis):raise ValueError('四强对阵已锁定，不能重复抽取')
+    identities=finalists(t)
+    if len(identities)!=4 or not all(identities) or len(set(identities))!=4:raise ValueError('请先决出正式四强')
+    slots=list(range(4));secrets.SystemRandom().shuffle(slots)
+    for i,m in enumerate(semis):m['sources']=[f'finalist:{key}' for key in slots[i*2:i*2+2]]
+    t.update(semi_pairing_drawn=True,semi_pairing_drawn_by=actor,semi_pairing_drawn_at=datetime.now(timezone.utc).isoformat())

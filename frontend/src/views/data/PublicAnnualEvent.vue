@@ -109,6 +109,38 @@ async function replayNames() {
   try { await nextTick(); await settleNames() }
   finally { stopNameTimers(); rollingNames.value=[]; drawing.value=false }
 }
+const pairingBusy=ref(false)
+const hostLotteryChoices=computed(()=>{
+ const t=data.value?.tournament
+ if(!t || t.team_count!==19)return []
+ const matches=t.matches || []
+ const complete=t.generated&&t.drawn_teams===19
+ const opening=matches.filter(m=>m.stage==='opening')
+ const second=matches.filter(m=>m.stage==='second')
+ const qualifier=matches.find(m=>m.stage==='qualifier')
+ const close=m=>m.winner&&[m.score_a,m.score_b].sort().join(',')==='1,2'
+ const fourReady=qualifier?.winner&&t.qualification_slots?.length===2&&second.every(m=>m.winner)
+ return [
+  {kind:'opening',label:'随机抽取首轮签位',ready:complete&&!t.bye_team_id&&opening.every(m=>m.sources.every(s=>s.startsWith('team:pending')))},
+  {kind:'playin',label:'抽取突围挑战队伍',ready:complete&&t.bye_team_id&&!t.playin_opponent&&opening.every(m=>m.winner)&&opening.some(close)},
+  {kind:'qualifier',label:'抽取四强突围对阵',ready:complete&&!t.qualification_slots?.length&&second.every(m=>m.winner)&&[2,3].includes(second.filter(close).length)},
+  {kind:'semi',label:'随机抽取四强对阵',ready:complete&&fourReady&&!t.semi_pairing_drawn&&matches.filter(m=>m.stage==='semi').every(m=>!m.score_a&&!m.score_b&&!m.winner)}
+ ]
+})
+async function runHostLottery(item){
+ if(pairingBusy.value||!item.ready)return
+ try{await ElMessageBox.confirm('确认后保存并锁定抽签结果。',item.label)}catch{return}
+ pairingBusy.value=true
+ try{
+  const base=(import.meta.env.VITE_API_BASE_URL||'/api/v1').replace(/\/$/,'')
+  const response=await fetch(`${base}/public/annual-events/${encodeURIComponent(route.params.token)}/lottery`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${localStorage.getItem('jjc_token')||''}`},body:JSON.stringify({revision:data.value.revision,draw_kind:item.kind}),credentials:'omit'})
+  const result=await response.json()
+  if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'抽签失败，请刷新重试')
+  data.value=result.data
+  await selectView('schedule')
+  ElMessage({message:'对阵已保存',type:'success',customClass:'annual-save-toast',offset:80,duration:2200})
+ }catch(e){ElMessage.error(e.message);await load()}finally{pairingBusy.value=false}
+}
 async function drawTeams() {
   if (drawing.value || !hostAllowed.value || !data.value?.draw_enabled) return
   drawing.value = true
@@ -274,6 +306,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
     <el-alert v-if="error" :title="error" type="info" :closable="false"><el-button size="small" @click="load">重新加载</el-button></el-alert>
     <section v-if="data" ref="matchPanel" class="event-content"><div class="section-heading"><div><span class="heading-mark"></span><h2>{{ tab === 'teams' ? '参赛队伍' : tab === 'matches' ? '比赛列表' : '赛事进程' }}</h2></div><div class="view-switch" aria-label="观赛视图"><button v-for="item in [{id:'schedule',name:'晋级图'},{id:'matches',name:'比赛列表'},{id:'teams',name:'队伍阵容'}]" :key="item.id" :class="{active:tab===item.id}" :aria-pressed="tab===item.id" @click="selectView(item.id)">{{ item.name }}</button></div></div>
       <div v-if="data.draw_enabled" class="public-draw-bar"><div><b>队伍抽签 · {{ drawProgress }} / {{ drawTotal }} 队</b></div><el-button v-if="hostAllowed" type="primary" :loading="drawing" :disabled="drawing || drawProgress >= drawTotal" @click="enterDraw">{{ drawProgress >= drawTotal ? '本轮队伍已抽齐' : `抽取 ${nextDrawTeam?.id || ''} · 5人` }}</el-button><el-button v-if="drawProgress" class="draw-secondary-button" @click="drawReady=false;tab='draw'">查看最近队伍</el-button></div>
+      <div v-if="hostAllowed && data.draw_enabled && hostLotteryChoices.length" class="host-lottery"><span>主持人抽签</span><el-button v-for="item in hostLotteryChoices" :key="item.kind" class="draw-secondary-button" :disabled="!item.ready || pairingBusy || drawing" :loading="pairingBusy" @click="runHostLottery(item)">{{item.label}}</el-button></div>
       <section v-if="tab === 'draw'" :class="['opening-draw', 'classic-arena', {revealing}]" :aria-busy="drawing">
         <header class="classic-arena-meta"><span>第{{ currentDrawNumber }}轮抽取 · 队伍编号 {{ displayTeamCode || '待定' }}</span><span>{{ drawing ? '正在揭晓' : drawReady ? '等待开始' : '已自动保存' }}</span></header>
         <div class="classic-arena-title"><span>集结队友</span><h2>{{ drawing ? '战队集结 · 阵容揭晓' : drawReady ? '战队集结 · 等待抽取' : '战队集结 · 阵容就位' }}</h2><p>对抗路 / 打野 / 中路 / 发育路 / 游走</p></div>
@@ -396,4 +429,14 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
 
 <style scoped>
 .match-list article.current-match{border-color:#77afd5;box-shadow:inset 3px 0 #77afd5,0 0 0 1px #77afd51a}
+</style>
+
+<style scoped>
+.host-lottery{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 0 20px;color:#8eacc3;font-size:12px}.host-lottery .el-button{margin:0}
+@media(max-width:650px){
+.public-event::after{background-size:auto 100%;background-position:62% top;opacity:.72}
+.event-hero{min-height:calc(100svh - 100px);padding:200px 20px 40px;align-items:flex-end}
+.hero-copy{max-width:280px;padding:18px;border-radius:8px;background:linear-gradient(120deg,#071524b0,#07152430)}
+.event-content{background:#091a2be8;margin-top:0}.host-lottery{display:grid;grid-template-columns:1fr 1fr}.host-lottery>span{grid-column:1/-1}.host-lottery .el-button{font-size:11px;padding:9px 8px;white-space:normal;height:auto;min-height:34px}
+}
 </style>

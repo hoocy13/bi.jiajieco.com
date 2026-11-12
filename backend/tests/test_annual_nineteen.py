@@ -145,4 +145,17 @@ class NineteenTests(unittest.TestCase):
             if m['stage']=='second':m.update(winner=m['id'],score_a=2,score_b=0 if m['id']=='B1' else 1)
         with self.assertRaises(ValueError):random_qualifier(t,1)
 
+    def test_random_semis_require_four_teams_and_lock_result(self):
+        from app.services.annual_nineteen import random_semis
+        t=bracket(team_count=19)
+        with self.assertRaises(ValueError):random_semis(t,1)
+        t['qualification_slots']=['B4','B5']
+        for m in t['matches']:
+            if m['stage']=='second' or m['id']=='C1':m['winner']='winner-'+m['id']
+        random_semis(t,1)
+        slots=[s for m in t['matches'] if m['stage']=='semi' for s in m['sources']]
+        self.assertEqual(set(slots),{f'finalist:{i}' for i in range(4)})
+        self.assertTrue(t['semi_pairing_drawn'])
+        with self.assertRaises(ValueError):random_semis(t,1)
+
 if __name__=='__main__':unittest.main()

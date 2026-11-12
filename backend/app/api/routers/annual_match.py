@@ -42,6 +42,7 @@ class Command(BaseModel):
     score_a: int | None = Field(default=None, ge=0, le=3)
     score_b: int | None = Field(default=None, ge=0, le=3)
     bans: list[BanGame] | None = Field(default=None, max_length=5)
+    draw_kind: Literal['opening', 'semi', 'playin', 'qualifier'] | None = None
     simulation: bool = False
     enabled: bool = False
     show_names: bool = False
@@ -54,7 +55,7 @@ def get_state(mode: Mode):
 
 
 @router.post('/{mode}/{action}')
-def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye', 'tournament-random-pairing', 'tournament-random-playin', 'tournament-random-qualifier'], body: Command, user: User = Depends(get_current_user)):
+def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye', 'tournament-random-pairing', 'tournament-random-playin', 'tournament-random-qualifier', 'tournament-random-semi'], body: Command, user: User = Depends(get_current_user)):
     if action == 'save' and body.players is None:
         raise HTTPException(422, '缺少人员配置')
     try:
@@ -84,3 +85,18 @@ def public_draw(token: str, body: Command, user: User = Depends(get_current_user
         return ok(service.public_state(token))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@public_router.post('/{token}/lottery', dependencies=[Depends(require_permission('system.users.manage'))])
+def public_lottery(token: str, body: Command, user: User = Depends(get_current_user)):
+    try:
+        state=service.read_state('real')
+        settings=state.get('public_view',{})
+        # Visibility checks also reject invalid tokens, demo data and closed events.
+        service.public_state(token)
+        if not settings.get('draw_enabled'):raise ValueError('公开页主持人抽签功能未开启')
+        actions={'opening':'tournament-random-pairing','semi':'tournament-random-semi','playin':'tournament-random-playin','qualifier':'tournament-random-qualifier'}
+        if body.draw_kind not in actions:raise ValueError('请选择抽签阶段')
+        service.mutate('real',body.revision,actions[body.draw_kind],actor=user.id)
+        return ok(service.public_state(token))
+    except ValueError as exc:raise HTTPException(409,str(exc)) from exc

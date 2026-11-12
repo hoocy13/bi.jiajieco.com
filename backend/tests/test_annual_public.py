@@ -171,4 +171,26 @@ class PublicEventTests(unittest.TestCase):
         self.publish(s, enabled=False)
         self.assertEqual(self.client.get('/api/v1/public/annual-events/annual-games').status_code,404)
 
+    def test_public_lottery_requires_host_switch_and_revision(self):
+        from types import SimpleNamespace
+        from app.api.deps import get_current_user
+        from app.services.annual_tournament import bracket
+        import sqlite3,json
+        from contextlib import closing
+        s=read_state('real')
+        s.update(players=[dict(id=str(i),name=f'P{i}',present=True,roles=[ROLES[i%5]],fill=False) for i in range(95)],tournament_settings={'team_count':19},tournament=bracket(team_count=19))
+        with closing(sqlite3.connect(self.path)) as db,db:db.execute("UPDATE activity SET body=? WHERE mode='real'",(json.dumps(s),))
+        s=mutate('real',s['revision'],'tournament-generate')
+        s=mutate('real',s['revision'],'tournament-public',{'enabled':True,'draw_enabled':False})
+        url='/api/v1/public/annual-events/annual-games/lottery'
+        self.assertIn(self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'}).status_code,[401,403])
+        self.client.app.dependency_overrides[get_current_user]=lambda:SimpleNamespace(id=3,role=SimpleNamespace(is_active=True,permissions=[SimpleNamespace(code='system.users.manage')]))
+        self.assertEqual(self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'}).status_code,409)
+        s=mutate('real',s['revision'],'tournament-public',{'enabled':True,'draw_enabled':True})
+        self.assertEqual(self.client.post('/api/v1/public/annual-events/wrong/lottery',json={'revision':s['revision'],'draw_kind':'opening'}).status_code,409)
+        response=self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertNotIn('tournament_settings',response.json()['data'])
+        self.assertEqual(self.client.post(url,json={'revision':s['revision'],'draw_kind':'opening'}).status_code,409)
+
 if __name__ == '__main__': unittest.main()

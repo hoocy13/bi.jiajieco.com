@@ -302,10 +302,10 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         if existing.get('draw_plan'):
             next(t for t in existing['draw_plan'] if t['id'] == team['id'])['name'] = name
         return
-    if action in ['tournament-random-pairing','tournament-random-playin','tournament-random-qualifier']:
+    if action in ['tournament-random-pairing','tournament-random-playin','tournament-random-qualifier','tournament-random-semi']:
         if existing.get('rules_version')!=3: raise ValueError('当前不是19队赛制')
-        from app.services.annual_nineteen import random_pairing,random_playin,random_qualifier
-        {'tournament-random-pairing':random_pairing,'tournament-random-playin':random_playin,'tournament-random-qualifier':random_qualifier}[action](existing,actor)
+        from app.services.annual_nineteen import random_pairing,random_playin,random_qualifier,random_semis
+        {'tournament-random-pairing':random_pairing,'tournament-random-playin':random_playin,'tournament-random-qualifier':random_qualifier,'tournament-random-semi':random_semis}[action](existing,actor)
         return
     if action in ['tournament-pair','tournament-bye']:
         if existing.get('rules_version')!=3: raise ValueError('当前版本不支持手动安排常规对阵')
