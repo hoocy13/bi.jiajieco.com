@@ -1,7 +1,7 @@
 <script setup>
 import { finalistTeamIds } from '../utils/annualFinalists'
 import { ref, onUnmounted } from 'vue'
-const props=defineProps({kind:String,title:String,tournament:Object,busy:Boolean})
+const props=defineProps({kind:String,title:String,tournament:Object,busy:Boolean,showNames:Boolean})
 const emit=defineEmits(['start','back'])
 const rows=ref([]), names=ref([]), locked=ref([]), complete=ref(false)
 const timers=new Map()
@@ -19,8 +19,8 @@ function sourceTeam(t,source){
 }
 function resultRows(t){
  const stage={opening:'opening',second:'second',semi:'semi',playin:'playin',qualifier:'qualifier'}[props.kind]
- const result=t.matches.filter(m=>m.stage===stage).map((m,i)=>({id:m.id,label:props.kind==='semi'?`半决赛 ${i+1}`:`第 ${i+1} 组`,names:m.sources.map(s=>teamName(t,sourceTeam(t,s)))}))
- if(props.kind==='opening')result.unshift({id:'bye',label:'轮空队',names:[teamName(t,t.bye_team_id)]})
+ const result=t.matches.filter(m=>m.stage===stage).map((m,i)=>({id:m.id,label:props.kind==='semi'?`半决赛 ${i+1}`:`第 ${i+1} 组`,names:m.sources.map(s=>teamName(t,sourceTeam(t,s))),teams:m.sources.map(s=>t.teams.find(team=>team.id===sourceTeam(t,s)))}))
+ if(props.kind==='opening')result.unshift({id:'bye',label:'轮空队',names:[teamName(t,t.bye_team_id)],teams:[t.teams.find(team=>team.id===t.bye_team_id)]})
  return result
 }
 function poolNames(){
@@ -61,6 +61,7 @@ async function reveal(t){
  }
  complete.value=true
 }
+function rowRevealed(row,index){return row.names.every((_,side)=>locked.value.includes(slotIndex(index,side)))}
 function slotIndex(row,index){return rows.value.slice(0,row).reduce((sum,x)=>sum+x.names.length,0)+index}
 onUnmounted(()=>{disposed=true;stop()})
 defineExpose({reveal})
@@ -71,7 +72,7 @@ defineExpose({reveal})
   <div class="pairing-title"><h2>{{kind==='opening'?'首轮抽签':title}}</h2></div>
   <div v-if="!busy&&!complete" class="pairing-wait"><strong>{{kind==='opening'?'19支战队':kind==='second'?'10支战队':kind==='semi'?'四强集结':'突围对决'}}</strong><button class="start-lottery" @click="emit('start')">开始</button></div>
   <div v-else class="pairing-results" :class="{many:kind==='opening',sequential:busy}" aria-live="polite">
-   <article v-for="(row,r) in rows" v-show="complete||r===rows.length-1" :key="row.id" :class="{bye:row.id==='bye'}"><small>{{row.label}}</small><div><template v-for="(_,i) in row.names" :key="i"><span v-if="i" class="pairing-vs">VS</span><b :class="{rolling:busy&&!locked.includes(slotIndex(r,i)),locked:locked.includes(slotIndex(r,i))}">{{names[slotIndex(r,i)]||'待揭晓'}}</b></template></div></article>
+   <article v-for="(row,r) in rows" v-show="complete||r===rows.length-1" :key="row.id" :class="{bye:row.id==='bye'}"><small>{{row.label}}</small><div><template v-for="(_,i) in row.names" :key="i"><span v-if="i" class="pairing-vs">VS</span><b :class="{rolling:busy&&!locked.includes(slotIndex(r,i)),locked:locked.includes(slotIndex(r,i))}">{{names[slotIndex(r,i)]||'待揭晓'}}</b></template></div><section v-if="rowRevealed(row,r)" class="pairing-lineups" :class="{single:row.teams.length===1}" aria-label="双方阵容"><section v-for="(team,side) in row.teams" :key="team?.id||side" class="lineup-team"><h3>{{team?.name||'待定'}}</h3><div v-for="(player,index) in showNames?(team?.players||[]):[]" :key="player.id||index" class="lineup-player"><span>{{player.role}}</span><strong>{{player.name}}</strong></div><p v-if="!showNames||!team?.players?.length" class="lineup-private">队员未公开</p></section></section></article>
   </div>
   <footer v-if="waitingNext"><button class="start-lottery" @click="nextGroup">下一组</button></footer>
   <footer v-if="!busy"><button v-if="complete" class="start-lottery" @click="emit('back')">查看晋级图</button><button class="quiet-lottery" @click="emit('back')">{{complete?'返回赛事':'取消'}}</button></footer>
@@ -83,4 +84,14 @@ defineExpose({reveal})
 
 <style scoped>
 .pairing-results:not(:has(article:nth-child(1):last-child)){max-width:900px}.pairing-results article{min-height:150px;padding:30px;box-sizing:border-box}.pairing-results article>div{min-height:85px;justify-content:center;gap:50px}.pairing-results b{font-size:46px}.pairing-results article>small{text-align:center;font-size:16px}.pairing-results.many:has(.rolling),.pairing-results.many:has(~footer .start-lottery){display:block}.pairing-vs{font-size:24px}.pairing-results.sequential{display:block;max-width:900px}.pairing-results.sequential>article:only-child{max-width:none}@media(max-width:650px){.pairing-results b{font-size:30px}.pairing-results article>div{gap:22px}.pairing-results article{padding:24px 14px}}
+</style>
+
+<style scoped>
+.pairing-lineups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px;margin-top:20px;border-top:1px solid #ffffff14;padding-top:18px}
+.pairing-lineups.single{grid-template-columns:minmax(0,1fr);max-width:390px;margin-left:auto;margin-right:auto}
+.lineup-team{min-width:0}.lineup-team h3{margin:0 0 12px;font-size:15px;color:#a4d7f6;font-weight:600}
+.lineup-player{display:grid;grid-template-columns:56px minmax(0,1fr);align-items:baseline;gap:12px;padding:10px 0;border-top:1px solid #ffffff0d;line-height:1.5;text-align:left}
+.lineup-player span{font-size:12px;color:#89a5bc}.lineup-player strong{font-size:18px;font-weight:600;color:#e1eff9;overflow-wrap:anywhere}
+.lineup-private{font-size:13px;color:#89a5bc;margin:16px 0}
+@media(max-width:650px){.pairing-lineups{grid-template-columns:minmax(0,1fr);gap:20px}.lineup-player{padding:8px 0}.lineup-player strong{font-size:17px}}
 </style>
