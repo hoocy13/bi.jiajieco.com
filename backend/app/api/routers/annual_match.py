@@ -35,6 +35,7 @@ class Command(BaseModel):
     players: list[Player] | None = Field(default=None, max_length=200)
     id: str | None = None
     team_id: str | None = None
+    captain_id: str | None = Field(default=None, min_length=1, max_length=100)
     team_ids: list[str] | None = Field(default=None, min_length=2, max_length=2)
     name: str | None = Field(default=None, min_length=1, max_length=20)
     slot: int | None = None
@@ -60,7 +61,7 @@ def get_state(mode: Mode):
 
 
 @router.post('/{mode}/{action}')
-def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-playin', 'tournament-pair', 'tournament-bye', 'tournament-random-pairing', 'tournament-random-second', 'tournament-random-playin', 'tournament-random-qualifier', 'tournament-random-semi', 'tournament-reset-pairing', 'tournament-reset-qualifier'], body: Command, user: User = Depends(get_current_user)):
+def command(mode: Mode, action: Literal['save', 'draw', 'draw-all', 'lock', 'lock-all', 'discard', 'discard-all', 'replace', 'next-round', 'tournament-generate', 'tournament-score', 'tournament-demo', 'tournament-challenge', 'tournament-upgrade', 'tournament-public', 'tournament-restore', 'tournament-abandon', 'tournament-rename', 'tournament-captain', 'tournament-playin', 'tournament-pair', 'tournament-bye', 'tournament-random-pairing', 'tournament-random-second', 'tournament-random-playin', 'tournament-random-qualifier', 'tournament-random-semi', 'tournament-reset-pairing', 'tournament-reset-qualifier'], body: Command, user: User = Depends(get_current_user)):
     if action == 'save' and body.players is None:
         raise HTTPException(422, '缺少人员配置')
     try:

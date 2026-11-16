@@ -11,6 +11,13 @@ async function renameTeam(team) {
     await props.runCommand('tournament-rename', { team_id: team.id, name: value.trim() })
   } catch { /* User cancelled. */ }
 }
+const captainTeam=ref(null)
+const captainId=ref('')
+const captainRevision=ref(0)
+const captainDialog=ref(false)
+function chooseCaptain(team){captainTeam.value=team;captainRevision.value=props.revision;captainId.value=team.captain_id||'';captainDialog.value=true}
+async function saveCaptain(){if(await props.runCommand('tournament-captain',{revision:captainRevision.value,team_id:captainTeam.value.id,captain_id:captainId.value||null}))captainDialog.value=false}
+function isCaptain(team,player){return player.is_captain||!!team.captain_id&&team.captain_id===player.id}
 const tournament = computed(() => props.tournament)
 const matches = computed(() => tournament.value?.matches || [])
 const teamMap = computed(() => Object.fromEntries((tournament.value?.teams || []).map(t => [t.id, t])))
@@ -202,7 +209,7 @@ async function simulate() {
   } catch { /* cancelled */ }
 }
 watch(() => props.mode, () => { drawer.value = false })
-watch(() => props.tournament?.id, () => { drawer.value = false; selectedTeam.value = null })
+watch(() => props.tournament?.id, () => { captainDialog.value=false; drawer.value = false; selectedTeam.value = null })
 watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = null })
 </script>
 
@@ -247,12 +254,13 @@ watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = 
       <el-alert v-else title="当前保存的是旧赛制。切换新赛制后保留队员，旧赛程归档保存。" type="info" :closable="false" />
       <p v-if="!tournament.generated" class="tournament-hint">当前展示赛程结构，参赛队伍确定后显示对阵。</p>
     </template>
-    <div v-else class="team-directory"><article v-for="team in tournament.teams" :key="team.id" class="directory-card"><button class="directory-title" @click="openTeam(team)"><b>{{ team.name }}</b><span>{{ team.id }}</span></button><el-button v-if="!screen && tournament.generated" text size="small" :disabled="busy" @click="renameTeam(team)" :aria-label="`修改${team.name}队名`">改名</el-button><template v-if="team.players.length"><div v-for="p in team.players" :key="p.id" class="directory-player"><span>{{ p.role }}</span><strong>{{ p.name }}</strong></div></template><p v-else class="empty-team">{{ hideNames ? '队员姓名未公开' : '等待抽取队员' }}</p></article></div>
+    <div v-else class="team-directory"><article v-for="team in tournament.teams" :key="team.id" class="directory-card"><button class="directory-title" @click="openTeam(team)"><b>{{ team.name }}</b><span>{{ team.id }}</span></button><el-button v-if="!screen && tournament.generated" text size="small" :disabled="busy" @click="renameTeam(team)" :aria-label="`修改${team.name}队名`">改名</el-button><el-button v-if="!screen && team.players.length===5" text size="small" :disabled="busy" @click="chooseCaptain(team)" :aria-label="`选择${team.name}队长`">选队长</el-button><template v-if="team.players.length"><div v-for="p in team.players" :key="p.id" class="directory-player"><span>{{ p.role }}</span><strong>{{ p.name }}<small v-if="isCaptain(team,p)" class="captain-badge">队长</small></strong></div></template><p v-else class="empty-team">{{ hideNames ? '队员姓名未公开' : '等待抽取队员' }}</p></article></div>
 
 
     <el-dialog v-model="byeDialog" title="指定首轮待赛队伍" width="min(480px,94vw)"><p class="score-hint">先填写9场首轮对阵，再确认剩余的一支队伍。它将在突围挑战赛中对战手动选择的1:2败队。</p><el-select v-model="selectedBye" placeholder="选择队伍" :disabled="!teamsComplete || byeCandidates.length!==1"><el-option v-for="team in byeCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" /></el-select><template #footer><el-button @click="byeDialog=false">取消</el-button><el-button type="primary" :disabled="!teamsComplete || byeCandidates.length!==1 || !selectedBye || busy" @click="saveBye">确认待赛队伍</el-button></template></el-dialog>
+    <el-dialog v-model="captainDialog" :title="`${captainTeam?.name||''} · 选择队长`" width="min(420px,94vw)"><el-radio-group v-model="captainId" class="captain-options"><el-radio value="">暂不指定</el-radio><el-radio v-for="p in captainTeam?.players||[]" :key="p.id" :value="p.id">{{p.name}} · {{p.role}}</el-radio></el-radio-group><template #footer><el-button @click="captainDialog=false">取消</el-button><el-button type="primary" :loading="busy" @click="saveCaptain">保存</el-button></template></el-dialog>
     <el-drawer v-model="drawer" append-to-body size="min(560px, 100vw)" :title="selectedTeam ? `${selectedTeam.name} · 队员名单` : selected ? `${stages[selected.stage]} · BO${selected.best_of}` : '比赛详情'" class="tournament-drawer">
-      <template v-if="selectedTeam"><p v-if="!selectedTeam.players.length">{{ hideNames ? '队员姓名未公开' : '队伍尚未生成' }}</p><div v-for="p in selectedTeam.players" :key="p.id" class="roster-line"><span>{{ p.role }}</span><b>{{ p.name }}</b></div></template>
+      <template v-if="selectedTeam"><p v-if="!selectedTeam.players.length">{{ hideNames ? '队员姓名未公开' : '队伍尚未生成' }}</p><div v-for="p in selectedTeam.players" :key="p.id" class="roster-line"><span>{{ p.role }}</span><b>{{ p.name }}<small v-if="isCaptain(selectedTeam,p)" class="captain-badge">队长</small></b></div></template>
       <template v-else-if="selected">
         <section v-if="nineteen && ['opening','second'].includes(selected.stage) && !screen && !selected.score_a && !selected.score_b" class="opponent-choice"><h3>手动填写{{ selected.stage==='opening'?'首轮':'10进5' }}对阵</h3><p class="score-hint">组队不指定对手。抽齐全部队伍后，在此填写双方；同一轮每队只安排一次。</p><el-select v-model="pairA" :disabled="!pairingReady || busy" placeholder="队伍一"><el-option v-for="team in pairCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" :disabled="team.id===pairB" /></el-select><el-select v-model="pairB" :disabled="!pairingReady || busy" placeholder="队伍二"><el-option v-for="team in pairCandidates" :key="team.id" :label="`${team.id} · ${team.name}`" :value="team.id" :disabled="team.id===pairA" /></el-select><el-button type="primary" :disabled="!pairingReady || !pairA || !pairB || busy" @click="savePair">确认对阵</el-button></section>
         <section v-if="nineteen && selected.stage==='playin' && !screen && !tournament.playin_opponent" class="opponent-choice"><h3>突围挑战赛</h3><el-button type="primary" :disabled="!openingDone || !tournament.bye_team_id || !playinCandidates.length || busy" @click="randomDraw('playin')">随机抽取挑战队伍</el-button><p class="score-hint">首轮9场结束后，为轮空队选择一支1:2败队，BO3胜者进入10进5。同分时由主办方确认。</p><el-select v-model="selectedOpponent" :disabled="!openingDone || busy" placeholder="选择1:2落败队伍"><el-option v-for="team in playinCandidates" :key="team.id" :label="team.name" :value="team.id" /></el-select><el-button type="primary" :disabled="!openingDone || !selectedOpponent || busy" @click="chooseNineteen">确认对手</el-button><p v-if="openingDone&&!playinCandidates.length" class="score-hint">没有1:2败队，特殊情况待定，请主办方另定规则。</p></section>
@@ -263,7 +271,7 @@ watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = 
           <div class="score-editor"><div><b>{{ sides[0]?.name }}</b><el-input-number v-model="scoreA" :min="0" :max="target" :disabled="!editable || busy" aria-label="红方胜局" /></div><span>:</span><div><b>{{ sides[1]?.name }}</b><el-input-number v-model="scoreB" :min="0" :max="target" :disabled="!editable || busy" aria-label="蓝方胜局" /></div></div>
           <p class="score-hint">{{ target }}局获胜即晋级{{ selected.best_of === 5 ? '，本阶段可记录逐局禁用英雄' : '，本阶段全英雄、不设赛事 Ban' }}。</p>
           <el-alert v-if="!sides.every(t => t.id)" title="上游比赛结束后自动填入晋级队伍" type="info" :closable="false" />
-          <div class="detail-rosters"><section v-for="(team, side) in sides" :key="side"><h3>{{ team.name }}</h3><div v-for="p in team.players || []" :key="p.id" class="roster-line"><span>{{ p.role }}</span><b>{{ p.name }}</b></div><p v-if="!team.players?.length" class="score-hint">{{ hideNames ? '队员姓名未公开' : '等待队伍就位' }}</p></section></div>
+          <div class="detail-rosters"><section v-for="(team, side) in sides" :key="side"><h3>{{ team.name }}</h3><div v-for="p in team.players || []" :key="p.id" class="roster-line"><span>{{ p.role }}</span><b>{{ p.name }}<small v-if="isCaptain(team,p)" class="captain-badge">队长</small></b></div><p v-if="!team.players?.length" class="score-hint">{{ hideNames ? '队员姓名未公开' : '等待队伍就位' }}</p></section></div>
         </template>
         <template v-else><p class="score-hint">按现场规则填写每局禁用英雄，输入名字后回车确认。两队同一局不能重复禁用同一英雄。</p><section v-for="game in banGames" :key="game.game" class="ban-game"><h3>第 {{ game.game }} 局</h3><label>红方禁用</label><el-select v-model="game.red" multiple filterable allow-create default-first-option :disabled="!editable || busy" placeholder="输入英雄名称后回车" /><label>蓝方禁用</label><el-select v-model="game.blue" multiple filterable allow-create default-first-option :disabled="!editable || busy" placeholder="输入英雄名称后回车" /></section></template>
       </template>
@@ -324,3 +332,5 @@ watch(() => props.hideNames, () => { drawer.value = false; selectedTeam.value = 
 <style scoped>
 .opponent-choice{padding:16px;border:1px solid var(--el-border-color-lighter);border-radius:8px;margin-bottom:20px}.opponent-choice h3{font-size:14px;margin-top:0}.opponent-choice .el-select{width:100%;margin-bottom:12px}
 </style>
+
+<style scoped>.captain-badge{display:inline-block;margin-left:7px;padding:1px 5px;border:1px solid #6e9ab94d;border-radius:4px;font-size:10px;font-weight:400;color:#6e9ab9;vertical-align:middle}.captain-options{display:flex;align-items:flex-start;flex-direction:column;gap:8px}</style>

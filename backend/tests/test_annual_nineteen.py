@@ -18,6 +18,31 @@ class NineteenTests(unittest.TestCase):
     def command(self,action,payload=None):
         self.state=service.mutate('real',self.state['revision'],action,payload)
         return self.state
+    def test_captain_membership_persistence_and_public_privacy(self):
+        from copy import deepcopy
+        self.command('tournament-generate')
+        team=self.state['tournament']['teams'][0];identity=team['id'];captain=team['players'][0]['id']
+        prior_matches=deepcopy(self.state['tournament']['matches'])
+        with self.assertRaises(ValueError):self.command('tournament-captain',dict(team_id=identity,captain_id='not-in-this-team'))
+        self.command('tournament-captain',dict(team_id=identity,captain_id=captain))
+        self.assertEqual(self.state['tournament']['teams'][0]['captain_id'],captain)
+        self.assertEqual(self.state['tournament']['matches'],prior_matches)
+        self.command('tournament-public',dict(enabled=True,show_names=True))
+        token=self.state['public_view']['token']
+        public=service.public_state(token)['tournament']['teams'][0]
+        self.assertEqual(sum(p['is_captain'] for p in public['players']),1)
+        self.assertEqual(public['players'][0]['is_captain'],True)
+        self.assertNotIn('captain_id',public)
+        self.command('tournament-public',dict(enabled=True,show_names=False))
+        self.assertEqual(service.public_state(token)['tournament']['teams'][0]['players'],[])
+        self.command('tournament-random-pairing')
+        self.command('tournament-reset-pairing',dict(reason='test captain persistence'))
+        self.assertEqual(self.state['tournament']['teams'][0]['captain_id'],captain)
+        self.command('tournament-captain',dict(team_id=identity,captain_id=team['players'][1]['id']))
+        self.assertNotEqual(self.state['tournament']['teams'][0]['captain_id'],captain)
+        self.command('tournament-captain',dict(team_id=identity,captain_id=None))
+        self.assertIsNone(self.state['tournament']['teams'][0]['captain_id'])
+
     def test_random_second_pairs_ten_winners_once(self):
         self.command('tournament-generate')
         with self.assertRaises(ValueError):self.command('tournament-random-second')

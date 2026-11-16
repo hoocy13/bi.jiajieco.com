@@ -336,7 +336,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
         <div v-else-if="drawing || data.tournament.drawn_matches" class="opening-sides classic-matchup" :class="{single:displayDrawTeams.length===1}">
           <article v-for="(team, index) in displayDrawTeams" :key="team.id" :class="['opening-team', index ? 'blue' : 'red']">
             <h3><span>{{ team.name }} 战队<small>队伍编号 {{ team.id }}</small></span><em>TEAM {{ team.id.replace('T','') }}</em></h3>
-            <p v-for="(player, position) in team.players" :key="player.id"><span class="classic-role">{{ player.role }}</span><b :style="{'--name-duration':`${(nameDurations[index * 5 + position] || 200) / 1000}s`}" :class="{ 'name-rolling': drawing && !lockedSlots.includes(index * 5 + position), 'name-locked': drawing && lockedSlots.includes(index * 5 + position) }"><span :key="drawing && !lockedSlots.includes(index * 5 + position) ? nameTicks[index * 5 + position] : player.id">{{ drawing ? (rollingNames[index * 5 + position] || '待揭晓') : player.name }}</span></b><small v-if="hostAllowed" class="classic-intent">{{ drawing && !lockedSlots.includes(index * 5 + position) ? '5V5' : intentionLabel(player) }}</small></p>
+            <p v-for="(player, position) in team.players" :key="player.id"><span class="classic-role">{{ player.role }}</span><b :style="{'--name-duration':`${(nameDurations[index * 5 + position] || 200) / 1000}s`}" :class="{ 'name-rolling': drawing && !lockedSlots.includes(index * 5 + position), 'name-locked': drawing && lockedSlots.includes(index * 5 + position) }"><span :key="drawing && !lockedSlots.includes(index * 5 + position) ? nameTicks[index * 5 + position] : player.id">{{ drawing ? (rollingNames[index * 5 + position] || '待揭晓') : player.name }}</span><small v-if="(player.is_captain||team.captain_id===player.id)&&(!drawing||lockedSlots.includes(index*5+position))" class="draw-captain">队长</small></b><small v-if="hostAllowed" class="classic-intent">{{ drawing && !lockedSlots.includes(index * 5 + position) ? '5V5' : intentionLabel(player) }}</small></p>
             <p v-if="!team.players.length">{{ drawing ? '正在抽取阵容…' : '队员姓名未公开' }}</p>
           </article>
 
@@ -462,3 +462,5 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
 .event-content{background:#091a2be8;margin-top:0}.host-lottery{display:grid;grid-template-columns:1fr 1fr}.host-lottery>span{grid-column:1/-1}.host-lottery .el-button{font-size:11px;padding:9px 8px;white-space:normal;height:auto;min-height:34px}
 }
 </style>
+
+<style scoped>.draw-captain{display:inline-block;margin-left:8px;padding:1px 5px;border:1px solid #5d88a65c;border-radius:4px;font-size:11px;font-weight:400;color:#91bfdc;vertical-align:middle;white-space:nowrap}</style>

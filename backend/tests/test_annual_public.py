@@ -47,7 +47,7 @@ class PublicEventTests(unittest.TestCase):
         s = self.publish(s, names=True)
         players = [p for team in self.get(s).json()['data']['tournament']['teams'] for p in team['players']]
         self.assertEqual(len(players), 90)
-        self.assertEqual(set(players[0]), {'id', 'name', 'role'})
+        self.assertEqual(set(players[0]), {'id', 'name', 'role', 'is_captain'})
     def test_disable_and_invalid_tokens(self):
         s = self.publish(self.generate())
         token = s['public_view']['token']

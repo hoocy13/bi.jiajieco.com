@@ -332,7 +332,7 @@ def public_state(token, path=None):
         raise ValueError('赛事尚未公开或链接已失效')
     teams = []
     for team in tournament['teams']:
-        players = [dict(id=str(i), name=p['name'], role=p['role']) for i, p in enumerate(team['players'])] if settings.get('show_names') else []
+        players = [dict(id=str(i), name=p['name'], role=p['role'], is_captain=p['id']==team.get('captain_id')) for i, p in enumerate(team['players'])] if settings.get('show_names') else []
         teams.append(dict(id=team['id'], name=team['name'], players=players, drawn=bool(team['players'])))
     matches = [{key: copy.deepcopy(m[key]) for key in
                 ('id', 'stage', 'number', 'sources', 'best_of', 'score_a', 'score_b', 'winner', 'bans')} for m in tournament['matches']]

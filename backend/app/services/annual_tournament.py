@@ -328,6 +328,16 @@ def mutate_tournament(state, action, payload, actor, mode, matcher):
         return
     if not existing or not existing.get('generated'):
         raise ValueError('请先生成18支队伍和赛程')
+    if action == 'tournament-captain':
+        team=next((t for t in existing['teams'] if t['id']==payload.get('team_id')),None)
+        if not team or len(team['players'])!=5:raise ValueError('请选择已抽齐5名队员的队伍')
+        captain_id=payload.get('captain_id')
+        if captain_id is not None and not any(p['id']==captain_id for p in team['players']):raise ValueError('队长必须是本队队员')
+        team.update(captain_id=captain_id,captain_updated_by=actor,captain_updated_at=datetime.now(timezone.utc).isoformat())
+        if existing.get('draw_plan'):
+            planned=next(t for t in existing['draw_plan'] if t['id']==team['id'])
+            planned['captain_id']=captain_id
+        return
     if action == 'tournament-rename':
         name = (payload.get('name') or '').strip()
         team = next((t for t in existing['teams'] if t['id'] == payload.get('team_id')), None)
