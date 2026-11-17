@@ -50,7 +50,7 @@ class InboundTest(unittest.TestCase):
         return {'doc_id': 'doc1', 'rec_id': rec, 'receipt_number': 'CRK1', 'receipt_time': datetime(2026,10,22,14,28),
             'supplier': '兰蔻 上海一百  百联', 'warehouse': '上海仓库新', 'remark': '10月', 'related_number': 'RK1',
             'reversal_status': '1', 'code': 'OTHER-CODE', 'name': '其他名称', 'barcode': barcode, 'brand': '兰蔻',
-            'unit': '支', 'quantity': quantity, 'lot': rec, 'source_updated_at': datetime(2026,10,23,8), **extra}
+            'product_type': '正装', 'unit': '支', 'quantity': quantity, 'lot': rec, 'source_updated_at': datetime(2026,10,23,8), **extra}
 
     def sync(self, rows):
         with patch.object(service, 'load_source', return_value=rows):
@@ -185,6 +185,123 @@ class InboundTest(unittest.TestCase):
         self.assertEqual(self.db.query(InboundLine).filter_by(status='confirmed').count(),0)
         self.action(self.listing()['rows'])
         self.assertEqual(self.receipt_detail()['auto_count'],0)
+
+    def test_similarity_current_order_unknown_counter_then_high_and_combined_filter(self):
+        self.sync([self.row(), self.row('other', doc_id='doc2', barcode='no-match')])
+        result = self.receipts()
+        possible = next(r for r in result['rows'] if r['doc_id'] == 'doc1')['suggestion']
+        self.assertEqual(possible['level'], 'possible')
+        self.assertEqual(possible['source_id'], 's')
+        self.assertEqual(possible['matched_count'], 1)
+        self.mapping()
+        result = self.receipts(match_state='high', supplier_names=['兰蔻 上海一百 百联'], keyword='001234')
+        self.assertEqual(result['total'], 1)
+        self.assertEqual(result['rows'][0]['suggestion']['level'], 'high')
+        self.assertEqual(result['match_summary']['high'], 1)
+        self.assertEqual(self.receipts(match_state='review')['total'], 1)
+        detail = self.client.get(self.base+'/receipts/doc1', params={'brand':'兰蔻', 'batch_id':self.batch.id}).json()['data']
+        self.assertEqual(detail['suggestion'], result['rows'][0]['suggestion'])
+        self.assertEqual(self.db.query(InboundLine).filter_by(status='confirmed').count(), 0)
+        self.assertEqual(self.batch.document, self.document)
+
+    def test_similarity_aggregate_capacity_cross_month_duplicate_and_hold(self):
+        self.mapping(); self.sync([self.row(), self.row('r2')])
+        self.assertEqual(self.receipts()['rows'][0]['suggestion']['level'], 'possible')
+        self.sync([self.row(quantity=3)])
+        other = GroupBuyBatch(month='2026-09', brand='兰蔻', name='九月', document=deepcopy(self.document), created_by='tester')
+        self.db.add(other); self.db.commit()
+        suggestion = self.receipts()['rows'][0]['suggestion']
+        self.assertEqual(suggestion['level'], 'possible')
+        self.assertIn('其他月份', suggestion['reason'])
+        self.assertEqual(self.hold().status_code, 200)
+        self.assertIsNone(self.receipts(state='waiting')['rows'][0]['suggestion'])
+
+    def test_similarity_does_not_choose_tied_counters_or_duplicate_barcode(self):
+        doc = deepcopy(self.document)
+        doc['sources'].append({'id':'s2', 'name':'柜台乙', 'counter':True})
+        doc['products'][0]['orders']['s2'] = 10
+        self.batch.document = doc; self.db.commit(); self.sync([self.row()])
+        suggestion = self.receipts()['rows'][0]['suggestion']
+        self.assertEqual(suggestion['level'], 'possible')
+        self.assertIsNone(suggestion['source_id'])
+        self.mapping()
+        doc['products'].append({**deepcopy(doc['products'][0]), 'id':'duplicate'})
+        self.batch.document = doc; self.db.commit()
+        self.assertEqual(self.receipts()['rows'][0]['suggestion']['level'], 'possible')
+        self.assertEqual(self.client.get(self.base+'/receipts', params={**self.params, 'batch_id':999}).status_code, 404)
+
+    def test_similarity_remaining_counts_only_unprocessed_and_keeps_negative_lines(self):
+        self.mapping(); self.sync([self.row(quantity=6)])
+        self.assertEqual(self.action(self.listing()['rows']).status_code, 200)
+        self.sync([self.row(quantity=6), self.row('r2', quantity=5)])
+        partial = self.receipts()['rows'][0]
+        self.assertEqual(partial['status'], 'partial')
+        self.assertEqual(partial['suggestion']['pending_count'], 1)
+        self.assertEqual(partial['suggestion']['level'], 'possible')
+        self.sync([self.row(quantity=6), self.row('r2', quantity=-1)])
+        self.assertEqual(self.receipts()['rows'][0]['suggestion']['level'], 'possible')
+        self.assertEqual(len(self.receipt_detail()['rows']), 2)
+        self.assertEqual(self.receipts(match_state='high')['total'], 0)
+
+    def test_samples_are_gifts_and_do_not_affect_regular_order_matching(self):
+        self.mapping()
+        self.sync([self.row(), self.row('sample', quantity=100, product_type='小样')])
+        receipt = self.receipts()['rows'][0]
+        self.assertEqual(receipt['type_counts'], {'小样':1, '正装':1})
+        self.assertEqual(receipt['pending_count'], 1)
+        self.assertEqual(receipt['gift_count'], 1)
+        self.assertEqual(receipt['suggestion']['level'], 'high')
+        self.assertEqual(receipt['suggestion']['matched_count'], 1)
+        detail = self.receipt_detail()
+        self.assertEqual(detail['auto_count'], 1)
+        gift = next(r for r in detail['rows'] if r['is_gift'])
+        self.assertEqual(gift['status'], 'gift')
+        self.assertFalse(gift['purchase_eligible'])
+        self.assertEqual(gift['candidates'], [])
+        self.assertIsNone(gift['recommendation'])
+        regular = next(r for r in detail['rows'] if r['purchase_eligible'])
+        self.assertEqual(self.action([regular]).status_code, 200)
+        self.assertEqual(self.receipts(state='done')['rows'][0]['pending_count'], 0)
+        self.assertEqual(self.client.get(self.base+f'/progress/{self.batch.id}').json()['data']['received'], {'p:s':6})
+
+    def test_gift_and_unknown_class_cannot_confirm_or_substitute_on_either_route(self):
+        self.mapping()
+        for kind in ('小样', '', '-1', '耗材'):
+            with self.subTest(kind=kind):
+                self.sync([self.row(product_type=kind)])
+                row = self.receipt_detail()['rows'][0]
+                self.assertFalse(row['purchase_eligible'])
+                self.assertEqual(self.action([row]).status_code, 409)
+                for mode in ('normal', 'substitute'):
+                    payload = self.assignments([row], mode=mode, product_id='p', credit_quantity=1, note='核对')
+                    self.assertEqual(self.client.post(self.base+'/receipt-confirmations', json={'lines':payload}).status_code, 409)
+                self.assertEqual(self.db.query(InboundLine).filter_by(status='confirmed').count(), 0)
+
+    def test_gift_only_receipts_have_separate_list_and_unknown_remains_review(self):
+        self.sync([self.row(product_type='小样'), self.row('other', doc_id='doc2', product_type=None)])
+        pending = self.receipts()
+        self.assertEqual(pending['total'], 1)
+        self.assertEqual(pending['rows'][0]['doc_id'], 'doc2')
+        self.assertEqual(pending['rows'][0]['suggestion']['level'], 'review')
+        gifts = self.receipts(state='gift', keyword='001234', supplier_names=['兰蔻 上海一百 百联'])
+        self.assertEqual(gifts['total'], 1)
+        self.assertEqual(gifts['rows'][0]['pending_count'], 0)
+        self.assertIsNone(gifts['rows'][0]['suggestion'])
+
+    def test_legacy_classification_enrichment_preserves_regular_but_reviews_sample_link(self):
+        self.mapping(); self.sync([self.row()]); self.action(self.listing()['rows'])
+        line = self.db.scalar(select(InboundLine))
+        old = dict(line.snapshot); old.pop('product_type')
+        line.snapshot = old; self.db.commit()
+        self.sync([self.row()])
+        self.db.refresh(line)
+        self.assertEqual(line.status, 'confirmed')
+        self.sync([self.row(product_type='小样')])
+        self.db.refresh(line)
+        self.assertEqual(line.status, 'review')
+        result = self.client.get(self.base+f'/progress/{self.batch.id}').json()['data']
+        self.assertEqual(result['received'], {})
+        self.assertEqual(result['review_count'], 1)
 
     def test_auto_match_cross_month_each_line_gets_own_target(self):
         other=GroupBuyBatch(month='2026-09',brand='兰蔻',name='九月',document=deepcopy(self.document),created_by='tester')

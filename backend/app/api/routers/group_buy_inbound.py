@@ -18,15 +18,17 @@ manage = require_permission('group_buy.manage')
 
 @router.get('/receipts')
 def receipts(start_date: date, end_date: date, brand: str,
-             state: str = Query('pending', pattern='^(all|pending|partial|waiting|done|excluded)$'),
+             state: str = Query('pending', pattern='^(all|pending|partial|waiting|done|excluded|gift)$'),
              keyword: str = Query('', max_length=128), supplier: str = Query('', max_length=255),
              supplier_names: list[str] | None = Query(None, max_length=100),
              product_keys: list[str] | None = Query(None, max_length=100),
+             batch_id: int | None = Query(None, gt=0),
+             match_state: str = Query('all', pattern='^(all|high|possible|review)$'),
              page: int = Query(1, ge=1), page_size: int = Query(30, ge=10, le=100),
              sort_by: str = Query('receipt_time', pattern='^(receipt_time|receipt_number|item_count|pending_count)$'),
              sort_order: str = Query('desc', pattern='^(asc|desc)$'), db: Session = Depends(get_db)):
     return ok(service.list_receipts(db, start_date, end_date, brand, state, keyword, supplier,
-        page, page_size, sort_by, sort_order, supplier_names, product_keys))
+        page, page_size, sort_by, sort_order, supplier_names, product_keys, batch_id, match_state))
 
 
 @router.get('/receipts/{doc_id}')

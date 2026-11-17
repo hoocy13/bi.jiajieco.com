@@ -20,6 +20,16 @@ def normalize(value):
     return re.sub(r'\s+', ' ', str(value or '')).strip()
 
 
+def product_type(snapshot):
+    value = normalize(snapshot.get('product_type'))
+    return value if value and value != '-1' else '未分类'
+
+
+def purchase_issue(snapshot):
+    kind = product_type(snapshot)
+    return '' if kind == '正装' else '小样不抵扣采购' if kind == '小样' else f'{kind}，分类待核实'
+
+
 def scope_dates(start, end, brand):
     if brand not in BRANDS:
         fail('请选择团购品牌')
@@ -38,7 +48,7 @@ def load_source(ods, start, end, brand):
           h.`入库时间` AS receipt_time,h.`往来单位` AS supplier,h.`入库仓库` AS warehouse,
           h.`备注` AS remark,h.`关联单号` AS related_number,h.`红冲状态` AS reversal_status,
           d.`货品编号` AS code,d.`货品名称` AS name,d.`条码` AS barcode,
-          d.`品牌` AS brand,d.`单位` AS unit,d.`数量` AS quantity,d.`批次` AS lot,
+          d.`品牌` AS brand,d.`货品分类` AS product_type,d.`单位` AS unit,d.`数量` AS quantity,d.`批次` AS lot,
           GREATEST(COALESCE(h.`updatetime`,h.`入库时间`),COALESCE(d.`updatetime`,h.`入库时间`)) AS source_updated_at
         FROM `入库查询` h JOIN `入库查询明细` d ON d.`docId`=h.`docId`
         WHERE h.`入库类型编码`='101' AND h.`入库时间`>=:begin AND h.`入库时间`<:finish
@@ -56,6 +66,7 @@ def snapshot(row, brand):
     result['barcode'] = str(row.get('barcode') or '').strip()
     result['brand'] = brand
     result['supplier'] = normalize(row.get('supplier'))
+    result['product_type'] = product_type(row)
     return result
 
 
@@ -119,7 +130,8 @@ def sync_source(db, ods, body, operator):
             added += 1
         elif line.snapshot != s:
             status = line.status
-            if any(line.snapshot.get(k) != s.get(k) for k in identity) or source_issue(s) or line.snapshot.get('source_missing'):
+            kind_changed = product_type(line.snapshot) != product_type(s) and (product_type(line.snapshot) != '未分类' or product_type(s) != '正装')
+            if any(line.snapshot.get(k) != s.get(k) for k in identity) or source_issue(s) or line.snapshot.get('source_missing') or kind_changed:
                 status = 'review' if line.status != 'pending' else 'pending'
             cas_line(db, line, line.revision, snapshot=s, brand=body.brand, status=status, receipt_time=row['receipt_time'], synced_at=now)
             audit(db, 'source_update', operator, {'before': line.snapshot, 'after': s}, line.id)
@@ -168,6 +180,10 @@ def counter_source(batch, counter_id, ctx):
 
 
 def valid_target(line, ctx):
+    # Keep legacy unclassified confirmations until refreshed, but known samples
+    # and other non-purchase classes can never fulfill a regular-product order.
+    if product_type(line.snapshot) not in ('正装', '未分类'):
+        return None
     batch = ctx[0].get(line.batch_id)
     if not batch:
         return None
@@ -188,6 +204,7 @@ def classify(line, ctx, target_batch=None):
            'batch_id': line.batch_id, 'source_id': line.source_id, 'product_id': line.product_id,
            'counter': '', 'batch_label': '', 'product': '', 'order_quantity': None,
            'note': line.note, 'operator': line.operator, 'candidates': []}
+    row.update(product_type=product_type(s), is_gift=product_type(s) == '小样', purchase_eligible=not purchase_issue(s))
     batches, counters, aliases, _ = ctx[:4]
     substitution = ctx[4].get(line.id)
     row.update(mode='substitute' if substitution else 'normal',
@@ -202,7 +219,7 @@ def classify(line, ctx, target_batch=None):
             row.update(status='confirmed', reason='替代到货' if substitution else '已关联', counter=source['name'], product=p['name'],
                 batch_label=f'{b.month} · {b.name}', order_quantity=p['orders'][source['id']])
             return row
-        row['reason'] = '原关联商品、柜台或源资料已变化，需解除后重试'
+        row['reason'] = (purchase_issue(s)+'；历史采购关联需解除后核对') if purchase_issue(s) else '原关联商品、柜台或源资料已变化，需解除后重试'
         return row
     issue = source_issue(s)
     if issue:
@@ -210,6 +227,9 @@ def classify(line, ctx, target_batch=None):
         return row
     if line.status == 'review':
         row['reason'] = '源资料已变化，需解除原处理状态后重试'
+        return row
+    if purchase_issue(s):
+        row.update(status='gift' if row['is_gift'] else 'pending', reason=purchase_issue(s))
         return row
     counter_id = aliases.get((line.brand, s['supplier']))
     if not counter_id:
@@ -599,7 +619,7 @@ def recommend_receipt(db, lines, rows, ctx):
     for line, row in zip(lines, rows):
         row['recommendation'] = None
         row['auto_match_reason'] = row['reason']
-        if line.status != 'pending' or source_issue(line.snapshot):
+        if line.status != 'pending' or source_issue(line.snapshot) or purchase_issue(line.snapshot):
             continue
         candidates = []
         duplicate = False
@@ -639,6 +659,90 @@ def recommend_receipt(db, lines, rows, ctx):
     return ranked[0] if ranked and (len(ranked)==1 or scores[ranked[0]]>scores[ranked[1]]) else None
 
 
+def similarity_context(db, ctx, brand):
+    received = {}
+    for line in db.scalars(select(InboundLine).where(InboundLine.brand == brand, InboundLine.status == 'confirmed')):
+        if valid_target(line, ctx):
+            key = (line.batch_id, line.source_id, line.product_id)
+            sub = ctx[4].get(line.id)
+            received[key] = received.get(key, 0) + (sub.credit_quantity if sub else int(Decimal(line.snapshot['quantity'])))
+    indexes = {}
+    for batch in ctx[0].values():
+        if batch.brand != brand:
+            continue
+        for source in batch.document['sources']:
+            if not source['counter']:
+                continue
+            barcodes = {}
+            for product in batch.document['products']:
+                barcode = product.get('barcode', '').strip()
+                if barcode and product['orders'].get(source['id'], 0) > 0:
+                    barcodes.setdefault(barcode, []).append(product)
+            indexes[(batch.id, source['id'])] = (source, barcodes)
+    return received, indexes
+
+
+def receipt_similarity(items, ctx, batch_id, similarity, blocked=False):
+    """Explain exact-barcode coverage; suggestions never change receipt ownership."""
+    pending = [r for r in items if r['status'] not in ('confirmed', 'excluded', 'gift')]
+    result = {'level': 'review', 'matched_count': 0, 'pending_count': len(pending),
+              'source_id': None, 'label': '', 'reason': '未匹配本单条码'}
+    if blocked or not pending or not batch_id:
+        return None
+    batch = ctx[0][batch_id]
+    received, indexes = similarity
+    counter_id = ctx[2].get((batch.brand, items[0]['supplier']))
+    mapped = counter_source(batch, counter_id, ctx) if counter_id else None
+    candidates = []
+    for source in batch.document['sources']:
+        entry = indexes.get((batch_id, source['id']))
+        if not entry:
+            continue
+        barcodes = entry[1]
+        hits = [r for r in pending if r['purchase_eligible'] and r['barcode'] and r['barcode'] in barcodes]
+        if not hits:
+            continue
+        quantities, capacities, safe = {}, {}, True
+        competing = False
+        for row in hits:
+            products = barcodes[row['barcode']]
+            quantity = Decimal(row['quantity']) if not row['source_issue'] else Decimal(0)
+            if len(products) != 1 or quantity <= 0 or row['source_issue'] or '解除' in row['reason']:
+                safe = False
+                continue
+            product = products[0]
+            key = (batch_id, source['id'], product['id'])
+            quantities[key] = quantities.get(key, 0) + int(quantity)
+            capacities[key] = max(product['orders'][source['id']]-received.get(key, 0), 0)
+            # The same mapped counter may have open orders in other months.
+            for candidate in row['candidates']:
+                other_key = (candidate['batch_id'], candidate['source_id'], candidate['product_id'])
+                if candidate['batch_id'] != batch_id and candidate['ordered']-received.get(other_key, 0) >= quantity:
+                    competing = True
+        for key, quantity in quantities.items():
+            safe &= quantity <= capacities[key]
+        candidates.append({'source': source, 'count': len(hits), 'safe': safe, 'competing': competing})
+    if not candidates:
+        if any(not r['purchase_eligible'] for r in pending):
+            result['reason'] = '分类待核实'
+        return result
+    candidates.sort(key=lambda c: (-c['count'], c['source']['id']))
+    chosen = next((c for c in candidates if mapped and c['source']['id'] == mapped['id']), candidates[0])
+    tied = not mapped and sum(c['count'] == chosen['count'] for c in candidates) > 1
+    mapping_ok = bool(mapped and chosen['source']['id'] == mapped['id'])
+    high = mapping_ok and chosen['count'] == len(pending) and chosen['safe'] and not chosen['competing']
+    reason = ('柜台、条码、数量吻合' if high else
+              '多个柜台匹配' if tied else
+              '柜台对应不一致' if counter_id and not mapping_ok else
+              '柜台待核对' if not mapping_ok else
+              '其他月份也匹配' if chosen['competing'] else
+              '条码或数量待核对' if not chosen['safe'] else '部分条码匹配')
+    return {**result, 'level': 'high' if high else 'possible', 'matched_count': chosen['count'],
+            'source_id': None if tied else chosen['source']['id'],
+            'label': f"{batch.month} · {batch.name} · {chosen['source']['name']}" if not tied else f'{batch.month} · {batch.name} · 多个候选柜台',
+            'reason': reason}
+
+
 def receipt_detail(db, doc_id, brand, batch_id=None):
     if brand not in BRANDS:
         fail('请选择团购品牌')
@@ -648,6 +752,8 @@ def receipt_detail(db, doc_id, brand, batch_id=None):
     if not lines:
         fail('上海仓库新未找到该入库单', 404)
     ctx = context(db)
+    if batch_id and (batch_id not in ctx[0] or ctx[0][batch_id].brand != brand):
+        fail('归属订单不存在或品牌不一致', 404)
     rows = [classify(line, ctx, batch_id) for line in lines]
     recommended_batch = recommend_receipt(db, lines, rows, ctx)
     hold = db.get(InboundReceiptHold, (doc_id, brand))
@@ -661,15 +767,20 @@ def receipt_detail(db, doc_id, brand, batch_id=None):
             'supplier': lines[0].snapshot['supplier'], 'warehouse': WAREHOUSE,
             'receipt_time': lines[0].receipt_time.isoformat(),
             'rows': rows, 'recommended_batch_id': recommended_batch, 'hold': hold_data(hold),
+            'type_counts': {kind: sum(r['product_type'] == kind for r in rows) for kind in sorted({r['product_type'] for r in rows})},
+            'suggestion': receipt_similarity(rows, ctx, batch_id, similarity_context(db, ctx, brand), waiting) if batch_id else None,
             'auto_count': sum(bool(r['recommendation'] and r['recommendation']['automatic']) for r in rows)}
 
 
 def list_receipts(db, start, end, brand, state='pending', keyword='', supplier='', page=1, page_size=30,
-                  sort_by='receipt_time', sort_order='desc', supplier_names=None, product_keys=None):
+                  sort_by='receipt_time', sort_order='desc', supplier_names=None, product_keys=None, batch_id=None, match_state='all'):
     begin, finish = scope_dates(start, end, brand)
     lines = db.scalars(select(InboundLine).where(InboundLine.brand == brand,
         InboundLine.receipt_time >= begin, InboundLine.receipt_time < finish)).all()
     ctx = context(db)
+    if batch_id and (batch_id not in ctx[0] or ctx[0][batch_id].brand != brand):
+        fail('归属订单不存在或品牌不一致', 404)
+    similarity = similarity_context(db, ctx, brand) if batch_id else None
     rows = [classify(line, ctx) for line in lines if normalize(line.snapshot.get('warehouse')) == WAREHOUSE]
     suppliers = sorted({r['supplier'] for r in rows})
     products = {inbound_product_key(r): {'value': inbound_product_key(r), 'label': r['name'],
@@ -692,24 +803,32 @@ def list_receipts(db, start, end, brand, state='pending', keyword='', supplier='
             continue
         completed = sum(r['status'] in ('confirmed', 'excluded') for r in items)
         excluded = sum(r['status'] == 'excluded' for r in items)
-        status = 'excluded' if excluded == len(items) else 'done' if completed == len(items) else 'partial' if completed else 'pending'
+        gifts = sum(r['status'] == 'gift' for r in items)
+        pending_count = len(items)-completed-gifts
+        status = 'gift' if gifts == len(items) else 'excluded' if excluded == len(items) else 'done' if not pending_count else 'partial' if completed else 'pending'
         hold = holds.get(doc_id)
-        if completed < len(items) and hold and hold.waiting:
+        if pending_count and hold and hold.waiting:
             status = 'waiting'
         documents.append({'doc_id': doc_id, 'receipt_number': first['receipt_number'], 'supplier': first['supplier'],
             'receipt_time': first['receipt_time'], 'warehouse': WAREHOUSE, 'item_count': len(items),
-            'processed_count': completed, 'pending_count': len(items)-completed, 'status': status,
+            'processed_count': completed, 'pending_count': pending_count, 'status': status,
+            'gift_count': gifts, 'type_counts': {kind: sum(r['product_type'] == kind for r in items) for kind in sorted({r['product_type'] for r in items})},
             'confirmed_count': completed-excluded, 'excluded_count': excluded, 'hold': hold_data(hold),
+            'suggestion': receipt_similarity(items, ctx, batch_id, similarity, status == 'waiting'),
             'destinations': sorted({r['batch_label']+' · '+r['counter'] for r in items if r['status']=='confirmed'}),
             'lines': [{'id': r['id'], 'revision': r['revision'], 'status': r['status']} for r in items]})
-    summary = {s: sum(d['status'] == s for d in documents) for s in ('pending', 'partial', 'waiting', 'done', 'excluded')}
+    summary = {s: sum(d['status'] == s for d in documents) for s in ('pending', 'partial', 'waiting', 'done', 'excluded', 'gift')}
     if state == 'pending':
         documents = [d for d in documents if d['status'] in ('pending', 'partial')]
     elif state != 'all':
         documents = [d for d in documents if d['status'] == state]
+    match_summary = {level: sum(bool(d['suggestion'] and d['suggestion']['level'] == level) for d in documents)
+                     for level in ('high', 'possible', 'review')}
+    if match_state != 'all':
+        documents = [d for d in documents if d['suggestion'] and d['suggestion']['level'] == match_state]
     documents.sort(key=lambda d: (d.get(sort_by, d['receipt_time']), d['doc_id']), reverse=sort_order=='desc')
     stamp = db.get(InboundSync, f'{brand}|{start}|{end}')
-    return {'rows': documents[(page-1)*page_size:page*page_size], 'total': len(documents), 'summary': summary,
+    return {'rows': documents[(page-1)*page_size:page*page_size], 'total': len(documents), 'summary': summary, 'match_summary': match_summary,
         'suppliers': suppliers, 'supplier_filters': [{'value': s, 'label': s} for s in suppliers],
         'product_filters': sorted(products.values(), key=lambda p: p['label']),
         'synced_at': stamp.finished_at.isoformat() if stamp else None,
@@ -740,8 +859,8 @@ def confirm_receipt(db, body, operator):
             if not line or line.revision != v.revision:
                 fail('入库明细已更新，请刷新后重试', 409)
             ensure_receipt_available(db, line)
-            if line.status != 'pending' or source_issue(line.snapshot):
-                fail('所选明细不能确认：'+(source_issue(line.snapshot) or '请先解除原处理状态'), 409)
+            if line.status != 'pending' or source_issue(line.snapshot) or purchase_issue(line.snapshot):
+                fail('所选明细不能确认：'+(source_issue(line.snapshot) or purchase_issue(line.snapshot) or '请先解除原处理状态'), 409)
             batch = ctx[0].get(v.batch_id)
             if not batch or batch.brand != line.brand:
                 fail('入库品牌与团购批次不一致')
