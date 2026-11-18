@@ -658,5 +658,63 @@ class InboundTest(unittest.TestCase):
         self.assertEqual(self.client.get(self.base+f'/progress/{self.batch.id}').json()['data']['received'],{'p:s':6})
 
 
+    def test_blank_brand_receipt_completion_preserves_links_and_is_idempotent(self):
+        self.sync([self.row(quantity=6)])
+        self.mapping()
+        self.assertEqual(self.action(self.listing()['rows']).status_code, 200)
+        original = self.db.scalar(select(InboundLine))
+        original_id, original_revision = original.id, original.revision
+        rows = service.complete_receipt_brands([
+            self.row(quantity=6), self.row('r2', brand=None, quantity=4)
+        ], '兰蔻')
+        self.sync(rows)
+        self.sync(rows)
+        self.assertEqual(self.db.query(InboundLine).count(), 2)
+        self.db.refresh(original)
+        self.assertEqual((original.id, original.revision, original.status),
+                         (original_id, original_revision, 'confirmed'))
+        added = self.db.scalar(select(InboundLine).where(InboundLine.rec_id == 'r2'))
+        self.assertEqual(added.status, 'pending')
+        self.assertEqual(added.snapshot['brand_inferred_from'], 'receipt')
+        self.assertEqual(self.receipts()['rows'][0]['item_count'], 2)
+
+    def test_blank_brands_use_supplier_and_do_not_cross_conflicting_receipts(self):
+        for brand in ('兰蔻', '资生堂', 'YSL', '植村秀', '赫莲娜'):
+            with self.subTest(brand=brand):
+                rows = service.complete_receipt_brands([
+                    self.row(brand=None, supplier=brand+' 北京柜台')], brand)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['brand_inferred_from'], 'supplier')
+        rows = [self.row(brand='YSL'), self.row('r2', brand='圣罗兰'),
+                self.row('r3', brand='-1'), self.row('r4', doc_id='other', brand=None, supplier='未知')]
+        self.assertEqual(len(service.complete_receipt_brands(rows, 'YSL')), 3)
+        rows.append(self.row('r5', brand='兰蔻'))
+        self.assertEqual(len(service.complete_receipt_brands(rows, 'YSL')), 2)
+        self.assertEqual(service.complete_receipt_brands([
+            self.row(brand=None, supplier='YSL 兰蔻')], 'YSL'), [])
+
+    def test_load_source_sql_returns_all_19_receipt_lines(self):
+        from sqlalchemy import text
+        engine = create_engine('sqlite://')
+        with engine.connect() as connection:
+            connection.connection.driver_connection.create_function('GREATEST', 2, max)
+            headers = ['docId', '入库单号', '入库时间', '往来单位', '入库仓库', '备注', '关联单号', '红冲状态', 'updatetime', '入库类型编码']
+            details = ['docId', 'recId', '货品编号', '货品名称', '条码', '品牌', '货品分类', '单位', '数量', '批次', 'updatetime']
+            for table, columns in [('入库查询', headers), ('入库查询明细', details)]:
+                connection.execute(text('CREATE TABLE `'+table+'` ('+','.join('`'+c+'` TEXT' for c in columns)+')'))
+            connection.execute(text('INSERT INTO `入库查询` VALUES (:id,:number,:time,:supplier,:warehouse,NULL,NULL,1,:time,101)'),
+                {'id':'10176529','number':'CRK202610308816','time':'2026-10-30 17:33:47',
+                 'supplier':'YSL 北京汉光','warehouse':'上海仓库新'})
+            quantities = [130,136,200,1726,90,50,140,200,230,10,80,100,420,160,330,80,150,62,310]
+            for i, quantity in enumerate(quantities):
+                connection.execute(text('INSERT INTO `入库查询明细` VALUES (:doc,:rec,:rec,:rec,:rec,:brand,:kind,:unit,:quantity,NULL,:time)'),
+                    {'doc':'10176529','rec':str(i),'brand':None if i in (16,17) else 'YSL',
+                     'kind':'正装','unit':'支','quantity':quantity,'time':'2026-11-16 11:28:08'})
+            rows = service.load_source(connection, date(2026,10,30), date(2026,10,30), 'YSL')
+            self.assertEqual(len(rows), 19)
+            self.assertEqual(sum(int(r['quantity']) for r in rows), 4604)
+            self.assertEqual(sum(bool(r.get('brand_inferred_from')) for r in rows), 2)
+        engine.dispose()
+
 if __name__=='__main__':
     unittest.main()

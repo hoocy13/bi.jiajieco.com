@@ -42,7 +42,9 @@ def load_source(ods, start, end, brand):
     begin, finish = scope_dates(start, end, brand)
     names = BRAND_NAMES.get(brand, [brand])
     placeholders = ','.join(':brand'+str(i) for i in range(len(names)))
+    supplier_filters = ' OR '.join('h.`往来单位` LIKE :supplier'+str(i) for i in range(len(names)))
     params = {'begin': begin, 'finish': finish, 'warehouse': WAREHOUSE, **{'brand'+str(i): n for i, n in enumerate(names)}}
+    params.update({'supplier'+str(i): '%'+n+'%' for i, n in enumerate(names)})
     rows = ods.execute(text(f'''
         SELECT h.`docId` AS doc_id,d.`recId` AS rec_id,h.`入库单号` AS receipt_number,
           h.`入库时间` AS receipt_time,h.`往来单位` AS supplier,h.`入库仓库` AS warehouse,
@@ -53,12 +55,47 @@ def load_source(ods, start, end, brand):
         FROM `入库查询` h JOIN `入库查询明细` d ON d.`docId`=h.`docId`
         WHERE h.`入库类型编码`='101' AND h.`入库时间`>=:begin AND h.`入库时间`<:finish
           AND TRIM(h.`入库仓库`)=:warehouse
-          AND TRIM(d.`品牌`) IN ({placeholders})
+          AND (EXISTS (
+            SELECT 1 FROM `入库查询明细` sibling
+            WHERE sibling.`docId`=h.`docId` AND TRIM(sibling.`品牌`) IN ({placeholders})
+          ) OR {supplier_filters})
         ORDER BY h.`入库时间`,h.`docId`,d.`recId` LIMIT 20001
     '''), params).mappings().all()
     if len(rows) > 20000:
         fail('此范围超过20,000条入库明细，请缩小入库日期范围；未覆盖已有同步数据')
-    return [dict(r) for r in rows]
+    return complete_receipt_brands([dict(r) for r in rows], brand)
+
+
+def canonical_brand(value):
+    value = normalize(value).casefold()
+    for brand in BRANDS:
+        if value in {name.casefold() for name in BRAND_NAMES.get(brand, [brand])}:
+            return brand
+    return normalize(value)
+
+
+def complete_receipt_brands(rows, brand):
+    """Fill blank brands only from unambiguous receipt or supplier evidence."""
+    receipts = {}
+    for row in rows:
+        receipts.setdefault(str(row['doc_id']), []).append(row)
+    result = []
+    for items in receipts.values():
+        explicit = {canonical_brand(r.get('brand')) for r in items if normalize(r.get('brand')) not in ('', '-1')}
+        supplier = normalize(items[0].get('supplier')).casefold()
+        supplier_brands = {b for b in BRANDS if any(
+            name.casefold() in supplier for name in BRAND_NAMES.get(b, [b]))}
+        inferred = next(iter(explicit)) if len(explicit) == 1 else (
+            next(iter(supplier_brands)) if not explicit and len(supplier_brands) == 1 else None)
+        for row in items:
+            source = normalize(row.get('brand'))
+            if source not in ('', '-1'):
+                if canonical_brand(source) == brand:
+                    result.append(row)
+            elif inferred == brand:
+                result.append({**row, 'brand': brand, 'source_brand': source,
+                               'brand_inferred_from': 'receipt' if explicit else 'supplier'})
+    return result
 
 
 def snapshot(row, brand):
