@@ -19,11 +19,10 @@ use([CanvasRenderer, BarChart, CustomChart, LineChart, PieChart, GeoComponent, G
 registerMap('china', chinaGeoJson)
 
 const theme = useThemeStore()
-const isApple = computed(() => theme.interfaceStyle === 'glass')
 const router = useRouter()
 const auth = useAuthStore()
 const palette = computed(() => [theme.current.primary, theme.current.secondary, '#64748b', '#d8a23a', theme.current.pale, '#14b8a6', '#f97316'])
-const mapPieColors = computed(() => isApple.value ? palette.value.slice(0, 4) : [theme.current.primary, theme.current.secondary, '#d8a23a', '#64748b'])
+const mapPieColors = computed(() => palette.value.slice(0, 4))
 
 const summary = ref({
   cards: [],
@@ -360,8 +359,8 @@ const geoPieOption = computed(() => ({
 </script>
 
 <template>
-  <div class="page-stack dashboard-home" :class="{ 'apple-home': isApple }">
-    <section v-if="isApple" class="apple-welcome">
+  <div class="page-stack dashboard-home apple-home">
+    <section class="apple-welcome">
       <div><h2>30天，都值得看见。</h2></div>
       <el-button v-if="auth.hasPermission('sales.view')" type="primary" round @click="router.push('/sales/overview')">查看销售分析 <el-icon><ArrowRight /></el-icon></el-button>
     </section>
@@ -425,7 +424,7 @@ const geoPieOption = computed(() => ({
         <v-chart class="chart" :option="brandOption" autoresize />
       </section>
     </div>
-    <section v-if="isApple" class="panel apple-brand-ranking">
+    <section class="panel apple-brand-ranking">
       <header><h2>品牌销售排行<span class="panel-source">近30天 · 销售额前10名 · 明细分摊销售额</span></h2><el-button v-if="auth.hasPermission('sales.view')" link @click="router.push('/sales/brand-analysis')">查看品牌分析</el-button></header>
       <v-chart v-if="rankedBrands.length" style="height: 420px" :option="brandRankOption" autoresize />
       <el-empty v-else description="暂无品牌数据" />

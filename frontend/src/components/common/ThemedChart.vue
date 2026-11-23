@@ -20,9 +20,7 @@ const option = computed(() => {
       ...(item.type === 'bar' || item.type === 'line' ? { itemStyle: { ...item.itemStyle, color: colors[index % colors.length] }, lineStyle: { ...item.lineStyle, color: colors[index % colors.length] } } : {}),
     })) }
   }
-  return theme.interfaceStyle === 'glass'
-    ? { ...(theme.name === 'mono' ? result : colorizeBars(result, route.path, theme.isDark)), backgroundColor: 'transparent' }
-    : result
+  return { ...(theme.name === 'mono' ? result : colorizeBars(result, route.path, theme.isDark)), backgroundColor: 'transparent' }
 })
 </script>
 

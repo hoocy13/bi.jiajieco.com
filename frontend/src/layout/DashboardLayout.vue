@@ -179,22 +179,6 @@ function selectAppearance(name) {
             <el-button>导航</el-button>
             <template #dropdown><el-dropdown-menu style="max-height: 60vh; overflow-y: auto"><template v-for="group in menuGroups" :key="group.key"><el-dropdown-item v-for="item in group.children" :key="item.path" :command="item.path">{{ group.label }} · {{ item.label }}</el-dropdown-item></template></el-dropdown-menu></template>
           </el-dropdown>
-          <el-dropdown trigger="click" @command="theme.applyStyle">
-            <button class="theme-button" aria-label="选择界面版本">
-              <el-icon><component :is="theme.currentStyle.icon" /></el-icon>
-              <span>版本 · {{ theme.currentStyle.label }}</span>
-              <el-icon><ArrowDown /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item v-for="option in theme.styleOptions" :key="option.name" :command="option.name" :class="{ 'is-selected-theme': option.name === theme.interfaceStyle }">
-                  <el-icon><component :is="option.icon" /></el-icon>
-                  {{ option.label }}
-                  <el-icon v-if="option.name === theme.interfaceStyle"><Check /></el-icon>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-tooltip :content="requestStatus.statusText" placement="bottom" :show-after="200">
           <div class="request-status request-status--compact" tabindex="0" :aria-label="requestStatus.statusText" :class="{ 'is-loading': requestStatus.isLoading }">
             <el-icon v-if="requestStatus.isLoading" class="is-loading"><Loading /></el-icon>
