@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
 import AnnualTournament from '../../components/AnnualTournament.vue'
 import AnnualPairingDraw from '../../components/AnnualPairingDraw.vue'
+import AnnualEventMusic from '../../components/AnnualEventMusic.vue'
 const route = useRoute()
 const drawTotal = computed(() => data.value?.tournament.draw_total || 9)
 const teamOnly = computed(() => data.value?.tournament.draw_unit === 'team')
@@ -350,7 +351,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
       </div></Transition>
     </section>
     <section v-else-if="!loading && !error" class="empty">正在获取赛事…</section>
-    <aside class="quick-actions" aria-label="观赛工具"><button aria-label="全屏观赛" @click="fullscreen"><span>⛶</span>全屏</button><button aria-label="分享赛事" @click="share"><span>↗</span>分享</button><button aria-label="返回顶部" @click="backToTop"><span>↑</span>顶部</button></aside>
+    <aside class="quick-actions" aria-label="观赛工具"><AnnualEventMusic v-if="data" /><button aria-label="全屏观赛" @click="fullscreen"><span>⛶</span>全屏</button><button aria-label="分享赛事" @click="share"><span>↗</span>分享</button><button aria-label="返回顶部" @click="backToTop"><span>↑</span>顶部</button></aside>
     <el-dialog v-model="rulesVisible" title="赛事规则" width="min(700px, 94vw)" class="annual-rules-dialog">
       <div class="rules-copy">
         <template v-if="data.tournament.team_count === 19">
@@ -464,3 +465,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
 </style>
 
 <style scoped>.draw-captain{display:inline-block;margin-left:8px;padding:1px 5px;border:1px solid #5d88a65c;border-radius:4px;font-size:11px;font-weight:400;color:#91bfdc;vertical-align:middle;white-space:nowrap}</style>
+
+<style scoped>
+.quick-actions{flex-direction:column;align-items:stretch;gap:0;border-radius:5px}.quick-actions>button{min-width:46px;justify-content:center}
+</style>
