@@ -1,12 +1,12 @@
 <script setup>
 import { computed } from 'vue'
-import { annualOpeningSchedule } from '../utils/annualOpeningSchedule'
+import { annualOpeningSchedule, compareAnnualOpeningSchedule } from '../utils/annualOpeningSchedule'
 import { hasSemifinalDraw } from '../utils/annualFinalists'
 const props=defineProps({tournament:Object,resolve:Function,status:Function,score:Function,screen:Boolean,busy:Boolean})
 const emit=defineEmits(['open','bye'])
 const stages=[{key:'opening',name:'19进10',bo:3},{key:'second',name:'10进5',bo:3},{key:'semi',name:'半决赛',bo:5},{key:'final',name:'决赛',bo:5}]
 const nodes=computed(()=>stages.flatMap((stage,column)=>{
- const matches=props.tournament.matches.filter(m=>m.stage===stage.key||(stage.key==='opening'&&m.stage==='playin'))
+ const matches=props.tournament.matches.filter(m=>m.stage===stage.key||(stage.key==='opening'&&m.stage==='playin')).sort(compareAnnualOpeningSchedule)
  return matches.map((match,i)=>({match,schedule:annualOpeningSchedule(match),column,x:(column+.5)*880/4,y:match.stage==='playin'?675:stage.key==='opening'?45+i*70:stage.key==='second'?100+i*130:stage.key==='semi'?230+i*280:370}))
 }))
 const paths=computed(()=>{

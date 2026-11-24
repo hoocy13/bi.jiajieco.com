@@ -4,7 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
-import { annualOpeningSchedule } from '../../utils/annualOpeningSchedule'
+import { annualOpeningSchedule, compareAnnualOpeningSchedule } from '../../utils/annualOpeningSchedule'
 import AnnualTournament from '../../components/AnnualTournament.vue'
 import AnnualPairingDraw from '../../components/AnnualPairingDraw.vue'
 import AnnualEventMusic from '../../components/AnnualEventMusic.vue'
@@ -219,7 +219,7 @@ function focusCurrentMatch() {
   const top = Math.max(0, window.scrollY + card.getBoundingClientRect().top - headerHeight - 24)
   window.scrollTo({top, behavior: reducedMotion.matches ? 'instant' : 'smooth'})
 }
-const filteredMatches = computed(() => (data.value?.tournament.matches || []).filter(m => stage.value === 'all' || m.stage === stage.value))
+const filteredMatches = computed(() => (data.value?.tournament.matches || []).filter(m => stage.value === 'all' || m.stage === stage.value).sort(compareAnnualOpeningSchedule))
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let navigationVersion = 0
 let snapUntil = 0
