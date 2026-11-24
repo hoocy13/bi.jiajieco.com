@@ -4,6 +4,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import QRCode from 'qrcode'
+import { annualOpeningSchedule } from '../../utils/annualOpeningSchedule'
 import AnnualTournament from '../../components/AnnualTournament.vue'
 import AnnualPairingDraw from '../../components/AnnualPairingDraw.vue'
 import AnnualEventMusic from '../../components/AnnualEventMusic.vue'
@@ -347,7 +348,7 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
       <Transition name="spectator-view" mode="out-in" @after-enter="focusCurrentMatch"><div :key="tab" class="view-content" :class="{ revealing }">
       <div v-if="tab === 'matches'" class="stage-filter" aria-label="比赛阶段"><button v-for="item in [{id:'all',name:'全部比赛'}, ...Object.entries(labels).map(([id,name])=>({id,name}))]" :key="item.id" :class="{active:stage===item.id}" :aria-pressed="stage===item.id" @click="stage=item.id">{{ item.name }}</button></div>
       <AnnualTournament v-if="tab !== 'matches' && tab !== 'draw' && tab !== 'lottery'" :tournament="data.tournament" :view="tab" :screen="true" public-view :hide-names="!data.show_names" />
-      <section v-else-if="tab === 'matches'" class="match-list"><article v-for="m in filteredMatches" :key="m.id" :data-match-id="m.id" :class="{'current-match':m.id===currentMatch?.id}"><header><b>{{ labels[m.stage] }}</b><span>BO{{ m.best_of }} · {{ m.winner ? '已结束' : m.score_a || m.score_b ? '进行中' : ready(m) ? '待开赛' : '待晋级' }}</span></header><div><strong>{{ sourceName(m.sources[0]) }}</strong><b>{{ ready(m) ? m.score_a : '—' }} : {{ ready(m) ? m.score_b : '—' }}</b><strong>{{ sourceName(m.sources[1]) }}</strong></div><details v-if="m.bans.some(b=>b.red.length || b.blue.length)"><summary>逐局Ban</summary><p v-for="b in m.bans" :key="b.game">第{{ b.game }}局 · 红方：{{ b.red.join('、') || '无' }} / 蓝方：{{ b.blue.join('、') || '无' }}</p></details></article></section>
+      <section v-else-if="tab === 'matches'" class="match-list"><article v-for="m in filteredMatches" :key="m.id" :data-match-id="m.id" :class="{'current-match':m.id===currentMatch?.id, scored:m.score_a || m.score_b}"><header><b>{{ labels[m.stage] }}</b><span>BO{{ m.best_of }} · {{ m.winner ? '已结束' : m.score_a || m.score_b ? '进行中' : ready(m) ? '待开赛' : '待晋级' }}</span></header><template v-for="schedule in [annualOpeningSchedule(m)]" :key="schedule?.date"><p v-if="data.tournament.team_count === 19 && schedule" class="opening-match-time"><time :datetime="schedule.date + 'T18:30:00+08:00'">{{ schedule.label }} 18:30</time><span v-if="m.stage === 'opening'"> · 当晚第 {{ schedule.order }} 场</span></p></template><div><strong>{{ sourceName(m.sources[0]) }}</strong><b>{{ ready(m) ? m.score_a : '—' }} : {{ ready(m) ? m.score_b : '—' }}</b><strong>{{ sourceName(m.sources[1]) }}</strong></div><details v-if="m.bans.some(b=>b.red.length || b.blue.length)"><summary>逐局Ban</summary><p v-for="b in m.bans" :key="b.game">第{{ b.game }}局 · 红方：{{ b.red.join('、') || '无' }} / 蓝方：{{ b.blue.join('、') || '无' }}</p></details></article></section>
       </div></Transition>
     </section>
     <section v-else-if="!loading && !error" class="empty">正在获取赛事…</section>
@@ -469,3 +470,5 @@ onUnmounted(() => { stopNameTimers(); clearTimeout(revealTimer); window.removeEv
 <style scoped>
 .quick-actions{flex-direction:column;align-items:stretch;gap:0;border-radius:5px}.quick-actions>button{min-width:46px;justify-content:center}
 </style>
+
+<style scoped>.opening-match-time{margin:10px 0 0;text-align:center;color:#8ba6bf;font-size:12px}.opening-match-time time{color:#fff;font-size:15px;font-weight:650}.match-list article:has(.opening-match-time)>div{color:#a8bfd2}.match-list article:has(.opening-match-time).scored>div,.match-list article:has(.opening-match-time).scored>div>b{color:#f0f7ff}</style>
