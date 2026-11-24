@@ -167,11 +167,11 @@ function optionValues(key) {
 const summary = computed(() => data.value.summary)
 const metrics = computed(() => [
   { label: '正向销售额', value: money(summary.value.sale_amount), unit: '元', hint: '正常正向交易的分摊销售额，不包含退货红冲。' },
-  { label: '预估毛利', value: money(summary.value.estimated_profit), unit: '元', primary: true, hint: '已匹配成本的正向销售额减正向销售数量乘当前核心成本价；退货红冲不参与毛利计算。' },
-  { label: '预估毛利率', value: percent(summary.value.margin_rate), hint: '预估毛利除以已匹配核心成本的正向销售额；退货红冲和缺成本商品不计入分母。' },
+  { label: '预估毛利', value: money(summary.value.estimated_profit), unit: '元', primary: true, hint: '已匹配成本的正向销售额减正向销售数量乘当前核算价；退货红冲不参与毛利计算。' },
+  { label: '预估毛利率', value: percent(summary.value.margin_rate), hint: '预估毛利除以已匹配核算价的正向销售额；退货红冲和缺成本商品不计入分母。' },
   { label: '成本覆盖率', value: percent(summary.value.cost_coverage_rate), hint: '按正向销售额计算成本匹配覆盖；缺成本商品不按零成本计算。' },
-  { label: '低于成本销售额', value: money(summary.value.loss_sales_amount), unit: '元', hint: '按客户、货品和具体渠道的正向成交加权均价判断；均价低于当前核心成本的正向销售额，不代表逐笔亏损金额。' },
-  { label: '缺成本销售额', value: money(summary.value.missing_cost_amount), unit: '元', hint: '当前筛选范围内未匹配核心成本价的正向销售额。' },
+  { label: '低于成本销售额', value: money(summary.value.loss_sales_amount), unit: '元', hint: '按客户、货品和具体渠道的正向成交加权均价判断；均价低于当前核算价的正向销售额，不代表逐笔亏损金额。' },
+  { label: '缺成本销售额', value: money(summary.value.missing_cost_amount), unit: '元', hint: '当前筛选范围内未匹配核算价的正向销售额。' },
 ])
 const periodLabel = computed(() => data.value.start_date && data.value.end_date ? `${data.value.start_date} 至 ${data.value.end_date}` : '本月')
 const groupLabel = computed(() => groupOptions.find((item) => item.value === applied.value?.groupBy)?.label || '销售人')
@@ -189,13 +189,13 @@ const detailColumns = computed(() => {
     { key: 'price_delta', label: '价差', width: 115, kind: 'signed' },
     { key: 'price_delta_rate', label: '价差比例', width: 115, kind: 'signedPercent' },
     { key: 'price_effect_amount', label: '价差金额', width: 135, kind: 'signed' },
-    { key: 'core_cost', label: '核心成本价', width: 125, kind: 'money' },
+    { key: 'core_cost', label: '核算价', width: 125, kind: 'money' },
     { key: 'margin_rate', label: '预估毛利率', width: 125, kind: 'percent' },
   ]
   return [...identity,
     { key: 'sale_quantity', label: '正向销售数量', width: 125, kind: 'integer', strong: true },
     { key: 'sale_amount', label: '正向销售额', width: 150, kind: 'money', strong: true },
-    { key: 'core_cost', label: '核心成本价', width: 125, kind: 'money' },
+    { key: 'core_cost', label: '核算价', width: 125, kind: 'money' },
     { key: 'estimated_cost', label: '预估成本', width: 145, kind: 'money' },
     { key: 'estimated_profit', label: '预估毛利', width: 145, kind: 'money', strong: true },
     { key: 'margin_rate', label: '预估毛利率', width: 125, kind: 'percent' },
@@ -242,7 +242,7 @@ onBeforeUnmount(() => { ++requestSequence })
         </el-select>
         <el-input v-model="filters.customerKeyword" class="filter-keyword" clearable placeholder="客户名称 / 编号" aria-label="客户" @keyup.enter="search" />
         <el-input v-model="filters.keyword" class="filter-keyword" clearable placeholder="货品名称 / 编号" aria-label="商品" @keyup.enter="search" />
-        <el-select v-model="filters.costStatus" class="filter-type" aria-label="成本状态"><el-option label="全部成本" value="all" /><el-option label="已匹配成本" value="priced" /><el-option label="缺核心成本" value="missing" /><el-option label="低于成本" value="loss" /></el-select>
+        <el-select v-model="filters.costStatus" class="filter-type" aria-label="成本状态"><el-option label="全部成本" value="all" /><el-option label="已匹配成本" value="priced" /><el-option label="缺核算价" value="missing" /><el-option label="低于成本" value="loss" /></el-select>
         <template v-if="filters.view === 'prices'">
           <el-select v-model="filters.benchmark" class="filter-benchmark" aria-label="参考价口径"><el-option label="公司同渠道均价" value="company" /><el-option label="自己其他客户均价" value="peers" /><el-option label="自己上期均价" value="previous" /></el-select>
           <el-select v-model="filters.priceDirection" class="filter-type" aria-label="价格偏差"><el-option label="全部价差" value="all" /><el-option label="高于参考价" value="above" /><el-option label="低于参考价" value="below" /><el-option label="无可比价格" value="unmatched" /></el-select>
@@ -262,11 +262,11 @@ onBeforeUnmount(() => { ++requestSequence })
           <div class="profit-definitions">
             <strong>统计口径</strong>
             <p>销售人按渠道当前负责人归属，不等同于订单成交业务员。</p>
-            <p>预估毛利使用正向销售额减正向销售数量乘当前核心成本价；退货红冲仅保留数量、金额展示，不参与毛利及成交价格计算；缺成本商品不按零成本计算。该结果不代表历史实际毛利或扣除平台费用后的净利润。</p>
+            <p>预估毛利使用正向销售额减正向销售数量乘当前核算价；退货红冲仅保留数量、金额展示，不参与毛利及成交价格计算；缺成本商品不按零成本计算。该结果不代表历史实际毛利或扣除平台费用后的净利润。</p>
             <p>成交均价只计算正向销售。价格比较按同品牌、货品、分类、线上或线下及同一时期进行，不混合不同商品。</p>
             <p>公司参考价使用同品牌、商品、分类和线上 / 线下范围内已识别客户的正向成交，保留当前具体渠道筛选，不受销售人、客户及成本状态筛选限制；其他客户参考价排除该客户。</p>
             <p>上期参考价对应同销售人、客户、品牌、商品、分类和线上 / 线下。低于参考价不直接认定异常，需结合采购量、促销和客户条件判断。</p>
-            <p>销售额与核心成本的含税口径尚未核实，结果仅作预估分析。</p>
+            <p>销售额与核算价的含税口径尚未核实，结果仅作预估分析。</p>
             <p v-if="data.previous_start_date">上期：{{ data.previous_start_date }} 至 {{ data.previous_end_date }}</p>
             <p v-if="data.cost_as_of">成本取价日期：{{ data.cost_as_of }}</p>
             <p v-if="summary.identified_customer_rate != null">客户识别覆盖：{{ percent(summary.identified_customer_rate) }}</p>
